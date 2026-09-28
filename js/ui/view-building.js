@@ -113,7 +113,7 @@
     b1.appendChild(U.s('rect', { x: 12, y: baseY + 12, width: 196, height: 40, rx: 3, fill: 'var(--bg-4)', stroke: 'var(--accent)' }));
     b1.appendChild(U.s('text', { x: 22, y: baseY + 28, 'font-size': 10, fill: 'var(--text)', 'font-weight': 700 }, 'B1 主機房 MDF'));
     const fac = G.R.fac || { itLoad: 0 };
-    b1.appendChild(U.s('text', { x: 22, y: baseY + 43, 'font-size': 8, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)' }, `${s.racks.length} 座機櫃 · ${(fac.itLoad / 1000).toFixed(1)} kW · ${s.temp.toFixed(1)}°C`));
+    b1.appendChild(U.s('text', { x: 22, y: baseY + 43, 'font-size': 8, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)' }, `${s.racks.length} 座機櫃 · ${((fac.itLoad + (fac.aiLoad || 0)) / 1000).toFixed(1)} kW · ${s.temp.toFixed(1)}°C`));
     for (let k = 0; k < Math.min(8, s.racks.length); k++) b1.appendChild(U.s('rect', { x: 150 + k * 6.5, y: baseY + 18, width: 5, height: 28, fill: 'var(--jack)', stroke: 'var(--line-2)', 'stroke-width': 0.5 }));
     svg.appendChild(b1);
     svg.appendChild(U.s('line', { x1: 0, y1: baseY + 8, x2: W, y2: baseY + 8, stroke: 'var(--line-2)', 'stroke-dasharray': '3 2' }));

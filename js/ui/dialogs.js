@@ -19,9 +19,10 @@
     if (d.status === 'failed') return { t: '故障', c: 'bad' };
     if (d.status === 'rma') return { t: 'RMA 維修中', c: 'bad' };
     if (d.encrypted) return { t: '已被加密', c: 'bad' };
-    const fac = G.R.fac;
-    if (fac && (!fac.mdfPowered || fac.rackTripped[d.rack])) return { t: '斷電', c: 'bad' };
+    if (G.R.fac && G.Net.rackDown(d.rack)) return { t: '斷電', c: 'bad' };
     if (s.time < (d.bootUntil || 0)) return { t: `開機中 ${d.bootUntil - s.time} 分`, c: 'warn' };
+    const m = CAT.devices[d.model];
+    if (m.gpu && m.liquid && G.R.fac && G.R.fac.thermal < 0.98) return { t: 'GPU 過熱降頻', c: 'warn' };
     return { t: '運作中', c: 'ok' };
   };
 
@@ -45,7 +46,10 @@
 
   /** 預設連線規格：優先 10G，找最便宜可行的線材 */
   UI.defaultLinkSpec = (a, b) => {
-    for (const sp of [10000, 1000, 25000, 40000, 100000]) {
+    /* 兩端都有 400G 埠（AI 伺服器 ⇄ AI 交換器）就直接用 400G */
+    const q4 = (id) => Q.ports(id).qsfp.max >= 400000;
+    const order = q4(a) && q4(b) ? [400000, 100000, 10000, 1000] : [10000, 1000, 25000, 40000, 100000];
+    for (const sp of order) {
       let best = null;
       for (const c of ['om4', 'cat6a', 'cat6', 'os2']) {
         const pv = G.Act.linkPreview(a, b, c, sp, 1, null);
@@ -167,8 +171,32 @@
     card.appendChild(h('div', { class: 'kv' },
       h('span', { class: 'k' }, '類別'), h('span', { class: 'v' }, CAT.categories[m.cat].name + (m.layer ? `（L${m.layer}）` : '')),
       h('span', { class: 'k' }, '位置'), h('span', { class: 'v mono' }, d.rack ? `${d.rack} · U${d.u}${m.u > 1 ? '–' + (d.u + m.u - 1) : ''}` : '倉庫（未上架）'),
-      h('span', { class: 'k' }, '耗電'), h('span', { class: 'v mono' }, m.cat === 'ups' ? `供電 ${(m.capW / 1000).toFixed(0)} kW` : `${m.watts} W`),
+      h('span', { class: 'k' }, CAT.infra(m) ? '供電' : '耗電'), h('span', { class: 'v mono' }, m.cat === 'ups' ? `${(m.capW / 1000).toFixed(0)} kW` : m.cat === 'power' ? `${(m.psuN * m.psuW / 1000).toFixed(0)} kW（${m.psuN} × ${m.psuW / 1000} kW PSU）` : m.cat === 'bbu' ? `備援 ${(m.bbuW / 1000).toFixed(0)} kW` : m.watts >= 1000 ? `${(m.watts / 1000).toFixed(1)} kW` : `${m.watts} W`),
       z ? h('span', { class: 'k' }, '安全區域') : null, z ? h('span', { class: 'v' }, zoneText(z.zone)) : null));
+    /* AI：GPU 伺服器、電源櫃、BBU */
+    const fac = G.R.fac;
+    if (m.gpu) {
+      const ai = G.R.ai;
+      card.appendChild(h('div', { class: 'kv' },
+        h('span', { class: 'k' }, 'GPU'), h('span', { class: 'v mono' }, `${m.gpu} 顆 · ${m.pf} PFLOPS`),
+        h('span', { class: 'k' }, '散熱'), h('span', { class: 'v' }, m.liquid ? `直接液冷（${Math.round(m.liquid * 100)}% 的熱交給 CDU）` : '氣冷'),
+        ai ? h('span', { class: 'k' }, 'AI 叢集算力') : null, ai ? h('span', { class: 'v mono' }, `${U.pct(ai.util)}（${ai.pflops.toFixed(1)} PFLOPS）`) : null));
+      if (m.liquid && fac && fac.liquidHeat > 0 && fac.thermal < 0.98) card.appendChild(h('div', { class: 'note bad' }, `液冷容量不足（CDU ${fac.cduCap} kW / GPU 發熱 ${fac.liquidHeat.toFixed(1)} kW）：GPU 降頻中。`));
+      if (m.liquid && fac && !G.Fac.roomUnits('cdu').length) card.appendChild(h('div', { class: 'note warn' }, '機房還沒有液冷 CDU：直接液冷的 GPU 沒辦法散熱。到「採購 → AI 運算」建置 CDU。'));
+    }
+    if ((m.cat === 'power' || m.cat === 'bbu') && d.rack) {
+      const p = G.Fac.aiRackPower(d.rack), R = fac && fac.racks[d.rack];
+      const load = R ? R.load : 0;
+      if (m.cat === 'power') {
+        const slots = h('div', { class: 'row', style: { gap: '4px' } });
+        for (let i = 0; i < m.psuN; i++) slots.appendChild(h('span', { class: 'chip ' + (i < m.psuN - (d.psuFail || 0) ? 'ok' : 'bad'), style: { padding: '0 6px' } }, i < m.psuN - (d.psuFail || 0) ? 'PSU' : '故障'));
+        card.appendChild(h('div', {}, h('div', { class: 'label', style: { marginBottom: '4px' } }, 'PSU 模組（可熱插拔）'), slots));
+      }
+      card.appendChild(h('div', { class: 'kv' },
+        h('span', { class: 'k' }, '機櫃負載'), h('span', { class: 'v mono' }, `${(load / 1000).toFixed(1)} kW`),
+        h('span', { class: 'k' }, '電源櫃容量'), h('span', { class: 'v mono ' + (load > p.total ? 'bad-t' : load > p.n1 ? 'warn-t' : 'ok-t') }, `${(p.total / 1000).toFixed(1)} kW · N+1 ${(p.n1 / 1000).toFixed(1)} kW`),
+        h('span', { class: 'k' }, 'BBU'), h('span', { class: 'v mono ' + (p.bbuW && p.bbuW >= load ? '' : 'warn-t') }, p.bbuW ? `${(p.bbuW / 1000).toFixed(0)} kW · 可撐 ${load > 0 && p.bbuW >= load ? (4 * p.bbuW / load).toFixed(1) + ' 分鐘' : load > 0 ? '容量不足' : '—'}` : '沒有 BBU')));
+    }
     if (m.cat === 'server') {
       const sel = h('select', { id: 'role-' + id, onchange: (e) => UI.res(G.Act.setRole(id, e.target.value || null)) },
         h('option', { value: '' }, '— 尚未設定角色 —'),
@@ -196,7 +224,7 @@
       const aps = U.sum(Object.values(s.floors), (f) => f.aps.length);
       card.appendChild(h('div', { class: 'kv' }, h('span', { class: 'k' }, '管理 AP'), h('span', { class: 'v mono ' + (aps > m.maxAps ? 'bad-t' : '') }, `${aps} / ${m.maxAps}`)));
     }
-    if (m.cat !== 'ups') card.appendChild(h('div', {}, h('div', { class: 'label', style: { marginBottom: '4px' } }, '連接埠'), UI.portBars(id)));
+    if (!CAT.infra(m)) card.appendChild(h('div', {}, h('div', { class: 'label', style: { marginBottom: '4px' } }, '連接埠'), UI.portBars(id)));
     const links = Q.linksOf(id);
     const ispL = s.isp.filter((c) => c.router === id);
     if (links.length || ispL.length) {
@@ -212,7 +240,7 @@
       card.appendChild(h('div', {}, h('div', { class: 'label', style: { marginBottom: '4px' } }, '連線'), list));
     }
     const acts = h('div', { class: 'row wrap' });
-    if (d.rack && m.cat !== 'ups' && opts.onConnect) acts.appendChild(h('button', { class: 'btn primary sm', onclick: () => opts.onConnect(id) }, '連線到…'));
+    if (d.rack && !CAT.infra(m) && opts.onConnect) acts.appendChild(h('button', { class: 'btn primary sm', onclick: () => opts.onConnect(id) }, '連線到…'));
     if (!d.rack) acts.appendChild(h('button', { class: 'btn primary sm', onclick: () => UI.res(G.Act.autoInstall(id)) }, '自動上架'));
     if (G.M3 && G.M3.has(d.model)) acts.appendChild(h('button', { class: 'btn sm', onclick: () => G.M3.open([d.model], m.name) }, '3D 外觀'));
     if (d.status === 'failed') acts.appendChild(h('button', { class: 'btn warn sm', onclick: () => UI.res(G.Act.rma(id)) }, `RMA 送修（${U.money(m.price * 0.15)}）`));

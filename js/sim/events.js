@@ -120,7 +120,7 @@
   Ev.tick = () => {
     const s = G.S;
     G.R.attackFlows = [];
-    G.R.mods = { floorOff: {}, floorPenalty: {}, inetMult: 1, webMult: 1, webDown: false };
+    G.R.mods = { floorOff: {}, floorPenalty: {}, inetMult: 1, webMult: 1, webDown: false, gpuCap: {}, mdfOff: false };
     for (const it of s.sched) {
       if (it.fired || s.time < it.at) continue;
       it.fired = true;
@@ -151,7 +151,7 @@
   Ev.applyEffects = () => {
     const s = G.S;
     G.R.attackFlows = [];
-    G.R.mods = { floorOff: {}, floorPenalty: {}, inetMult: 1, webMult: 1, webDown: false };
+    G.R.mods = { floorOff: {}, floorPenalty: {}, inetMult: 1, webMult: 1, webDown: false, gpuCap: {}, mdfOff: false };
     for (const inc of s.incidents) {
       if (inc.status !== 'active') continue;
       const def = Ev.def(inc);

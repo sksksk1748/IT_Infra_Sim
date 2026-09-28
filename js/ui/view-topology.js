@@ -57,7 +57,7 @@
     const s = G.S;
     const pos = {};
     const zones = G.Net.zones();
-    const devs = Object.values(s.devices).filter((d) => d.rack && CAT.devices[d.model].cat !== 'ups');
+    const devs = Object.values(s.devices).filter((d) => d.rack && !CAT.infra(CAT.devices[d.model]));
     const cat = (d) => CAT.devices[d.model].cat;
     const hasLinks = (id) => Q.linksOf(id).length > 0 || s.isp.some((c) => c.router === id);
     const byNum = (a, b) => parseInt(a.id.slice(1), 10) - parseInt(b.id.slice(1), 10);

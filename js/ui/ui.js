@@ -267,8 +267,12 @@
       UI.scenSide(wrap, closeBtn);
     } else if (ch) {
       const done = ch.objectives.filter((o) => s.obj[o.id]).length;
+      /* 舊存檔已經破關，但後來新增了章節：可以接著玩 */
+      const more = s.won && s.chapter < G.Campaign.chapters.length - 1;
       wrap.append(
         h('div', { class: 'row between' }, h('span', { class: 'label' }, s.won ? '劇情完成 · 自由營運中' : `劇情模式 · 第 ${s.chapter + 1} / ${G.Campaign.chapters.length} 章`), closeBtn),
+        more ? h('div', { class: 'note info small', style: { margin: '6px 0' } }, h('b', {}, '新章節開放　'), G.Campaign.chapters[s.chapter + 1].title,
+          h('button', { class: 'btn primary xs', style: { marginLeft: '6px' }, onclick: () => { s.won = false; G.Campaign.nextChapter(s); UI.renderSide(); } }, '開始')) : null,
         h('div', { class: 'ch-title' }, ch.title),
         h('div', { class: 'prog' }, h('div', { class: 'bar grow' }, h('i', { style: { width: (done / ch.objectives.length) * 100 + '%' } })), h('span', { class: 'mono small' }, `${done}/${ch.objectives.length}`)),
       );
@@ -447,7 +451,7 @@
     UI.modal({
       kicker: '全劇情完成', title: '萬人企業網路，建設完成', wide: true, dismissible: false,
       body: [
-        h('p', {}, '從一間空蕩蕩的 B1 機房開始，你規劃了機櫃、路由、防火牆、21 層樓的布線與 Wi-Fi、DMZ、備援與縱深防禦，並在攻擊中守住了公司。'),
+        h('p', {}, '從一間空蕩蕩的 B1 機房開始，你規劃了機櫃、路由、防火牆、21 層樓的布線與 Wi-Fi、DMZ、備援與縱深防禦，在攻擊中守住了公司，最後還建好了 AI 運算中心。'),
         h('div', { class: 'row wrap', style: { gap: '16px' } }, h('div', {}, h('div', { class: 'label' }, '最終分數'), h('div', { class: 'grade mono' }, U.num(score))), h('div', {}, h('div', { class: 'label' }, '資安健檢'), h('div', { class: 'grade' }, g))),
         statsBlock(),
         h('p', { class: 'muted' }, '你可以繼續營運這個網路（隨機事件仍會發生），或回到標題畫面挑戰沙盒模式。'),
@@ -576,7 +580,7 @@
       else go();
     };
     menu.append(
-      h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '五章，從空機房到萬人企業')),
+      h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '六章，從空機房到萬人企業與 AI 運算中心')),
       h('button', { class: 'btn', onclick: () => startNew('sandbox') }, '沙盒模式', h('small', {}, '預算 1.5 億，自由建設')),
       h('button', { class: 'btn', onclick: () => UI.scenPicker() }, '情境挑戰', h('small', {}, '限時處理事件 · 評分')),
       h('button', { class: 'btn ghost', onclick: () => UI.importSave() }, '匯入存檔', h('small', {}, '')));

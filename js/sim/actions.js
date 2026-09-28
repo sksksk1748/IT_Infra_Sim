@@ -36,23 +36,41 @@
   const need = (amount) => err(`預算不足：需要 ${U.money(amount)}，目前只有 ${U.money(G.S.money)}`);
 
   /* ---------- 機櫃與機房設施 ---------- */
-  Act.buyRack = () => {
+  /** 採購機櫃：一般 42U 機櫃（PDU 8 kW），或 AI 機櫃（ORv3，電力由電源櫃決定） */
+  Act.buyRack = (type) => {
     const s = G.S;
+    const ai = type === 'ai';
+    const spec = ai ? CAT.rack.ai : CAT.rack;
     if (s.racks.length >= CAT.rack.maxRacks) return err('B1 機房的空間最多容納 10 座機櫃');
-    if (!Act.spend(CAT.rack.price, '採購 42U 機櫃')) return need(CAT.rack.price);
-    const id = 'R' + (s.racks.length + 1);
-    s.racks.push({ id });
+    if (ai && !Q.unlocked(spec)) return err(`第 ${spec.unlock} 章解鎖`);
+    if (ai && s.racks.filter((r) => r.type === 'ai').length >= spec.max) return err(`AI 機櫃最多 ${spec.max} 座（機房的電力與液冷管路有限）`);
+    if (!Act.spend(spec.price, ai ? `採購 ${spec.name}` : '採購 42U 機櫃')) return need(spec.price);
+    const prefix = ai ? 'A' : 'R';
+    let n = s.racks.filter((r) => (r.type === 'ai') === ai).length + 1;
+    while (s.racks.some((r) => r.id === prefix + n)) n++;
+    const id = prefix + n;
+    s.racks.push(ai ? { id, type: 'ai', bbu: 1 } : { id });
     changed('rack');
-    return ok(`機櫃 ${id} 已就位`, { id });
+    return ok(ai ? `AI 機櫃 ${id} 已就位：先裝電源櫃（PSU）與 BBU，才能裝 GPU 伺服器` : `機櫃 ${id} 已就位`, { id });
+  };
+  Act.setCoolSet = (v) => {
+    const s = G.S;
+    if (!CAT.coolSets.includes(v)) return err('不支援的溫度');
+    s.coolSet = v;
+    changed('room');
+    return ok(`空調送風溫度設定為 ${v}°C`);
   };
   Act.buyRoom = (model) => {
     const s = G.S, m = CAT.room[model];
     if (!m || m.buyable === false) return err('無法採購');
     if (!Q.unlocked(m)) return err(`第 ${m.unlock} 章解鎖`);
+    if (m.kind === 'fire' && s.room.some((r) => r.model === model)) return err(`已經有${m.name}了`);
     const count = s.room.filter((r) => CAT.room[r.model].kind === m.kind).length;
     if (count >= CAT.roomSlots[m.kind]) return err('機房已沒有空間放置更多這類設備');
     if (!Act.spend(m.price, `採購 ${m.name}`)) return need(m.price);
-    s.room.push({ id: Q.nextId('rm'), model, status: 'ok', readyAt: s.time + (m.buildMin || 0) });
+    let id = Q.nextId('rm');
+    while (s.room.some((r) => r.id === id)) id = Q.nextId('rm');
+    s.room.push({ id, model, status: 'ok', readyAt: s.time + (m.buildMin || 0) });
     changed('room');
     return ok(`${m.name} 施工安裝中，約 ${U.dur(m.buildMin || 0)} 後啟用`);
   };
@@ -66,6 +84,16 @@
     changed('room');
     return ok(`已拆除 ${m.name}`);
   };
+  /** 氣體滅火系統釋放後補充鋼瓶 */
+  Act.refillGas = (id) => {
+    const s = G.S, r = s.room.find((x) => x.id === id);
+    if (!r || r.status !== 'discharged') return err('氣體滅火系統沒有釋放過');
+    const cost = CAT.room[r.model].refill || 350000;
+    if (!Act.spend(cost, '補充滅火氣體鋼瓶')) return need(cost);
+    r.status = 'ok'; r.readyAt = s.time + 240;
+    changed('room');
+    return ok('鋼瓶補充中，約 4 小時後恢復保護');
+  };
   Act.repairRoom = (id) => {
     const s = G.S, r = s.room.find((x) => x.id === id);
     if (!r || r.status !== 'failed') return err('此設備沒有故障');
@@ -77,9 +105,9 @@
   };
 
   /* ---------- 設備 ---------- */
-  const PREFIX = { router: 'RTR', firewall: 'FW', server: 'SRV', wlc: 'WLC', ups: 'UPS' };
+  const PREFIX = { router: 'RTR', firewall: 'FW', server: 'SRV', wlc: 'WLC', ups: 'UPS', power: 'PSU', bbu: 'BBU' };
   function defaultName(m) {
-    const p = m.cat === 'switch' ? (m.layer === 3 ? 'CORE' : 'SW') : PREFIX[m.cat];
+    const p = m.gpu ? 'GPU' : m.roles && m.roles[0] === 'aistore' ? 'AIS' : m.ai && m.cat === 'switch' ? 'AISW' : m.cat === 'switch' ? (m.layer === 3 ? 'CORE' : 'SW') : PREFIX[m.cat];
     const names = new Set(Object.values(G.S.devices).map((d) => d.name));
     let n = 1;
     while (names.has(`${p}-${n}`)) n++;
@@ -95,7 +123,8 @@
     const ids = [];
     for (let i = 0; i < qty; i++) {
       const id = Q.nextId('d');
-      s.devices[id] = { id, model, name: defaultName(m), rack: null, u: null, role: null, status: 'ok', bootUntil: 0, boughtAt: s.time };
+      /* 只有一種用途的伺服器（AI 運算、AI 儲存）直接設好角色 */
+      s.devices[id] = { id, model, name: defaultName(m), rack: null, u: null, role: m.roles && m.roles.length === 1 && m.ai ? m.roles[0] : null, status: 'ok', bootUntil: 0, boughtAt: s.time };
       ids.push(id);
     }
     changed('devices');
@@ -118,14 +147,33 @@
   };
   /** 機櫃目前用電（W） */
   Act.rackLoad = (rackId, ignoreId) => U.sum(Object.values(G.S.devices).filter((d) => d.rack === rackId && d.id !== ignoreId && d.status !== 'failed'), (d) => CAT.devices[d.model].watts);
+  /** 能不能裝進這座機櫃（空間以外的條件：機櫃類型與電力） */
+  Act.rackCheck = (d, rackId) => {
+    const s = G.S, m = CAT.devices[d.model];
+    const rack = s.racks.find((r) => r.id === rackId);
+    if (!rack) return '找不到機櫃';
+    const ai = rack.type === 'ai';
+    if (m.aiRack && !ai) return `${m.name} 要裝在 AI 機櫃（ORv3，背面有 54V 匯流排${m.liquid ? '與液冷管路' : ''}）。請先採購 AI 機櫃。`;
+    const load = Act.rackLoad(rackId, d.id);
+    if (!ai) {
+      if (load + m.watts > CAT.rack.powerLimit) return `機櫃 ${rackId} 的 PDU 只剩 ${Math.max(0, CAT.rack.powerLimit - load)} W，裝上 ${d.name}（${m.watts} W）會超過 ${CAT.rack.powerLimit / 1000} kW 上限、讓斷路器跳脫。請換一座機櫃。`;
+      return null;
+    }
+    if (m.watts > 0) {
+      const p = G.Fac.aiRackPower(rackId);
+      if (p.total <= 0) return `AI 機櫃 ${rackId} 還沒有電源櫃：先裝一台 PS-33 電源櫃（PSU），機櫃才有電。`;
+      if (load + m.watts > p.total) return `AI 機櫃 ${rackId} 的電源櫃只能供 ${(p.total / 1000).toFixed(1)} kW，裝上 ${d.name}（${(m.watts / 1000).toFixed(1)} kW）會超過容量而跳電。請再加裝一台電源櫃。`;
+    }
+    return null;
+  };
   Act.installDevice = (id, rackId, u) => {
     const s = G.S, d = s.devices[id];
     if (!d) return err('找不到設備');
     if (!s.racks.find((r) => r.id === rackId)) return err('找不到機櫃');
     const m = CAT.devices[d.model];
     if (!Act.fits(rackId, u, m.u, d.id)) return err(`這個位置放不下（需要 ${m.u}U 連續空間）`);
-    const load = Act.rackLoad(rackId, d.id);
-    if (load + m.watts > CAT.rack.powerLimit) return err(`機櫃 ${rackId} 的 PDU 只剩 ${Math.max(0, CAT.rack.powerLimit - load)} W，裝上 ${d.name}（${m.watts} W）會超過 ${CAT.rack.powerLimit / 1000} kW 上限、讓斷路器跳脫。請換一座機櫃。`);
+    const bad = Act.rackCheck(d, rackId);
+    if (bad) return err(bad);
     d.rack = rackId; d.u = u;
     d.bootUntil = s.time + (CAT.bootMin[m.cat] || 5);
     topo();
@@ -136,15 +184,19 @@
     const s = G.S, d = s.devices[id];
     if (!d) return err('找不到設備');
     const m = CAT.devices[d.model];
+    /* 電源櫃、BBU 放 AI 機櫃最下面；網路設備由上往下放；其他由下往上 */
     const topDown = ['router', 'firewall', 'switch', 'wlc'].includes(m.cat);
-    let noPower = false;
-    for (const r of s.racks) {
-      if (Act.rackLoad(r.id, d.id) + m.watts > CAT.rack.powerLimit) { noPower = true; continue; }
+    /* AI 設備優先放 AI 機櫃，一般設備優先放一般機櫃 */
+    const racks = s.racks.slice().sort((a, b) => ((a.type === 'ai') === !!m.ai ? 0 : 1) - ((b.type === 'ai') === !!m.ai ? 0 : 1));
+    let why = null;
+    for (const r of racks) {
+      const bad = Act.rackCheck(d, r.id);
+      if (bad) { why = why || bad; continue; }
       if (topDown) { for (let u = CAT.rack.units - m.u + 1; u >= 1; u--) if (Act.fits(r.id, u, m.u, d.id)) return Act.installDevice(id, r.id, u); }
       else { for (let u = 1; u <= CAT.rack.units - m.u + 1; u++) if (Act.fits(r.id, u, m.u, d.id)) return Act.installDevice(id, r.id, u); }
     }
     if (!s.racks.length) return err('還沒有機櫃，請先採購 42U 機櫃');
-    return err(noPower ? '現有機櫃的空間或電力（每座 8 kW）都不夠了，請再採購一座機櫃' : '所有機櫃都滿了，請再採購一座機櫃');
+    return err(why || '所有機櫃都滿了，請再採購一座機櫃');
   };
   Act.uninstallDevice = (id) => {
     const d = G.S.devices[id];
@@ -250,7 +302,7 @@
     count = Math.max(1, Math.min(8, count | 0));
     if (a === b) errs.push('不能連到自己');
     if (ka === 'internet' || kb === 'internet' || ka === 'isp' || kb === 'isp') errs.push('ISP 線路請在 ISP 節點上選「接到路由器」');
-    if (ka === 'ups' || kb === 'ups') errs.push('UPS 不是網路設備');
+    if (['ups', 'power', 'bbu'].includes(ka) || ['ups', 'power', 'bbu'].includes(kb)) errs.push('UPS、電源櫃與 BBU 不是網路設備');
     if (ka === 'floor' && kb === 'floor') errs.push('樓層之間不直接互連，請各自上連到 B1 核心');
     const endpoint = (k) => k === 'server' || k === 'wlc';
     if ((ka === 'floor' && endpoint(kb)) || (kb === 'floor' && endpoint(ka))) errs.push('樓層 IDF 應上連到交換器（核心），不是伺服器');

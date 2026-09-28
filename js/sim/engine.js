@@ -133,12 +133,15 @@
     }
   }
 
+  /** 過熱與結露：機房太熱（> 35°C）或太潮濕（> 65%）時，設備會隨機故障 */
   function heatFailures(s) {
-    if (s.temp <= 35 || !G.R.fac || !G.R.fac.mdfPowered) return;
-    const p = (s.temp - 35) * 0.00035;
+    if (!G.R.fac || !G.R.fac.mdfPowered) return;
+    const hot = s.temp > 35, humid = s.hum > 65;
+    if (!hot && !humid) return;
+    const p = (hot ? (s.temp - 35) * 0.00035 : 0) + (humid ? (s.hum - 65) * 0.000012 : 0);
     for (const d of Object.values(s.devices)) {
-      if (!d.rack || d.status !== 'ok' || CAT.devices[d.model].cat === 'ups') continue;
-      if (Math.random() < p) G.Ev.start('hw-fail', { dev: d.id, heat: true });
+      if (!d.rack || d.status !== 'ok' || CAT.infra(CAT.devices[d.model])) continue;
+      if (Math.random() < p) G.Ev.start('hw-fail', { dev: d.id, heat: hot, humid: !hot && humid });
     }
   }
 
@@ -167,7 +170,9 @@
     const kw = G.R.fac ? G.R.fac.kw : 0;
     const power = kw * 24 * CAT.power.perKWh;
     const income = Q.employees() * 14 * (0.4 + s.rating / 100);
-    return { isp, svc, maint, power, income };
+    /* AI 平台帶來的研發效率：每 1 PFLOPS 有效算力每天約 NT$6 萬 */
+    const ai = G.R.ai ? G.R.ai.pflops * 60000 : 0;
+    return { isp, svc, maint, power, income: income + ai, ai };
   };
 
   function daily(s) {
@@ -180,7 +185,7 @@
     s.stats.income += income;
     s.stats.spent += cost;
     s.lastDaily = { t: s.time, income, isp: Math.round(c.isp), svc: Math.round(c.svc), maint: Math.round(c.maint), power: Math.round(power) };
-    G.Act.log(`每日結算：營運預算 +${U.money(income)}；ISP ${U.money(c.isp)}、資安服務 ${U.money(c.svc)}、維護 ${U.money(c.maint)}、電費 ${U.money(power)}`, 'money');
+    G.Act.log(`每日結算：營運預算 +${U.money(income)}${c.ai > 0 ? `（含 AI 平台效益 ${U.money(c.ai)}）` : ''}；ISP ${U.money(c.isp)}、資安服務 ${U.money(c.svc)}、維護 ${U.money(c.maint)}、電費 ${U.money(power)}`, 'money');
     for (const k in s.ruleHits) s.ruleHits[k] = Math.round(s.ruleHits[k] * 0.5);
   }
 

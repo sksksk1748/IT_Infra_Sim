@@ -17,8 +17,14 @@
     if (!d || !d.rack || d.status !== 'ok') return false;
     if (s.time < (d.bootUntil || 0)) return false;
     const fac = G.R.fac;
-    if (fac && (!fac.mdfPowered || fac.rackTripped[d.rack])) return false;
+    if (fac && Net.rackDown(d.rack)) return false;
     return true;
+  };
+  /** 機櫃斷電：一般機櫃看機房供電與 PDU，AI 機櫃看電源櫃與 BBU */
+  Net.rackDown = (rackId) => {
+    const fac = G.R.fac;
+    if (!fac) return false;
+    return fac.rackDown ? !!fac.rackDown[rackId] : (!fac.mdfPowered || !!fac.rackTripped[rackId]);
   };
   Net.floorUp = (fid) => {
     const fs = G.S.floors[fid];
@@ -55,7 +61,7 @@
     add('INET', { kind: 'internet', transit: false });
     for (const d of Object.values(s.devices)) {
       const m = CAT.devices[d.model];
-      if (m.cat === 'ups' || !Net.devUp(d)) continue;
+      if (CAT.infra(m) || !Net.devUp(d)) continue;
       add(d.id, { kind: m.cat, transit: m.cat === 'router' || m.cat === 'firewall' || m.cat === 'switch', dev: d, m });
     }
     /* 防火牆 HA：兩台以線路互連 → 編號小的為 Active，另一台 Standby 不參與轉送 */
@@ -398,6 +404,22 @@
       const scale = 0.15 + Q.employees() / 10000;
       for (const fsv of files) flows.push({ id: 'bkp:' + fsv.id, stage: 3, kind: 'backup', src: fsv.id, dst: 'ROLE:backup', fwd: 2600 * scale / files.length, rev: 20, zs: Net.ruleZone(fsv.id), zd: null, svc: ['SMB'] });
     }
+    /* AI 訓練：GX-8 之間的環狀 all-reduce（每一步都要同步參數），以及從 AI 儲存讀取訓練資料 */
+    const aiSrv = Q.roleServers('ai').filter((d) => d.rack).sort((a, b) => idNum(a.id) - idNum(b.id));
+    const aiUp = aiSrv.filter((d) => g.nodes.has(d.id));
+    const trainers = aiUp.filter((d) => CAT.devices[d.model].gpu >= 8);
+    const aiRing = [], aiData = [];
+    if (trainers.length >= 2) {
+      trainers.forEach((a, i) => {
+        const b = trainers[(i + 1) % trainers.length];
+        const f = { id: 'ai:' + a.id, stage: 3, kind: 'ai', src: a.id, dst: b.id, fwd: 200000, rev: 0, zs: Net.ruleZone(a.id), zd: Net.ruleZone(b.id), svc: ['RDMA'] };
+        flows.push(f); aiRing.push(f);
+      });
+    }
+    for (const d of aiUp) {
+      const f = { id: 'aid:' + d.id, stage: 3, kind: 'aidata', src: d.id, dst: 'ROLE:aistore', fwd: 400, rev: CAT.devices[d.model].gpu >= 8 ? 25000 : 6000, zs: Net.ruleZone(d.id), zd: null, svc: ['NFS'] };
+      flows.push(f); aiData.push(f);
+    }
     /* 攻擊流量（由資安事件產生） */
     for (const af of G.R.attackFlows || []) flows.push(Object.assign({ stage: 4, kind: 'attack' }, af));
 
@@ -600,11 +622,30 @@
     const prevSat = G.R.sim ? G.R.sim.sat : null;
     const sat = demTot >= 20 ? satSum / demTot : (prevSat !== null && prevSat !== undefined ? prevSat : null);
 
+    /* ---- AI 算力利用率 = 供電 × 散熱 × 後端網路 × 儲存 ---- */
+    G.R.ai = null;
+    if (aiSrv.length) {
+      const fac = G.R.fac || { thermal: 1 };
+      const pfAll = U.sum(aiSrv, (d) => CAT.devices[d.model].pf || 0);
+      const pfUp = U.sum(aiUp, (d) => CAT.devices[d.model].pf || 0);
+      const ratio = (f) => (f.blocked ? 0 : (f.fwd + f.rev > 0 ? (f.dFwd + f.dRev) / (f.fwd + f.rev) : 1));
+      const fabric = aiRing.length ? U.sum(aiRing, ratio) / aiRing.length : 1;
+      const hasStore = g.nodes.has('ROLE:aistore');
+      const storage = !aiData.length ? 1 : hasStore ? 0.5 + 0.5 * U.sum(aiData, ratio) / aiData.length : 0.5;
+      const liquidUp = aiUp.some((d) => CAT.devices[d.model].liquid);
+      const thermal = liquidUp ? fac.thermal : 1;
+      const capF = mods.gpuCap ? Math.min(1, ...aiUp.map((d) => mods.gpuCap[d.rack] || 1)) : 1;
+      const power = pfAll > 0 ? pfUp / pfAll : 0;
+      const util = U.clamp(power * thermal * fabric * storage * capF, 0, 1);
+      G.R.ai = { servers: aiSrv.length, up: aiUp.length, trainers: trainers.length, gpus: U.sum(aiSrv, (d) => CAT.devices[d.model].gpu || 0),
+        pfAll, power, thermal, fabric, storage, hasStore, capF, util, pflops: pfAll * util };
+    }
+
     G.R.sim = {
       t, graph: g, flows, floors: floorSt, links: linkSt, isp: ispSt, nodes: nodeInfo,
       wan: { in: wanIn, out: wanOut, cap: wanCap }, intra, users: demTot, employees: Q.employees(),
       sat, lat: demTot > 0 ? latSum / demTot : 0, loss: demTot > 0 ? lossSum / demTot : 0,
-      web, dhcp: dhcpInfo, adResolves, lanDnsDirect, util, load, wlcManaged,
+      web, dhcp: dhcpInfo, adResolves, lanDnsDirect, util, load, wlcManaged, ai: G.R.ai,
     };
     return G.R.sim;
   };

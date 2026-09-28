@@ -14,10 +14,14 @@
     server:   { name: '伺服器', en: 'Server', color: '#5aa9f0' },
     wlc:      { name: '無線控制器', en: 'WLC', color: '#e6a23c' },
     ups:      { name: '機架式 UPS', en: 'UPS', color: '#9aa7ad' },
+    power:    { name: '電源櫃', en: 'Power Shelf', color: '#f2c14e' },
+    bbu:      { name: '電池備援', en: 'BBU', color: '#e86fa8' },
   };
+  /** 不是網路設備（沒有連接埠、不出現在拓撲圖）：UPS、電源櫃、BBU */
+  CAT.infra = (m) => m.cat === 'ups' || m.cat === 'power' || m.cat === 'bbu';
 
   /* 開機時間（遊戲分鐘） */
-  CAT.bootMin = { router: 5, firewall: 8, switch: 4, server: 10, wlc: 6, ups: 1 };
+  CAT.bootMin = { router: 5, firewall: 8, switch: 4, server: 10, wlc: 6, ups: 1, power: 1, bbu: 1 };
 
   /* ---------- 機房設備（安裝在 B1 機櫃中） ----------
    * ports: rj45 = 1G 銅纜埠；sfp = SFP+/SFP28 光纖埠（上限 sfpMax）；qsfp = 40/100G 埠
@@ -85,6 +89,26 @@
     'UPS-10K': { cat: 'ups', name: 'UPS-10K 機架式不斷電系統', price: 190000, u: 5, watts: 0, capW: 9000, runtime: 10,
       ports: { rj45: 0, sfp: 0, qsfp: 0 }, unlock: 1,
       desc: '10 kVA（約 9 kW），滿載可撐約 10 分鐘。停電時讓設備不中斷。' },
+
+    /* ---------- AI 運算（第六章）：ai = 在「AI 運算」採購頁；aiRack = 只能裝在 AI 機櫃 ---------- */
+    'GX-8': { cat: 'server', ai: true, aiRack: true, name: 'GX-8 AI 訓練伺服器（8 × GPU）', price: 9800000, u: 8, watts: 10200, gpu: 8, pf: 16, liquid: 0.8,
+      ports: { rj45: 0, sfp: 2, qsfp: 8 }, sfpMax: 25000, qsfpMax: 400000, roles: ['ai'], unlock: 6,
+      desc: '8 顆資料中心 GPU 以 NVLink 互連。單台約 10 kW，GPU 用直接液冷；每顆 GPU 配一張 400G 網卡接 AI 後端網路。只能裝在 AI 機櫃。' },
+    'GX-4': { cat: 'server', ai: true, name: 'GX-4 AI 推論伺服器（4 × GPU）', price: 2600000, u: 4, watts: 3200, gpu: 4, pf: 4, liquid: 0,
+      ports: { rj45: 0, sfp: 2, qsfp: 2 }, sfpMax: 25000, qsfpMax: 400000, roles: ['ai'], unlock: 6,
+      desc: '4 顆推論用 GPU、氣冷、3.2 kW：一般機櫃也放得下（一座最多兩台）。適合跑企業內部的 AI 助理。' },
+    'ST-AI': { cat: 'server', ai: true, name: 'ST-AI 全快閃 AI 儲存', price: 3600000, u: 2, watts: 1500,
+      ports: { rj45: 0, sfp: 0, qsfp: 4 }, sfpMax: 0, qsfpMax: 400000, roles: ['aistore'], unlock: 6,
+      desc: '24 顆 NVMe SSD、4 × 400G。訓練時 GPU 要不停讀取資料，儲存太慢 GPU 就只能空等。' },
+    'AF-6400': { cat: 'switch', layer: 2, ai: true, name: 'AF-6400 AI 後端交換器（64 × 400G）', price: 4800000, u: 2, watts: 2200,
+      ports: { rj45: 0, sfp: 0, qsfp: 64 }, sfpMax: 0, qsfpMax: 400000, unlock: 6,
+      desc: '51.2 Tbps 的 AI 叢集交換器，支援 RoCE 無損乙太網路。GPU 之間同步參數的流量走這張「後端網路」，不經過企業核心。' },
+    'PS-33': { cat: 'power', ai: true, aiRack: true, name: 'PS-33 電源櫃（6 × 5.5 kW PSU）', price: 420000, u: 1, watts: 0, psuN: 6, psuW: 5500,
+      ports: { rj45: 0, sfp: 0, qsfp: 0 }, unlock: 6,
+      desc: 'AI 機櫃的電源：把市電 AC 轉成 54V 直流，經機櫃背面的銅排（busbar）供電給每台伺服器。6 個 PSU 可熱插拔，要留一個當備援（N+1）。' },
+    'BBU-6': { cat: 'bbu', ai: true, aiRack: true, name: 'BBU-6 電池備援櫃（6 × 3 kW）', price: 380000, u: 1, watts: 0, bbuW: 18000, holdMin: 4,
+      ports: { rj45: 0, sfp: 0, qsfp: 0 }, unlock: 6,
+      desc: '鋰電池模組直接掛在 54V 匯流排上：停電時瞬間接手，撐到發電機啟動（約 1 分鐘）。18 kW 滿載約 4 分鐘，負載越輕撐越久。' },
   };
 
   /* ---------- 機房設施（非機櫃設備） ---------- */
@@ -99,9 +123,28 @@
       desc: '機房級不斷電系統，約 72 kW，滿載約 15 分鐘。' },
     'GEN-250': { kind: 'generator', name: '柴油發電機 250kVA', capW: 200000, price: 2600000, powerKW: 0, unlock: 4, buildMin: 480,
       desc: '市電中斷約 1 分鐘後自動啟動，可長時間供電（含空調）。需搭配 UPS 撐過啟動空窗。' },
+    /* 消防：每種各一套 */
+    'VESDA': { kind: 'fire', name: '極早期偵煙系統 VESDA', price: 480000, powerKW: 0, unlock: 3, buildMin: 180,
+      desc: '抽氣式偵煙：取樣管不停抽機房空氣檢測微粒，設備過熱「還只是冒煙」時就告警，比一般偵煙器早幾十分鐘，來得及在起火前處理。' },
+    'PREACT': { kind: 'fire', name: '預動式灑水系統', price: 650000, powerKW: 0, unlock: 3, buildMin: 360,
+      desc: '平時管內沒有水，要「偵煙器動作」加上「灑水頭受熱破裂」兩個條件才放水：管線被撞或滲漏不會淹機房，起火時也只在火源區放水。' },
+    'GAS-FS': { kind: 'fire', name: '潔淨氣體滅火系統', price: 1900000, powerKW: 0, unlock: 4, buildMin: 480, refill: 350000,
+      desc: '以惰性氣體 / 潔淨藥劑滅火：不導電、不留殘渣，設備不會泡水。釋放前警報並延遲 30 秒讓人員撤離，機房要保持密閉。' },
+    /* 環控 */
+    'EMS-1': { kind: 'ems', name: '機房環境監控系統（EMS）', price: 380000, powerKW: 0.2, unlock: 3, buildMin: 120,
+      desc: '溫濕度感測器、漏水偵測線、煙霧、門禁與電力監測，一有異常就發簡訊告警。沒有它，往往要等設備出事才知道。' },
+    /* 空調效率 */
+    'CONTAIN': { kind: 'contain', name: '冷熱通道封閉', price: 420000, powerKW: 0, unlock: 3, buildMin: 240,
+      desc: '用門板與頂板把冷通道（或熱通道）封起來，冷風不再和熱風混在一起：同樣的空調能多帶走約 20% 的熱，也更省電（PUE 下降）。' },
+    /* AI 液冷 */
+    'CDU-100': { kind: 'cdu', name: '液冷分配單元 CDU-100', coolKW: 100, price: 2400000, powerKW: 4, unlock: 6, buildMin: 360,
+      desc: '把冷卻液送進 AI 伺服器 GPU 上的冷板（直接液冷），一台帶走 100 kW 的熱。AI 機櫃動輒 40 kW 以上，光靠空調吹不涼。' },
   };
-  CAT.roomSlots = { cooling: 4, ups: 2, generator: 1 };
-  CAT.rack = { price: 55000, units: 42, powerLimit: 8000, maxRacks: 10 };
+  CAT.roomSlots = { cooling: 4, ups: 2, generator: 1, fire: 3, ems: 1, contain: 1, cdu: 2 };
+  CAT.rack = { price: 55000, units: 42, powerLimit: 8000, maxRacks: 10,
+    ai: { price: 380000, max: 4, unlock: 6, name: 'ORv3 AI 機櫃', desc: '寬機櫃、背面有 54V 銅排（busbar）與液冷歧管。沒有 PDU：電力由你裝進去的電源櫃（PSU）決定。' } };
+  /** 送風溫度設定（°C）：越高越省電、但出事時升溫得越快 */
+  CAT.coolSets = [18, 21, 24];
 
   /* ---------- 樓層 IDF 接入交換器 ---------- */
   CAT.access = {
@@ -134,27 +177,27 @@
   };
 
   /* ---------- 線材與光模組 ---------- */
-  CAT.speeds = [1000, 10000, 25000, 40000, 100000];
+  CAT.speeds = [1000, 10000, 25000, 40000, 100000, 400000];
   CAT.cables = {
     cat6:  { name: 'Cat6 銅纜', short: 'Cat6', medium: 'copper', perM: 25, termCost: 300, color: '#4f86e8',
       max: { 1000: 100, 10000: 55 }, desc: '最常見的網路線。1G 可跑 100m；10G 只能跑 55m。' },
     cat6a: { name: 'Cat6A 銅纜', short: 'Cat6A', medium: 'copper', perM: 45, termCost: 400, color: '#7aa2f7',
       max: { 1000: 100, 10000: 100 }, desc: '強化屏蔽，10G 可跑滿 100m。銅纜最長就是 100m。' },
     om4:   { name: 'OM4 多模光纖', short: 'OM4', medium: 'mmf', perM: 70, termCost: 2000, color: '#2fc6b8',
-      max: { 1000: 550, 10000: 400, 25000: 100, 40000: 150, 100000: 100 }, desc: '水藍色外皮。短距離高速首選，光模組便宜；但 100G 只能跑 100m。' },
+      max: { 1000: 550, 10000: 400, 25000: 100, 40000: 150, 100000: 100, 400000: 100 }, desc: '水藍色外皮。短距離高速首選，光模組便宜；但 100G / 400G 只能跑 100m。' },
     os2:   { name: 'OS2 單模光纖', short: 'OS2', medium: 'smf', perM: 40, termCost: 2500, color: '#f2c14e',
-      max: { 1000: 10000, 10000: 10000, 25000: 10000, 40000: 10000, 100000: 10000 }, desc: '黃色外皮。可傳 10 公里以上，線便宜但光模組較貴。' },
+      max: { 1000: 10000, 10000: 10000, 25000: 10000, 40000: 10000, 100000: 10000, 400000: 2000 }, desc: '黃色外皮。可傳 10 公里以上（400G FR4 約 2 公里），線便宜但光模組較貴。' },
   };
   /* 每一端的光模組 / 模組價格 */
   CAT.optics = {
     copper: { 1000: 1000, 10000: 4500 },
-    mmf:    { 1000: 1500, 10000: 2800, 25000: 4800, 40000: 9500, 100000: 22000 },
-    smf:    { 1000: 2500, 10000: 6000, 25000: 11000, 40000: 28000, 100000: 52000 },
+    mmf:    { 1000: 1500, 10000: 2800, 25000: 4800, 40000: 9500, 100000: 22000, 400000: 68000 },
+    smf:    { 1000: 2500, 10000: 6000, 25000: 11000, 40000: 28000, 100000: 52000, 400000: 120000 },
   };
   CAT.opticName = {
     copper: { 1000: '1000BASE-T', 10000: '10GBASE-T' },
-    mmf: { 1000: '1000BASE-SX', 10000: '10GBASE-SR', 25000: '25GBASE-SR', 40000: '40GBASE-SR4', 100000: '100GBASE-SR4' },
-    smf: { 1000: '1000BASE-LX', 10000: '10GBASE-LR', 25000: '25GBASE-LR', 40000: '40GBASE-LR4', 100000: '100GBASE-LR4' },
+    mmf: { 1000: '1000BASE-SX', 10000: '10GBASE-SR', 25000: '25GBASE-SR', 40000: '40GBASE-SR4', 100000: '100GBASE-SR4', 400000: '400GBASE-SR8' },
+    smf: { 1000: '1000BASE-LX', 10000: '10GBASE-LR', 25000: '25GBASE-LR', 40000: '40GBASE-LR4', 100000: '100GBASE-LR4', 400000: '400GBASE-FR4' },
   };
   CAT.riserBuildMin = 120;   /* 跨樓層垂直主幹佈線施工時間 */
 
@@ -197,6 +240,10 @@
       desc: '集中收集防火牆、伺服器、端點日誌並關聯分析，大幅縮短攻擊偵測時間。' },
     backup: { name: '備份伺服器', short: 'BKP',
       desc: '每晚備份檔案伺服器與資料庫。遭勒索軟體加密時的最後防線。' },
+    ai:     { name: 'AI 運算（GPU）', short: 'AI',
+      desc: '訓練與推論企業 AI 模型。多台 GPU 伺服器要透過高速後端網路同步參數，才能一起訓練同一個模型。' },
+    aistore: { name: 'AI 資料儲存', short: 'AIS',
+      desc: '存放訓練資料與模型檢查點（checkpoint）。要夠快，GPU 才不會停下來等資料。' },
   };
 
   /* ---------- 資安與網路服務（訂閱制） ---------- */

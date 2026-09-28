@@ -14,6 +14,40 @@
   const workHours = (t) => !U.isWeekend(t) && U.hourOf(t) >= 9 && U.hourOf(t) < 17;
   const hasOther = (list, pred) => list.some(pred);
 
+  /** 機房火警：冒煙變成起火，損害大小由消防設備決定（氣體滅火 < 預動式灑水 < 一般灑水頭） */
+  function ignite(s, inc) {
+    const d = inc.data;
+    d.stage = 'fire';
+    d.fireTime = s.time;
+    const damaged = [];
+    const hit = (x) => { if (x && x.status === 'ok') { x.status = 'failed'; damaged.push(x.id); } };
+    hit(s.devices[d.dev]);
+    if (!inc.detected) E().detect(inc, '偵煙器動作（已經起火）');
+    inc.title = `機櫃 ${d.rack} 起火`;
+    E().log(inc, `🔥 機櫃 ${d.rack} 起火，濃煙觸發了偵煙器！`);
+    const gas = s.room.find((r) => r.model === 'GAS-FS' && r.status === 'ok' && s.time >= (r.readyAt || 0));
+    const idx = s.racks.findIndex((r) => r.id === d.rack);
+    if (gas) {
+      gas.status = 'discharged';
+      d.suppress = 'gas';
+      E().log(inc, '潔淨氣體滅火系統警報 30 秒後釋放，10 秒內撲滅火源。設備沒有泡水，只有起火的那台燒毀。');
+    } else if (G.Fac.has('PREACT')) {
+      d.suppress = 'preact';
+      for (const x of Object.values(s.devices)) if (x.rack === d.rack && Math.random() < 0.6) hit(x);
+      E().log(inc, `預動式灑水只在火源上方放水，火撲滅了，但機櫃 ${d.rack} 有 ${damaged.length} 台設備泡水損壞。`);
+    } else {
+      d.suppress = 'wet';
+      const near = s.racks.filter((r, i) => Math.abs(i - idx) <= 1).map((r) => r.id);
+      for (const x of Object.values(s.devices)) if (near.includes(x.rack) && Math.random() < 0.7) hit(x);
+      d.powerCutUntil = s.time + 60;
+      E().log(inc, `一般灑水頭動作，整區淋水：${damaged.length} 台設備泡水損壞。消防隊要求切斷機房電源 1 小時。`);
+    }
+    d.damaged = damaged;
+    s.rating = Math.max(0, s.rating - (d.suppress === 'gas' ? 1 : 4));
+    G.bus.emit('change', { what: 'room' });
+  }
+  const repairCost = (s, inc) => Math.round(80000 + U.sum((inc.data.damaged || []).map((id) => s.devices[id]).filter(Boolean), (d) => CAT.devices[d.model].price * 0.25));
+
   G.INC = {
     /* ================= 維運事件 ================= */
     'isp-down': {
@@ -91,7 +125,7 @@
         d.status = 'failed';
         inc.data.dev = d.id;
         inc.title = `${d.name} 硬體故障`;
-        E().log(inc, `${d.name}（${CAT.devices[d.model].name}）電源供應器燒毀，設備停止運作。`);
+        E().log(inc, `${d.name}（${CAT.devices[d.model].name}）${inc.data.humid ? '：機房濕度太高，主機板結露短路' : inc.data.heat ? '：機房過熱，零件燒毀' : '電源供應器燒毀'}，設備停止運作。`);
       },
       tick(s, inc) { const d = s.devices[inc.data.dev]; if (!d || d.status === 'ok') E().resolve(inc, 'fixed'); },
       actions: [
@@ -142,7 +176,7 @@
     },
 
     'cooling-fail': {
-      name: '機房空調故障', cat: 'ops', sev: 'high', kb: 'k-cooling', minCh: 3, cooldown: 2880, detect: 'auto',
+      name: '機房空調故障', cat: 'ops', sev: 'high', kb: 'k-cooling', minCh: 3, cooldown: 2880,
       weight: (s) => (G.Fac.roomUnits('cooling').length && G.R.fac && G.R.fac.itLoad > 3000 ? 0.7 : 0),
       init(s, inc) {
         const us = G.Fac.roomUnits('cooling');
@@ -153,8 +187,11 @@
         inc.data.until = s.time + 360;
         inc.title = `${CAT.room[u.model].name} 故障`;
         E().log(inc, `${CAT.room[u.model].name} 壓縮機跳脫，冷卻能力下降，機房溫度開始上升。`);
+        /* 有環控就立刻知道；沒有的話，要等機房熱到有人發現 */
+        if (G.Fac.has('EMS-1')) E().detect(inc, '環控系統：空調停機告警');
       },
       tick(s, inc) {
+        if (!inc.detected && s.temp >= 29) E().detect(inc, '值班人員發現機房變熱');
         const u = s.room.find((r) => r.id === inc.data.unit);
         if (!u) { E().resolve(inc, 'auto'); return; }
         if (u.status === 'ok' && s.time >= (u.readyAt || 0)) { E().resolve(inc, 'fixed'); return; }
@@ -166,9 +203,188 @@
         { id: 'fans', label: '打開機房門、架設大型風扇', time: 10, verdict: 'neutral', explain: '只能稍微延緩升溫，而且破壞冷熱通道與門禁管制。',
           run(s) { s.temp = Math.max(22, s.temp - 1.5); } },
       ],
+      review(s, inc) {
+        const f = G.R.fac || {};
+        const out = [f.coolN1 >= f.heat ? '其他空調足以承擔熱負載（N+1），溫度維持正常。' : '少了一台空調，冷卻能力就不夠了。機房冷卻應該做到 N+1。'];
+        out.push(inc.detectHow && inc.detectHow.indexOf('環控') >= 0 ? '環控系統在空調停機的當下就發出告警。' : '沒有環境監控，要等機房變熱才發現空調壞了。建議建置 EMS。');
+        return out;
+      },
+    },
+
+    'dc-fire': {
+      name: '機房火警', cat: 'ops', sev: 'crit', kb: 'k-fire', minCh: 3, cooldown: 5760,
+      weight: (s) => { const f = G.R.fac; return f && f.itLoad + (f.aiLoad || 0) > 2000 ? 0.16 + (s.temp > 32 ? 0.3 : 0) : 0; },
+      init(s, inc) {
+        let src = inc.data.dev ? s.devices[inc.data.dev] : null;
+        if (!src) {
+          const cands = Object.values(s.devices).filter((d) => d.rack && d.status === 'ok' && CAT.devices[d.model].cat !== 'bbu');
+          src = U.pick(cands);
+        }
+        if (!src || !src.rack) return false;
+        inc.data.dev = src.id; inc.data.rack = src.rack;
+        inc.data.stage = 'smoke';
+        inc.data.fireAt = s.time + (inc.data.delay || U.randInt(18, 30));
+        inc.title = `機櫃 ${src.rack} 冒煙`;
+        E().log(inc, `${src.name} 的電源模組過熱，絕緣外皮開始冒出肉眼看不見的微量煙霧。`);
+        if (G.Fac.has('VESDA')) E().detect(inc, 'VESDA 極早期偵煙');
+      },
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.stage === 'smoke' && s.time >= d.fireAt) ignite(s, inc);
+        if (d.stage === 'fire' && d.cleaned) E().resolve(inc, 'fixed');
+        else if (d.stage === 'fire' && s.time >= d.fireTime + 720) E().resolve(inc, 'fail');
+      },
+      effects(s, inc, mods) { if (inc.data.powerCutUntil > s.time) mods.mdfOff = true; },
+      actions: [
+        { id: 'isolate', label: '循 VESDA 取樣點找到冒煙的設備，關機並抽出電源模組', time: 10, verdict: 'good',
+          avail: (s, inc) => inc.data.stage === 'smoke', unavail: '已經起火了，來不及',
+          explain: '極早期偵煙的價值：在起火前找到過熱的零件並斷電，火災根本不會發生。',
+          run(s, inc) {
+            if (inc.data.stage !== 'smoke') return;
+            const d = s.devices[inc.data.dev];
+            if (d) d.status = 'failed';
+            inc.data.stage = 'prevented';
+            E().log(inc, `找到了：${d ? d.name : '設備'} 的電源模組已經焦黑。關機抽出後煙霧停止，火災沒有發生（設備需要送修）。`);
+            E().resolve(inc, 'contained');
+          } },
+        { id: 'epo', label: '按下緊急斷電（EPO），整間機房斷電', time: 1, verdict: 'bad',
+          explain: '冒煙階段就全機房斷電，所有服務瞬間中斷；應該精準處理冒煙的那一台。',
+          run(s, inc) { inc.data.powerCutUntil = s.time + 45; E().log(inc, '整間機房斷電 45 分鐘。'); } },
+        { id: 'restore', label: '災後清理、檢測並更換受損設備', cost: (s, inc) => repairCost(s, inc), time: 360, verdict: 'good',
+          avail: (s, inc) => inc.data.stage === 'fire', unavail: '還沒有起火',
+          explain: '確認火源已滅後：清除殘留的水或煙塵、逐台檢測，並更換受損的設備。',
+          run(s, inc) {
+            for (const id of inc.data.damaged || []) { const d = s.devices[id]; if (d && d.status === 'failed') { d.status = 'ok'; d.bootUntil = s.time + 10; } }
+            inc.data.cleaned = true;
+            E().log(inc, '受損設備已更換，機房恢復運作。');
+          } },
+        { id: 'report', label: '通報消防局、保險公司與管理層', time: 10, verdict: 'good', explain: '火災是重大事故，依規定通報並啟動保險理賠。' },
+      ],
+      review(s, inc) {
+        const d = inc.data, out = [];
+        if (d.stage === 'prevented') out.push('VESDA 在冒煙階段就發現異常，火災被阻止在起火之前。');
+        else if (!G.Fac.has('VESDA')) out.push('沒有極早期偵煙（VESDA），一般偵煙器要等起火才動作。');
+        else out.push('VESDA 早就告警了，但冒煙階段沒有及時找出並處理過熱的設備。');
+        if (d.suppress === 'gas') out.push('潔淨氣體滅火撲滅了火源，設備沒有泡水，只有起火的那台燒毀。記得補充鋼瓶。');
+        if (d.suppress === 'preact') out.push('預動式灑水只在火源區放水，但那一區的設備還是泡水了。機房最好用氣體滅火。');
+        if (d.suppress === 'wet') out.push('一般灑水頭整區淋水，還被要求切斷機房電源 —— 損失比火災本身更大。機房應改用氣體滅火。');
+        return out;
+      },
+    },
+
+    'water-leak': {
+      name: '機房漏水', cat: 'ops', sev: 'high', kb: 'k-ems', minCh: 3, cooldown: 4320,
+      weight: (s) => (s.racks.length && Object.values(s.devices).some((d) => d.rack) ? (G.Fac.has('PREACT') ? 0.15 : 0.3) : 0),
+      init(s, inc) {
+        const racks = s.racks.filter((r) => Object.values(s.devices).some((d) => d.rack === r.id));
+        if (!racks.length) return false;
+        const srcs = ['樓上茶水間的水管破裂，水從天花板滲下來'];
+        if (G.Fac.roomUnits('cooling').some((r) => r.model !== 'AC-8')) srcs.push('精密空調的冷凝水盤排水管堵塞，冷凝水溢出');
+        if (!G.Fac.has('PREACT')) srcs.push('天花板上方的濕式灑水管線接頭滲漏');
+        inc.data.src = inc.data.src || U.pick(srcs);
+        inc.data.rack = inc.data.rack || U.pick(racks).id;
+        inc.data.damageAt = s.time + U.randInt(40, 70);
+        inc.title = '機房漏水';
+        E().log(inc, `${inc.data.src}，積水正沿著高架地板下方往機櫃 ${inc.data.rack} 蔓延。`);
+        if (G.Fac.has('EMS-1')) E().detect(inc, '環控漏水偵測線告警');
+      },
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.fixed) { E().resolve(inc, d.damaged ? 'fixed' : 'contained'); return; }
+        if (!d.damaged && s.time >= d.damageAt) {
+          d.damaged = [];
+          const devs = Object.values(s.devices).filter((x) => x.rack === d.rack && x.status === 'ok');
+          devs.sort((a, b) => (a.u || 0) - (b.u || 0));
+          for (const x of devs.slice(0, 1 + Math.floor(Math.random() * 3))) { x.status = 'failed'; d.damaged.push(x.id); }
+          E().log(inc, `⚡ 積水碰到機櫃 ${d.rack} 底部的電源線與設備，${d.damaged.length} 台設備短路故障！`);
+          if (!inc.detected) E().detect(inc, '設備故障後才發現地板下積水');
+        }
+      },
+      actions: [
+        { id: 'fix', label: '關閉水源、叫水電修漏並抽乾積水', cost: 40000, time: 45, verdict: 'good',
+          explain: '先止水、再排水，同時確認有沒有碰到電源。越早處理，設備越不會受損。',
+          run(s, inc) { inc.data.fixed = true; E().log(inc, '漏水處已修復、積水抽乾。'); } },
+        { id: 'tarp', label: '在機櫃上方蓋防水布', time: 10, verdict: 'neutral',
+          explain: '可以擋住上方滴水，但地板下的積水還是會淹到電源線。',
+          run(s, inc) { inc.data.damageAt += 20; } },
+        { id: 'epo', label: '整間機房斷電避免觸電', time: 1, verdict: 'bad',
+          explain: '只有一座機櫃附近積水，整間機房斷電讓所有服務中斷；應該只關閉受影響的迴路並盡快排水。',
+          run(s, inc) { inc.data.powerCutUntil = s.time + 40; } },
+      ],
+      effects(s, inc, mods) { if (inc.data.powerCutUntil > s.time) mods.mdfOff = true; },
+      review(s, inc) {
+        const out = [];
+        out.push(inc.detectHow && inc.detectHow.indexOf('漏水') >= 0 ? '環控的漏水偵測線在積水剛出現時就告警，來得及在設備受損前處理。' : '沒有漏水偵測，要等設備短路才發現。建置環境監控（EMS）就能提早知道。');
+        if (inc.data.damaged && inc.data.damaged.length) out.push(`${inc.data.damaged.length} 台設備受損，記得送修（RMA）。`);
+        return out;
+      },
+    },
+
+    'psu-fail': {
+      name: '電源櫃 PSU 故障', cat: 'ops', sev: 'high', kb: 'k-aipower', minCh: 6, cooldown: 2880, detect: 'auto',
+      weight: (s) => (Object.values(s.devices).some((d) => d.rack && d.status === 'ok' && CAT.devices[d.model].cat === 'power') && G.R.fac && G.R.fac.aiLoad > 0 ? 0.5 : 0),
+      init(s, inc) {
+        const shelves = Object.values(s.devices).filter((d) => d.rack && d.status === 'ok' && CAT.devices[d.model].cat === 'power' && (d.psuFail || 0) < CAT.devices[d.model].psuN);
+        const d = inc.data.dev ? s.devices[inc.data.dev] : U.pick(shelves);
+        if (!d) return false;
+        d.psuFail = (d.psuFail || 0) + 1;
+        inc.data.dev = d.id; inc.data.rack = d.rack;
+        inc.title = `AI 機櫃 ${d.rack} 電源櫃 PSU 故障`;
+        const p = G.Fac.aiRackPower(d.rack), load = G.Act.rackLoad(d.rack);
+        E().log(inc, `${d.name} 的一個 5.5 kW PSU 模組故障停機。機櫃剩餘電源 ${(p.total / 1000).toFixed(1)} kW，負載 ${(load / 1000).toFixed(1)} kW。`);
+        inc.data.tripped = load > p.total;
+        E().log(inc, inc.data.tripped ? '⚡ 剩下的 PSU 撐不住整座機櫃的負載，機櫃跳電！GPU 訓練工作中斷。' : 'N+1 備援發揮作用：其他 PSU 分擔了負載，伺服器沒有斷電。');
+      },
+      tick(s, inc) { const d = s.devices[inc.data.dev]; if (!d || !(d.psuFail > 0)) E().resolve(inc, 'fixed'); },
+      effects(s, inc, mods) { if (inc.data.capped) mods.gpuCap[inc.data.rack] = 0.7; },
+      actions: [
+        { id: 'swap', label: '熱插拔更換 PSU 模組（NT$4.5 萬）', cost: 45000, time: 20, verdict: 'good',
+          explain: 'PSU 設計成可熱插拔：不必關機，抽出故障模組、插上新的就好。',
+          run(s, inc) { const d = s.devices[inc.data.dev]; if (d) d.psuFail = Math.max(0, (d.psuFail || 0) - 1); } },
+        { id: 'cap', label: '暫時降低 GPU 功耗上限（power capping）', time: 5, verdict: 'neutral',
+          explain: '把 GPU 功耗壓到 70%，剩下的 PSU 就撐得住，但訓練會變慢。只是權宜之計。',
+          run(s, inc) { inc.data.capped = true; } },
+        { id: 'reboot', label: '重新開機整座 AI 機櫃', time: 15, verdict: 'bad', explain: 'PSU 是硬體故障，重開機沒有用，還會中斷所有訓練工作。' },
+      ],
+      review(s, inc) {
+        return inc.data.tripped ? ['電源櫃沒有留備援（N+1）：壞一個 PSU 就撐不住整座機櫃。再多裝一台電源櫃，或降低機櫃負載。'] : ['電源櫃有 N+1 備援，壞一個 PSU 也不影響運作 —— 趁上班時間熱插拔更換即可。'];
+      },
+    },
+
+    'cdu-leak': {
+      name: '液冷系統漏液', cat: 'ops', sev: 'high', kb: 'k-liquid', minCh: 6, cooldown: 4320,
+      weight: () => (G.Fac.roomUnits('cdu').length && G.R.fac && G.R.fac.liquidHeat > 0 ? 0.4 : 0),
+      init(s, inc) {
+        const us = G.Fac.roomUnits('cdu');
+        if (!us.length) return false;
+        const u = U.pick(us);
+        u.status = 'failed';
+        inc.data.unit = u.id;
+        inc.title = 'CDU 冷卻液洩漏';
+        E().log(inc, 'CDU 二次側管路的快接頭滲漏，冷卻液壓力下降，CDU 自動停泵保護。');
+        if (G.Fac.has('EMS-1')) E().detect(inc, '環控：CDU 漏液 / 壓力告警');
+      },
+      tick(s, inc) {
+        const u = s.room.find((r) => r.id === inc.data.unit);
+        if (!u) { E().resolve(inc, 'auto'); return; }
+        if (!inc.detected && G.R.fac && G.R.fac.thermal < 0.95) E().detect(inc, '監控發現 GPU 溫度飆高、開始降頻');
+        if (u.status === 'ok' && s.time >= (u.readyAt || 0)) E().resolve(inc, 'fixed');
+      },
+      effects(s, inc, mods) { if (inc.data.capped) for (const r of s.racks) if (r.type === 'ai') mods.gpuCap[r.id] = 0.7; },
+      actions: [
+        { id: 'repair', label: '關閉閥門、更換快接頭並補充冷卻液（NT$12 萬）', cost: 120000, time: 90, verdict: 'good',
+          explain: '先隔離漏液段避免液體碰到電子零件，再更換零件、補液、排氣泡。',
+          run(s, inc) { const u = s.room.find((r) => r.id === inc.data.unit); if (u) { u.status = 'ok'; u.readyAt = s.time; } } },
+        { id: 'cap', label: '暫時降低 GPU 功耗上限', time: 5, verdict: 'neutral',
+          explain: 'GPU 發熱變少，剩下的液冷容量比較撐得住，但算力也跟著下降。',
+          run(s, inc) { inc.data.capped = true; } },
+        { id: 'fans', label: '打開機房門、加大空調風量', time: 5, verdict: 'bad',
+          explain: '液冷伺服器的熱主要靠冷卻液帶走，對 GPU 吹風幫助很小，還破壞機房門禁與溫濕度控制。' },
+      ],
       review() {
         const f = G.R.fac || {};
-        return f.coolN1 >= f.heat ? ['其他空調足以承擔熱負載（N+1），溫度維持正常。'] : ['少了一台空調，冷卻能力就不夠了。機房冷卻應該做到 N+1。'];
+        return [f.cduN1 >= f.liquidHeat && f.liquidHeat > 0 ? '另一台 CDU 撐住了液冷負載（N+1）。' : '液冷只有一台 CDU（或容量不足）就是單點故障：壞了 GPU 只能降頻。',
+          '漏液偵測（環控）能在冷卻液碰到電子零件前就發現。'];
       },
     },
 

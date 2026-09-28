@@ -64,6 +64,10 @@
     const ground = new T.Mesh(new T.ShapeGeometry(gs), K.std('#27313a', { roughness: 0.95, metalness: 0 }));
     ground.rotation.x = -Math.PI / 2;
     root.add(ground);
+    /* 周邊街景：大道、斑馬線、行人與車流、行道樹、路燈、對面街廓、公園 */
+    const city = M3.city ? M3.city(api) : null;
+    if (city) root.add(city.obj);
+    let nightK = 0;
 
     /* ---------- B1 機房 ---------- */
     const concrete = K.std('#39434b', { roughness: 0.9, metalness: 0.05 });
@@ -539,7 +543,7 @@
         const m = CAT.devices[d.model];
         let hex = CAT.categories[m.cat].color, blink = 0;
         if (d.status === 'failed' || d.status === 'rma' || d.encrypted) { hex = '#ff4d4d'; blink = 4; }
-        else if (fac && (!fac.mdfPowered || fac.rackTripped[d.rack])) hex = '#20262b';
+        else if (fac && G.Net.rackDown(d.rack)) hex = '#20262b';
         else if (s.time < (d.bootUntil || 0)) { hex = '#ffb13b'; blink = 2; }
         sp.st.material = stripMat(hex);
         sp.blink = blink;
@@ -564,6 +568,7 @@
       win.instanceColor.needsUpdate = true;
       refreshSel();
       syncSky();
+      if (city) city.sync(s.time, nightK);
     }
 
     /* ---------- 圖例 ---------- */
@@ -613,7 +618,7 @@
       }
       if (p.kind === 'b1') {
         const fac = G.R.fac || { itLoad: 0 };
-        return ['B1 主機房（MDF）', `${s.racks.length} 座機櫃 · IT 負載 ${(fac.itLoad / 1000).toFixed(1)} kW`, `機房溫度 ${s.temp.toFixed(1)}°C`];
+        return ['B1 主機房（MDF）', `${s.racks.length} 座機櫃 · IT 負載 ${((fac.itLoad + (fac.aiLoad || 0)) / 1000).toFixed(1)} kW`, `機房溫度 ${s.temp.toFixed(1)}°C${fac.pue ? ' · PUE ' + fac.pue.toFixed(2) : ''}`, G.R.ai ? `AI 算力 ${G.R.ai.pflops.toFixed(1)} PFLOPS` : ''];
       }
       if (p.kind === 'dev') {
         const d = s.devices[p.id];
@@ -730,6 +735,7 @@
       const day = U.clamp(Math.sin(sa) * 2.2 + 0.2, 0, 1);
       lights.forEach((l, i) => { l.intensity = lightBase[i] * (0.42 + 0.58 * day); });
       const night = 1 - U.clamp(Math.sin(sa) * 3 + 0.6, 0, 1);
+      nightK = night;
       STARS.begin();
       if (night > 0.02) for (const s of starDir) STARS.push(s[0], s[1], s[2], WHITE, s[3] * night, 1);
       STARS.end();
@@ -779,6 +785,7 @@
         }
         P.end();
         tickFx(dt);
+        if (city) city.tick(dt, t);
         for (const m of marks) m.s.material.emissiveIntensity = Math.sin(t * 6) > 0 ? 2.4 : 0.3;
         for (const sp of strips) if (sp.blink) sp.st.visible = Math.sin(t * Math.PI * sp.blink) > -0.2; else if (!sp.st.visible) sp.st.visible = true;
         beacon.material.emissiveIntensity = Math.sin(t * 3) > 0.6 ? 2.4 : 0.3;
@@ -807,6 +814,7 @@
       clickEmpty() { sel = null; renderSel(); },
       dispose() {
         offTheme();
+        if (city) city.dispose();
         for (const fl of floors) fl.tag.remove();
         for (const a of atks) if (a.tag) a.tag.remove();
         for (const m of marks) if (m.tag) m.tag.remove();

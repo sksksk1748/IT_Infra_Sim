@@ -53,8 +53,26 @@
       slot: new T.MeshBasicMaterial({ color: C('#2fc6b8'), transparent: true, opacity: 0.3, depthWrite: false, side: T.DoubleSide }),
       ghost: new T.MeshBasicMaterial({ color: C('#5aa9f0'), transparent: true, opacity: 0.16, depthWrite: false }),
       beacon: K.glow('#ff5a4f', 2),
+      copper: K.std('#c8773a', { metalness: 0.9, roughness: 0.3 }),
+      coolS: K.std('#2f86d6', { roughness: 0.4, metalness: 0.2 }), coolR: K.std('#d94a3a', { roughness: 0.4, metalness: 0.2 }),
+      glass: K.std('#9fd3ee', { transparent: true, opacity: 0.22, roughness: 0.1, metalness: 0.1, depthWrite: false }),
+      vesda: K.std('#d23a2c', { roughness: 0.45, metalness: 0.1 }), sensor: K.std('#f4f6f7', { roughness: 0.5 }),
+      rope: K.std('#f2c14e', { roughness: 0.6 }),
+      nozzle: K.std('#b9c0c6', { metalness: 0.8, roughness: 0.3 }),
+      emsScreen: new T.MeshBasicMaterial({ map: K.makeTex(300, 190, (c) => {
+        K.D.rect(c, 0, 0, 300, 190, '#0b1419');
+        K.D.txt(c, '環境監控 EMS', 12, 20, 16, '#e9edf0', 'left', 800);
+        [['溫度', '#46d17f'], ['濕度', '#46d17f'], ['漏水', '#46d17f'], ['煙霧', '#46d17f'], ['門禁', '#5aa9f0'], ['電力', '#46d17f']].forEach(([k, col], i) => {
+          const x = 12 + (i % 3) * 96, y = 40 + Math.floor(i / 3) * 72;
+          K.D.rr(c, x, y, 86, 62, 6, '#12222a', col, 2);
+          K.D.txt(c, k, x + 43, y + 31, 18, col, 'center', 800);
+        });
+      }, 2) }),
+      water: new T.MeshBasicMaterial({ color: C('#4aa8ff'), transparent: true, opacity: 0.4, depthWrite: false }),
+      coolant: new T.MeshBasicMaterial({ color: C('#56e3ff'), transparent: true, opacity: 0.45, depthWrite: false }),
     };
     const ledG = new T.BoxGeometry(0.11, 0.11, 0.05);
+    const busG = new T.BoxGeometry(0.28, 17.6, 0.1), manG = new T.CylinderGeometry(0.14, 0.14, 17, 12);
 
     /* ---- 設備原型（每種型號建一次，之後複製） ---- */
     const protos = new Map();
@@ -99,10 +117,16 @@
         if (p.dir < 0) g.rotation.y = Math.PI;
         g.userData.pick = { kind: 'rack', id: r.id };
         racksG.add(g);
+        /* AI 機櫃：背面兩條 54V 銅排 + 藍（供）紅（回）液冷歧管 */
+        if (r.type === 'ai') {
+          const zb = -R.D / 2 + 0.55;
+          for (const x of [-0.35, 0.35]) { const bar = new T.Mesh(busG, M.copper); bar.position.set(x, R.U0 + 8.8, zb); g.add(bar); }
+          for (const [x, m] of [[-2.1, M.coolS], [2.1, M.coolR]]) { const pipe = new T.Mesh(manG, m); pipe.position.set(x, R.U0 + 8.5, zb); g.add(pipe); }
+        }
         const tag = api.tag(r.id, 'ok');
         tag.pos.set(p.x, R.H + 1.2 + (i % 2) * 1.6, p.z + p.dir * 2);
         tags.racks.push(tag);
-        rackInfo.push({ id: r.id, g, p, tag });
+        rackInfo.push({ id: r.id, g, p, tag, ai: r.type === 'ai' });
         const tile = new T.Mesh(new T.PlaneGeometry(5.8, 5.8), perfM);
         tile.userData.own = true;
         tile.rotation.x = -Math.PI / 2;
@@ -153,11 +177,96 @@
       for (const t of tags.fac) t.remove();
       tags.fac = [];
       facInfo = [];
-      let zc = 21, upsX = 17;
+      let zc = 21, upsX = 17, cduZ = -2;
+      /* 機櫃排的範圍（通道封閉、VESDA 取樣管、漏水偵測線、液冷管路都跟著機櫃走） */
+      const xs = rackInfo.map((ri) => ri.p.x);
+      const rx0 = xs.length ? Math.min(...xs) - R.W / 2 - 0.6 : -8, rx1 = xs.length ? Math.max(...xs) + R.W / 2 + 0.6 : 8;
+      const ownMesh = (geo, mat) => { const o = new T.Mesh(geo, mat); o.userData.ownGeo = true; o.raycast = () => {}; return o; };
+      const pipeAlong = (pts, r, mat) => { const o = fx.tubeAlong(pts, r, mat); o.userData.ownGeo = true; o.raycast = () => {}; facG.add(o); return o; };
       for (const r of s.room) {
         const m = CAT.room[r.model];
         let g, size;
-        if (m.kind === 'cooling' && r.model !== 'AC-8') {
+        if (m.kind === 'cdu') {
+          g = proto('CDU-100').obj.clone();
+          g.position.set(ROOM.x1 - 3.1, 9.75, cduZ);
+          size = [6, 19.5, 12];
+          /* 冷卻液管路：CDU 頂部 → 天花板 → 每座 AI 機櫃背面的歧管（藍送、紅回） */
+          const top = 19.5 + 1.5;
+          for (const ri of rackInfo.filter((x) => x.ai)) {
+            const rearZ = ri.p.z - ri.p.dir * (R.D / 2 - 0.55);
+            [[-2.1, M.coolS, -0.5], [2.1, M.coolR, 0.5]].forEach(([dx, mat, off]) => {
+              const x = ri.p.x + dx * ri.p.dir;
+              pipeAlong([[ROOM.x1 - 3.1 + off, top, cduZ - 1.5], [ROOM.x1 - 3.1 + off, R.H + 4.4 + off * 0.4, cduZ - 1.5], [x, R.H + 4.4 + off * 0.4, cduZ - 1.5], [x, R.H + 4.4 + off * 0.4, rearZ], [x, R.H + 0.2, rearZ]], 0.16, mat);
+            });
+          }
+          cduZ += 13;
+        } else if (r.model === 'GAS-FS') {
+          g = proto('GAS-FS').obj.clone();
+          g.scale.setScalar(0.9);
+          g.position.set(-8, 0, ROOM.z0 + 2);
+          size = [12, 16, 3];
+          /* 天花板上的噴頭 */
+          for (const x of [rx0 + 3, (rx0 + rx1) / 2, rx1 - 3]) for (const z of [-11, 0, 11]) {
+            const nz = ownMesh(new T.CylinderGeometry(0.25, 0.35, 0.5, 12), M.nozzle);
+            nz.position.set(x, ROOM.h - 1.2, z);
+            facG.add(nz);
+          }
+        } else if (r.model === 'VESDA') {
+          g = proto('VESDA').obj.clone();
+          g.scale.setScalar(0.8);
+          g.position.set(6, 10, ROOM.z0 + 0.6);
+          size = [4, 5, 1.2];
+          /* 取樣管沿著天花板跑過每一排機櫃上方 */
+          const y = ROOM.h - 2.2;
+          pipeAlong([[6, 13.5, ROOM.z0 + 0.4], [6, y, ROOM.z0 + 0.4], [6, y, -11], [rx0, y, -11]], 0.16, M.vesda);
+          pipeAlong([[6, y, -11], [rx1, y, -11]], 0.16, M.vesda);
+          pipeAlong([[rx0, y, -11], [rx0, y, 11], [rx1, y, 11]], 0.16, M.vesda);
+        } else if (r.model === 'EMS-1') {
+          /* 牆上的監控面板（完整模型在「3D 外觀」裡看） */
+          g = new T.Group();
+          const scr = ownMesh(new T.BoxGeometry(3.2, 2.1, 0.2), K.std('#1b2024', { metalness: 0.4 }));
+          scr.material.userData = { own: true };
+          scr.userData.ownMat = true;
+          g.add(scr);
+          const face = ownMesh(new T.PlaneGeometry(3, 1.9), M.emsScreen);
+          face.position.z = 0.11;
+          g.add(face);
+          g.position.set(-16, 12, ROOM.z0 + 0.2);
+          size = [3.2, 2.1, 0.3];
+          /* 每座機櫃進風口一個溫濕度感測器，地板上繞一圈漏水偵測線 */
+          for (const ri of rackInfo) {
+            const sn = ownMesh(new T.BoxGeometry(0.5, 0.7, 0.2), M.sensor);
+            sn.position.set(ri.p.x + 2.2, R.H - 3, ri.p.z + ri.p.dir * (R.D / 2 + 0.12));
+            facG.add(sn);
+          }
+          const z0 = -ROW - R.D / 2 - 1.2, z1 = ROW + R.D / 2 + 1.2;
+          pipeAlong([[rx0 - 1, 0.1, z0], [rx1 + 1, 0.1, z0], [rx1 + 1, 0.1, z1], [rx0 - 1, 0.1, z1], [rx0 - 1, 0.1, z0 + 0.3]], 0.07, M.rope);
+        } else if (r.model === 'CONTAIN') {
+          /* 兩排機櫃中間（背對背的熱通道）加上頂板與兩端的門 */
+          g = new T.Group();
+          const w = rx1 - rx0, d = (ROW - R.D / 2) * 2 + 0.4;
+          const roof = ownMesh(new T.BoxGeometry(w, 0.15, d), M.glass);
+          roof.position.set((rx0 + rx1) / 2, R.H + 0.3, 0);
+          g.add(roof);
+          for (const x of [rx0 - 0.1, rx1 + 0.1]) {
+            const door = ownMesh(new T.BoxGeometry(0.12, R.H, d), M.glass);
+            door.position.set(x, R.H / 2, 0);
+            g.add(door);
+            const fr = ownMesh(new T.BoxGeometry(0.25, 0.25, d), K.std('#59636b', { metalness: 0.6 }));
+            fr.userData.ownMat = true;
+            fr.position.set(x, R.H, 0);
+            g.add(fr);
+          }
+          facG.add(g);
+          const tagC = api.tag('', 'info');
+          tagC.pos.set((rx0 + rx1) / 2, R.H + 2, 0);
+          tagC.show = false;
+          tags.fac.push(tagC);
+          const none = new T.Object3D();
+          none.visible = false;
+          facInfo.push({ r, g, tag: tagC, ghost: none, bc: none, plain: true });
+          continue;
+        } else if (m.kind === 'cooling' && r.model !== 'AC-8') {
           const pr = proto(r.model);
           g = pr.obj.clone();
           const w = r.model === 'CRAC-60' ? 17 : 8.5;
@@ -217,9 +326,10 @@
         const fac = G.R.fac;
         return rackInfo.map((ri) => {
           const fr = fac && fac.racks[ri.id];
-          const load = fr ? fr.load : 0;
-          const on = !!fac && fac.mdfPowered && !fac.rackTripped[ri.id] && load > 0;
-          return { x: ri.p.x, y0: R.U0 + 2 * R.UH, y1: R.U0 + 40 * R.UH, front: ri.p.z + ri.p.dir * R.D / 2, back: ri.p.z - ri.p.dir * R.D / 2, dir: ri.p.dir, heat: U.clamp(load / CAT.rack.powerLimit, 0.12, 1), on };
+          /* AI 機櫃的熱大多由液冷帶走，吹進熱通道的只有剩下的部分 */
+          const air = fr ? fr.load - (fr.liquid || 0) : 0;
+          const on = !!fac && !G.Net.rackDown(ri.id) && air > 0;
+          return { x: ri.p.x, y0: R.U0 + 2 * R.UH, y1: R.U0 + 40 * R.UH, front: ri.p.z + ri.p.dir * R.D / 2, back: ri.p.z - ri.p.dir * R.D / 2, dir: ri.p.dir, heat: U.clamp(air / CAT.rack.powerLimit, 0.12, 1), on };
         });
       },
       cooling: () => { const f = G.R.fac; if (!f || !f.coolingOn || f.coolCap <= 0) return 0; return U.clamp(f.coolCap / Math.max(f.heat, 3), 0.25, 1); },
@@ -389,8 +499,13 @@
     root.add(FX.obj);
     const fxState = {};
     const SMOKE0 = fx.rgb('#a3abb1'), SMOKE1 = fx.rgb('#4a5258'), HEAT0 = fx.rgb('#ff9a4a'), HEAT1 = fx.rgb('#ff3b30');
+    const FLAME0 = fx.rgb('#ffe08a'), FLAME1 = fx.rgb('#ff3b30'), GAS0 = fx.rgb('#f4f7f9'), GAS1 = fx.rgb('#c9d3da');
+    const WATER0 = fx.rgb('#bfe6ff'), WATER1 = fx.rgb('#4aa8ff'), COOL0 = fx.rgb('#56e3ff');
     const upsLight = new T.PointLight(0xffb13b, 0, 45);
     root.add(upsLight);
+    const fireL = new T.PointLight(0xff7a1a, 0, 60);
+    fireL.position.set(0, 12, 0);
+    root.add(fireL);
     const tmpV = new T.Vector3();
     function tickFx(dt, t) {
       const s = G.S, fac = G.R.fac;
@@ -413,14 +528,88 @@
       const ups = facInfo.find((fi) => CAT.room[fi.r.model].kind === 'ups' && fi.g.visible);
       if (ups) upsLight.position.set(ups.g.position.x, 14, ups.g.position.z + 7);
       upsLight.intensity = fac && fac.onBattery && ups ? (Math.sin(t * 4) > 0 ? 2.2 : 0.5) : 0;
+      /* 火警：冒煙 → 起火 → 滅火（氣體霧 / 灑水）；漏水與冷卻液滴落 */
+      let fireLight = 0;
+      for (const inc of s.incidents) {
+        if (inc.status !== 'active') continue;
+        const d = inc.data;
+        if (inc.type === 'dc-fire') {
+          const di = devInfo.get(d.dev);
+          if (!di) continue;
+          di.ri.g.localToWorld(tmpV.set(U.rand(-1.5, 1.5), di.y + di.h / 2 + 0.2, R.zRail - 1.5));
+          const src = [tmpV.x, tmpV.y, tmpV.z];
+          if (d.stage === 'smoke') {
+            const k = FX.rate(fxState, 'fs' + inc.id, 3, dt);
+            for (let i = 0; i < k; i++) FX.emit(src, { v: [0, 1.4, 0], spread: 0.5, life: 3.2, c0: SMOKE0, c1: SMOKE1, s0: 0.5, s1: 1.8, a: 0.2 });
+          } else if (d.stage === 'fire') {
+            const age = s.time - (d.fireTime || s.time);
+            if (age <= 3) {
+              fireLight = 1;
+              fireL.position.set(src[0], src[1] + 2, src[2]);
+              let k = FX.rate(fxState, 'fl' + inc.id, 45, dt);
+              for (let i = 0; i < k; i++) FX.emit(src, { v: [0, 4, 0], spread: 1.6, life: 0.7, c0: FLAME0, c1: FLAME1, s0: 1.2, s1: 0.3, a: 0.95 });
+              k = FX.rate(fxState, 'fk' + inc.id, 10, dt);
+              for (let i = 0; i < k; i++) FX.emit(src, { v: [0, 3, 0], spread: 1.2, life: 3, c0: SMOKE1, c1: SMOKE1, s0: 1, s1: 3.6, a: 0.45 });
+            }
+            if (age <= 6) {
+              if (d.suppress === 'gas') {
+                const k = FX.rate(fxState, 'gas' + inc.id, 55, dt);
+                for (let i = 0; i < k; i++) FX.emit([U.rand(ROOM.x0 + 2, ROOM.x1 - 2), U.rand(0.4, 5), U.rand(ROOM.z0 + 2, ROOM.z1 - 6)], { v: [U.rand(-0.6, 0.6), 0.5, U.rand(-0.6, 0.6)], spread: 1.2, life: 3.4, c0: GAS0, c1: GAS1, s0: 2, s1: 5, a: 0.3 });
+              } else {
+                const wet = rackInfo.filter((ri) => (d.suppress === 'wet' ? Math.abs(rackInfo.indexOf(ri) - rackInfo.findIndex((x) => x.id === d.rack)) <= 1 : ri.id === d.rack));
+                for (const ri of wet) {
+                  const k = FX.rate(fxState, 'wt' + inc.id + ri.id, 40, dt);
+                  for (let i = 0; i < k; i++) FX.emit([ri.p.x + U.rand(-3, 3), ROOM.h - 1.5, ri.p.z + U.rand(-5, 5)], { v: [0, -16, 0], spread: 0.4, life: 1.6, c0: WATER0, c1: WATER1, s0: 0.35, s1: 0.3, a: 0.8 });
+                }
+              }
+            }
+          }
+        } else if (inc.type === 'water-leak' && !d.fixed && /天花板|管線|水管/.test(d.src || '')) {
+          const ri = rackInfo.find((x) => x.id === d.rack);
+          if (!ri) continue;
+          const k = FX.rate(fxState, 'dr' + inc.id, 8, dt);
+          for (let i = 0; i < k; i++) FX.emit([ri.p.x + U.rand(-2, 2), ROOM.h - 1.5, ri.p.z + U.rand(-3, 3)], { v: [0, -12, 0], spread: 0.3, life: 2.2, c0: WATER0, c1: WATER1, s0: 0.3, s1: 0.28, a: 0.75 });
+        } else if (inc.type === 'cdu-leak') {
+          const fi = facInfo.find((x) => x.r.id === d.unit);
+          if (!fi) continue;
+          const k = FX.rate(fxState, 'cl' + inc.id, 6, dt);
+          for (let i = 0; i < k; i++) FX.emit([fi.g.position.x + U.rand(-2, 2), 21, fi.g.position.z - 1.5 + U.rand(-0.5, 0.5)], { v: [0, -9, 0], spread: 0.3, life: 2.4, c0: COOL0, c1: COOL0, s0: 0.3, s1: 0.28, a: 0.8 });
+        }
+      }
+      fireL.intensity = fireLight ? 2 + Math.sin(t * 17) * 0.8 : 0;
       FX.tick(dt);
+    }
+    /* 地上的積水 / 冷卻液（依事件每半秒更新一次） */
+    const puddleG = new T.CircleGeometry(1, 36);
+    puddleG.rotateX(-Math.PI / 2);
+    const puddles = [];
+    for (let i = 0; i < 6; i++) { const p = new T.Mesh(puddleG, M.water); p.visible = false; p.raycast = () => {}; p.renderOrder = 1; root.add(p); puddles.push(p); }
+    function syncPuddles() {
+      const s = G.S;
+      let n = 0;
+      const put = (x, z, r, mat) => { if (n >= puddles.length) return; const p = puddles[n++]; p.position.set(x, 0.06 + n * 0.004, z); p.scale.setScalar(r); p.material = mat; p.visible = true; };
+      for (const inc of s.incidents) {
+        if (inc.status !== 'active') continue;
+        const d = inc.data;
+        if (inc.type === 'dc-fire' && d.stage === 'fire' && d.suppress !== 'gas' && !d.cleaned) {
+          const i0 = rackInfo.findIndex((x) => x.id === d.rack);
+          rackInfo.forEach((ri, i) => { if (d.suppress === 'wet' ? Math.abs(i - i0) <= 1 : i === i0) put(ri.p.x, ri.p.z, 4.5, M.water); });
+        } else if (inc.type === 'water-leak' && !d.fixed) {
+          const ri = rackInfo.find((x) => x.id === d.rack);
+          if (ri) put(ri.p.x + 1.5, ri.p.z + ri.p.dir * 2, Math.min(7, 1.5 + (s.time - inc.startedAt) * 0.1), M.water);
+        } else if (inc.type === 'cdu-leak') {
+          const fi = facInfo.find((x) => x.r.id === d.unit);
+          if (fi) put(fi.g.position.x - 3, fi.g.position.z, Math.min(5, 1.2 + (s.time - inc.startedAt) * 0.06), M.coolant);
+        }
+      }
+      for (let i = n; i < puddles.length; i++) puddles[i].visible = false;
     }
 
     /* ---- 狀態同步 ---- */
     const devState = (d) => {
       const fac = G.R.fac;
       if (d.status === 'failed' || d.status === 'rma' || d.encrypted) return 'bad';
-      if (fac && (!fac.mdfPowered || fac.rackTripped[d.rack])) return 'off';
+      if (fac && G.Net.rackDown(d.rack)) return 'off';
       if (G.S.time < (d.bootUntil || 0)) return 'warn';
       return 'ok';
     };
@@ -466,7 +655,7 @@
       const sR = s.racks.map((r) => r.id).join(',') + '|' + Object.values(s.devices).filter((d) => d.rack).map((d) => `${d.id}:${d.model}:${d.rack}:${d.u}`).join(',');
       if (sR !== sigR) { sigR = sR; buildRacks(); if (!first) api.refit(); }
       syncCables();
-      const sF = s.room.map((r) => r.id + ':' + r.model).join(',');
+      const sF = s.room.map((r) => r.id + ':' + r.model).join(',') + '|' + sigR;
       if (sF !== sigF) { sigF = sF; buildFacilities(); }
       for (const [id, di] of devInfo) {
         const d = s.devices[id];
@@ -477,27 +666,45 @@
       }
       for (const ri of rackInfo) {
         const fr = fac && fac.racks[ri.id];
-        const load = fr ? fr.load : 0, lim = CAT.rack.powerLimit;
-        const trip = fac && fac.rackTripped[ri.id];
-        ri.tag.set(trip ? `${ri.id} ⚡跳脫` : `${ri.id} ${(load / 1000).toFixed(1)}kW`, trip || load > lim ? 'bad' : load > lim * 0.85 ? 'warn' : 'ok');
+        const load = fr ? fr.load : 0, lim = fr ? fr.limit : CAT.rack.powerLimit;
+        const trip = fac && fac.rackTripped[ri.id], down = G.Net.rackDown(ri.id);
+        const txt = trip ? `${ri.id} ⚡跳電` : ri.ai ? (down && load > 0 ? `${ri.id} AI ⚡斷電` : `${ri.id} AI ${(load / 1000).toFixed(1)}/${(lim / 1000).toFixed(0)}kW`) : `${ri.id} ${(load / 1000).toFixed(1)}kW`;
+        ri.tag.set(txt, trip || load > lim || (ri.ai && down && load > 0) ? 'bad' : load > lim * 0.85 || (ri.ai && fr && load > fr.n1) ? 'warn' : 'ok');
       }
       for (const fi of facInfo) {
         const building = s.time < (fi.r.readyAt || 0);
+        const gone = fi.r.status === 'discharged';
         fi.g.visible = !building;
         fi.ghost.visible = building;
-        fi.bc.visible = fi.r.status === 'failed';
-        fi.tag.show = building || fi.r.status === 'failed';
-        if (fi.tag.show) fi.tag.set(building ? `安裝中 ${U.dur(fi.r.readyAt - s.time)}` : `${CAT.room[fi.r.model].name} 故障`, building ? 'info' : 'bad');
+        fi.bc.visible = fi.r.status === 'failed' || gone;
+        fi.tag.show = building || fi.r.status === 'failed' || gone;
+        if (fi.tag.show) fi.tag.set(building ? `安裝中 ${U.dur(fi.r.readyAt - s.time)}` : gone ? '氣體已釋放：需補充鋼瓶' : `${CAT.room[fi.r.model].name} 故障`, building ? 'info' : 'bad');
       }
       syncSel();
       let a = '', ac = 'bad';
       if (fac) {
-        if (!fac.mdfPowered) a = fac.overheat ? '機房過熱！設備緊急關機' : '機房斷電！';
-        else if (fac.onBattery) { a = `市電中斷 · UPS 供電中 ${Math.round(s.power.upsCharge * 100)}%`; ac = 'warn'; }
+        if (!fac.mdfPowered) a = fac.fireCut ? '機房緊急斷電（消防 / EPO）' : fac.overheat ? '機房過熱！設備緊急關機' : '機房斷電！';
+        else if (fac.onBattery || fac.onBBU) { a = `市電中斷 · ${fac.onBattery ? `UPS 供電中 ${Math.round(s.power.upsCharge * 100)}%` : ''}${fac.onBattery && fac.onBBU ? '、' : ''}${fac.onBBU ? 'AI 機櫃由 BBU 供電' : ''}`; ac = 'warn'; }
         else if (fac.genRunning) { a = '市電中斷 · 發電機運轉中'; ac = 'warn'; }
         else if (s.temp >= 35) a = `機房溫度 ${s.temp.toFixed(1)}°C：設備開始故障`;
         else if (s.temp >= 27) { a = `機房溫度偏高 ${s.temp.toFixed(1)}°C`; ac = 'warn'; }
+        else if (fac.liquidHeat > 0 && fac.thermal < 0.98) a = '液冷不足：GPU 過熱降頻中';
       }
+      /* 火警與漏水：比一般告警更優先 */
+      for (const inc of s.incidents) {
+        if (inc.status !== 'active') continue;
+        const d = inc.data;
+        if (inc.type === 'dc-fire' && d.stage === 'fire') {
+          const age = s.time - (d.fireTime || s.time);
+          a = age <= 6 ? `🔥 機櫃 ${d.rack} 起火！${d.suppress === 'gas' ? '潔淨氣體滅火中' : '灑水頭動作中'}` : `機櫃 ${d.rack} 火災後：等待清理、更換受損設備`;
+          ac = 'bad';
+          break;
+        }
+        if (inc.type === 'dc-fire' && inc.detected) { a = `💨 VESDA：機櫃 ${d.rack} 附近偵測到煙霧`; ac = 'bad'; break; }
+        if (inc.type === 'water-leak' && inc.detected && !d.fixed) { a = `💧 機房漏水：機櫃 ${d.rack} 附近積水`; ac = 'bad'; }
+        if (inc.type === 'cdu-leak' && inc.detected) { a = '💧 CDU 冷卻液洩漏'; ac = 'bad'; }
+      }
+      syncPuddles();
       if (!s.racks.length) { a = '機房裡還沒有機櫃：先在上方採購 42U 機櫃'; ac = 'info'; }
       if (a !== alertTxt) { alertTxt = a; tags.alert.set(a, ac); tags.alert.show = !!a; }
       const dim = fac && !fac.mdfPowered ? 0.35 : fac && (fac.onBattery || fac.genRunning) ? 0.7 : 1;
@@ -533,14 +740,20 @@
         }
         if (p.kind === 'rack') {
           const fr = fac && fac.racks[p.id];
+          if (fr && fr.ai) {
+            return [`AI 機櫃 ${p.id}（ORv3）`, `電源櫃 ${(fr.load / 1000).toFixed(1)} / ${(fr.limit / 1000).toFixed(1)} kW · N+1 ${(fr.n1 / 1000).toFixed(1)} kW`, `BBU ${fr.bbuW ? (fr.bbuW / 1000).toFixed(0) + ' kW' : '沒有'} · 液冷 ${(fr.liquid / 1000).toFixed(1)} kW`,
+              fac.rackTripped[p.id] ? '⚡ 負載超過電源櫃容量，跳電' : G.Net.rackDown(p.id) ? '⚡ 斷電中' : '背面：54V 銅排與液冷歧管'];
+          }
           return [`機櫃 ${p.id}`, `用電 ${fr ? (fr.load / 1000).toFixed(2) : 0} / ${CAT.rack.powerLimit / 1000} kW`, `已用 ${fr ? fr.used : 0}U / ${CAT.rack.units}U`, fac && fac.rackTripped[p.id] ? '⚡ 用電超過上限，斷路器跳脫' : '正面朝冷通道、背面朝熱通道'];
         }
         if (p.kind === 'fac') {
           const r = s.room.find((x) => x.id === p.id);
           if (!r) return null;
           const m = CAT.room[r.model];
-          const st = r.status === 'failed' ? '故障' : s.time < (r.readyAt || 0) ? '安裝中' : '運作中';
-          return [m.name, `狀態：${st}`, m.kind === 'cooling' ? `冷卻能力 ${m.coolKW} kW` : m.kind === 'ups' ? `UPS ${(m.capW / 1000).toFixed(0)} kW · 滿載約 ${m.runtime} 分鐘` : ''];
+          const st = r.status === 'failed' ? '故障' : r.status === 'discharged' ? '已釋放，需補充鋼瓶' : s.time < (r.readyAt || 0) ? '安裝中' : '運作中';
+          const extra = { cooling: `冷卻能力 ${m.coolKW} kW`, ups: `UPS ${((m.capW || 0) / 1000).toFixed(0)} kW · 滿載約 ${m.runtime} 分鐘`, cdu: `液冷能力 ${m.coolKW} kW（GPU 發熱 ${((fac && fac.liquidHeat) || 0).toFixed(1)} kW）`,
+            fire: { VESDA: '取樣管持續抽空氣分析：冒煙階段就告警', 'GAS-FS': '起火時釋放惰性氣體滅火，設備不泡水', PREACT: '兩段式觸發的灑水系統' }[r.model], ems: '溫濕度、漏水、煙霧、門禁監控', contain: '冷熱空氣不混合：冷卻 +20%' }[m.kind] || '';
+          return [m.name, `狀態：${st}`, extra];
         }
         if (p.kind === 'slot') {
           const sel = opts.sel ? opts.sel() : {};

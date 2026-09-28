@@ -4,7 +4,7 @@
   const U = G.U, h = U.h, CAT = G.CAT, Q = G.Q, UI = G.UI;
   const V = { tab: 'net', provider: 'A' };
   G.Views.shop = V;
-  const TABS = [['net', '網路設備'], ['srv', '伺服器'], ['wifi', '無線網路'], ['facility', '機房設施'], ['cable', '線材與光模組'], ['isp', 'ISP 專線']];
+  const TABS = [['net', '網路設備'], ['srv', '伺服器'], ['wifi', '無線網路'], ['facility', '機房設施'], ['ai', 'AI 運算'], ['cable', '線材與光模組'], ['isp', 'ISP 專線']];
   const thumb = (id, title) => (G.M3 && G.M3.has(id) ? G.M3.thumbButton(id, title) : null);
 
   V.mount = (el, param) => {
@@ -19,11 +19,13 @@
     const kbRow = (ids) => el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } }, ids.map((k) => h('button', { class: 'btn ghost xs', onclick: () => UI.openKb(k) }, G.KB.byId[k].title))));
     if (V.tab === 'net') {
       kbRow(['k-router', 'k-firewall', 'k-switch', 'k-optics']);
-      for (const [id, m] of Object.entries(CAT.devices)) if (['router', 'firewall', 'switch'].includes(m.cat)) grid.appendChild(devCard(id, m));
+      for (const [id, m] of Object.entries(CAT.devices)) if (['router', 'firewall', 'switch'].includes(m.cat) && !m.ai) grid.appendChild(devCard(id, m));
     } else if (V.tab === 'srv') {
       el.appendChild(h('div', { class: 'card', style: { marginBottom: '12px' } }, h('h3', { style: { marginBottom: '8px' } }, '伺服器角色'),
-        h('div', { class: 'grid c3' }, Object.entries(CAT.roles).map(([k, r]) => h('div', { class: 'small' }, h('b', {}, `${r.short}　${r.name}`), h('div', { class: 'muted' }, r.desc))))));
-      for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'server') grid.appendChild(devCard(id, m));
+        h('div', { class: 'grid c3' }, Object.entries(CAT.roles).filter(([k]) => k !== 'ai' && k !== 'aistore').map(([k, r]) => h('div', { class: 'small' }, h('b', {}, `${r.short}　${r.name}`), h('div', { class: 'muted' }, r.desc))))));
+      for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'server' && !m.ai) grid.appendChild(devCard(id, m));
+    } else if (V.tab === 'ai') {
+      aiTab(el, grid, kbRow);
     } else if (V.tab === 'wifi') {
       kbRow(['k-wifi', 'k-wlc', 'k-poe']);
       for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'wlc') grid.appendChild(devCard(id, m));
@@ -31,13 +33,13 @@
       for (const [id, m] of Object.entries(CAT.aps)) grid.appendChild(infoCard(id, m.name, m.desc, [['容量', U.bw(m.cap)], ['建議連線數', m.maxClients + ' 台'], ['PoE', m.poe + ' W'], ['頻段', m.band === 'ext' ? '5 GHz + 6 GHz' : '5 GHz']], m.price + CAT.apInstallFee, m));
       for (const [id, m] of Object.entries(CAT.access)) grid.appendChild(infoCard(id, m.name, m.desc, [['接入埠', `${m.ports} × ${U.speed(m.portSpeed)}`], ['PoE 預算', m.poe + ' W'], ['上行', `${m.uplinks} × ${U.speed(m.uplinkMax)}`]], m.price, m));
     } else if (V.tab === 'facility') {
-      kbRow(['k-rack', 'k-power', 'k-cooling', 'k-ha']);
+      kbRow(['k-rack', 'k-power', 'k-cooling', 'k-fire', 'k-ems', 'k-ha']);
       const rk = CAT.rack;
       grid.appendChild(h('div', { class: 'card prod' }, thumb('rack42', '42U 標準機櫃'), h('span', { class: 'label' }, '機櫃'), h('b', {}, '標準 42U 機櫃（含雙 PDU）'), h('p', { class: 'small muted' }, `19 吋標準機櫃，${rk.units}U，PDU 電力上限 ${rk.powerLimit / 1000} kW。機房最多 ${rk.maxRacks} 座。`),
         h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(rk.price)), h('span', { class: 'small muted' }, `已有 ${G.S.racks.length} 座`)),
         h('button', { class: 'btn primary sm', onclick: () => UI.res(G.Act.buyRack()) }, '購買')));
       for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'ups') grid.appendChild(devCard(id, m));
-      for (const [id, m] of Object.entries(CAT.room)) if (m.buyable !== false) grid.appendChild(roomCard(id, m));
+      for (const [id, m] of Object.entries(CAT.room)) if (m.buyable !== false && m.kind !== 'cdu') grid.appendChild(roomCard(id, m));
     } else if (V.tab === 'cable') cableTab(el, grid, kbRow);
     else ispTab(el, grid);
     el.appendChild(grid);
@@ -57,9 +59,27 @@
     if (m.cat === 'server') rows.push(['角色', m.roles.map((r) => CAT.roles[r].short).join(' / ')]);
     if (m.cat === 'wlc') rows.push(['管理 AP', `${m.maxAps} 台`]);
     if (m.cat === 'ups') rows.push(['容量', `${m.capW / 1000} kW`], ['滿載續航', `${m.runtime} 分鐘`]);
+    if (m.gpu) rows.push(['GPU', `${m.gpu} 顆 · ${m.pf} PFLOPS`], ['散熱', m.liquid ? '直接液冷（需要 CDU）' : '氣冷']);
+    if (m.cat === 'power') rows.push(['容量', `${m.psuN} × ${m.psuW / 1000} kW = ${m.psuN * m.psuW / 1000} kW`], ['N+1 可用', `${(m.psuN - 1) * m.psuW / 1000} kW`]);
+    if (m.cat === 'bbu') rows.push(['備援功率', `${m.bbuW / 1000} kW`], ['滿載續航', `約 ${m.holdMin} 分鐘`]);
     if (ports.length) rows.push(['介面', ports.join('、')]);
-    rows.push(['高度 / 耗電', `${m.u}U / ${m.watts} W`]);
+    rows.push(['高度 / 耗電', `${m.u}U / ${m.watts >= 1000 ? (m.watts / 1000).toFixed(1) + ' kW' : m.watts + ' W'}`]);
+    if (m.aiRack) rows.push(['安裝', '只能裝在 AI 機櫃']);
     return rows;
+  }
+  /** AI 運算：AI 機櫃、電源櫃與 BBU、GPU 伺服器、AI 交換器與儲存、液冷 CDU */
+  function aiTab(el, grid, kbRow) {
+    const locked = !Q.unlocked(CAT.rack.ai);
+    el.appendChild(h('div', { class: 'note', style: { marginBottom: '10px' } },
+      h('b', {}, 'AI 機房和一般機房不一樣：'), '一台 8-GPU 伺服器就要 10 kW（一般機櫃整座才 8 kW），要用 AI 機櫃、自己配電源櫃（PSU）與 BBU；GPU 靠液冷（CDU）散熱；GPU 之間要用 400G 的後端網路互連。',
+      locked ? h('span', { class: 'chip', style: { marginLeft: '6px' } }, `第 ${CAT.rack.ai.unlock} 章解鎖`) : null));
+    kbRow(['k-gpu', 'k-aipower', 'k-liquid', 'k-aifabric']);
+    const ra = CAT.rack.ai, have = G.S.racks.filter((r) => r.type === 'ai').length;
+    grid.appendChild(h('div', { class: 'card prod' + (locked ? ' locked-item' : '') }, thumb('rackai', ra.name), h('span', { class: 'label' }, 'AI 機櫃'), h('b', {}, ra.name), h('p', { class: 'small muted' }, ra.desc),
+      specGrid([['電力', '由電源櫃決定（每台 PS-33 = 33 kW）'], ['備援電力', 'BBU（不接中央 UPS）'], ['散熱', '液冷歧管 + 空調'], ['數量上限', `${ra.max} 座（已有 ${have}）`]]),
+      h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(ra.price)), h('button', { class: 'btn primary sm', disabled: locked || null, onclick: () => UI.res(G.Act.buyRack('ai')) }, '購買'))));
+    for (const [id, m] of Object.entries(CAT.devices)) if (m.ai) grid.appendChild(devCard(id, m));
+    for (const [id, m] of Object.entries(CAT.room)) if (m.kind === 'cdu') grid.appendChild(roomCard(id, m));
   }
   function specGrid(rows) { return h('div', { class: 'specs' }, rows.map(([k, v]) => [h('span', { class: 'dim' }, k), h('span', {}, v)])); }
 
@@ -83,11 +103,21 @@
   function roomCard(id, m) {
     const locked = !Q.unlocked(m);
     const have = G.S.room.filter((r) => r.model === id).length;
-    const rows = m.kind === 'cooling' ? [['冷卻能力', `${m.coolKW} kW`], ['耗電', `${m.powerKW} kW`]] : m.kind === 'ups' ? [['容量', `${m.capW / 1000} kW`], ['滿載續航', `${m.runtime} 分鐘`]] : [['啟動時間', '約 1 分鐘'], ['供電', '含空調、樓層 IDF']];
+    const ROWS = {
+      cooling: [['冷卻能力', `${m.coolKW} kW`], ['耗電', `${m.powerKW} kW`]],
+      ups: [['容量', `${(m.capW || 0) / 1000} kW`], ['滿載續航', `${m.runtime} 分鐘`]],
+      generator: [['啟動時間', '約 1 分鐘'], ['供電', '含空調、樓層 IDF']],
+      fire: [['用途', { VESDA: '極早期偵測（冒煙階段）', PREACT: '灑水（兩段式觸發）', 'GAS-FS': '滅火（不泡水）' }[id] || '消防']],
+      ems: [['監測', '溫濕度、漏水、煙霧、門禁']],
+      contain: [['效果', '冷卻能力 +20%、PUE 下降']],
+      cdu: [['液冷能力', `${m.coolKW} kW`], ['耗電', `${m.powerKW} kW`]],
+    };
+    const rows = (ROWS[m.kind] || []).slice();
+    if (m.refill) rows.push(['釋放後補充', U.money(m.refill)]);
     rows.push(['安裝工期', U.dur(m.buildMin || 0)]);
     return h('div', { class: 'card prod' + (locked ? ' locked-item' : '') },
       thumb(id, m.name),
-      h('div', { class: 'row between' }, h('span', { class: 'label' }, { cooling: '冷卻', ups: '電力', generator: '電力' }[m.kind]), locked ? h('span', { class: 'chip' }, `第 ${m.unlock} 章解鎖`) : have ? h('span', { class: 'chip accent' }, `已有 ${have}`) : null),
+      h('div', { class: 'row between' }, h('span', { class: 'label' }, { cooling: '冷卻', ups: '電力', generator: '電力', fire: '消防', ems: '環控', contain: '冷卻', cdu: '液冷' }[m.kind]), locked ? h('span', { class: 'chip' }, `第 ${m.unlock} 章解鎖`) : have ? h('span', { class: 'chip accent' }, `已有 ${have}`) : null),
       h('b', {}, m.name), h('p', { class: 'small muted' }, m.desc), specGrid(rows),
       h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(m.price)), h('button', { class: 'btn primary sm', disabled: locked || null, onclick: () => UI.res(G.Act.buyRoom(id)) }, '購買')));
   }

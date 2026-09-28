@@ -342,7 +342,9 @@ table.t td.r, table.t th.r { text-align: right; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
 
 /* ---------- 機房 ---------- */
-.room-bar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 12px; }
+.room-bar { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.rack-tab.ai { border-style: dashed; border-color: color-mix(in srgb, var(--accent) 55%, var(--line)); }
+.rack-tab.ai.on { border-style: solid; }
 .gauge .big { font-family: var(--font-mono); font-size: 22px; font-weight: 600; line-height: 1.1; }
 .racks-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
 .rack-tab { border: 1px solid var(--line); background: var(--bg-2); border-radius: 6px; padding: 6px 10px; cursor: pointer; text-align: left; min-width: 96px; }

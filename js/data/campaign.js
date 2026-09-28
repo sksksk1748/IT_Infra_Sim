@@ -1,4 +1,4 @@
-/* 劇情模式：五個章節、任務目標、進駐時程與劇本事件 */
+/* 劇情模式：六個章節、任務目標、進駐時程與劇本事件 */
 (function (G) {
   'use strict';
   const U = G.U, CAT = G.CAT, Q = G.Q;
@@ -38,6 +38,10 @@
       return d.wifi.pool >= d.wifi.need && d.wired.pool >= d.wired.worst && (!G.S.fw.guestWifi || d.guest.pool >= d.guest.need);
     },
     floorsDone: (ids, cov) => ids.filter((id) => H.floorReady(id, cov)).length,
+    /** 已上架的 8-GPU 訓練伺服器 */
+    gpus: () => Q.devices('server').filter((d) => d.rack && CAT.devices[d.model].gpu >= 8),
+    /** 這台伺服器有 400G 連到 AI 交換器 */
+    aiLink: (d) => Q.linksOf(d.id).some((l) => { const o = G.S.devices[Q.other(l, d.id)]; return l.speed >= 400000 && !!o && CAT.devices[o.model].ai && CAT.devices[o.model].cat === 'switch'; }),
     range: (a, b) => { const out = []; for (let i = a; i <= b; i++) out.push(i + 'F'); return out; },
   };
 
@@ -179,7 +183,7 @@
         { type: 'power-out', at: (t0) => U.nextWeekdayAt(t0, 15, 3) },
         { type: 'isp-down', at: (t0) => U.nextWeekdayAt(t0, 10, 4) },
       ],
-      kb: ['k-ha', 'k-power', 'k-cooling', 'k-lacp', 'k-segment'],
+      kb: ['k-ha', 'k-power', 'k-cooling', 'k-lacp', 'k-segment', 'k-pue', 'k-fire', 'k-ems'],
       objectives: [
         { id: 'c4-floors', text: '9F～21F 全部完成佈建（13 層）', hint: '17F 以上到 B1 超過 100m，銅纜到不了；100G 也要用單模光纖。善用「複製設計」。', goto: 'building', kb: 'k-cable',
           check: () => H.floorsDone(C4F) === C4F.length, progress: () => `${H.floorsDone(C4F)}/${C4F.length}` },
@@ -254,7 +258,47 @@
         { id: 'c5-rating', text: '攻擊行動結束後，IT 部門評價 ≥ 70', hint: '穩定的服務與正確的事件處理都會提升評價。', goto: 'noc', kb: 'k-ir',
           check: (s) => !!s.obj['c5-survive'] && s.rating >= 70 },
       ],
-      outro: ['攻擊行動結束了。你的網路撐了下來。', '從一間空蕩蕩的機房，到撐起一萬人的企業網路 —— 你做到了。'],
+      outro: ['攻擊行動結束了。你的網路撐了下來。', '資訊長拍拍你的肩膀：「董事會剛通過一個新計畫 —— 我們要有自己的 AI 運算中心。」'],
+    },
+    {
+      id: 'c6', title: '第六章｜AI 運算中心', grant: 60000000,
+      story: [
+        '撐過資安風暴後，董事會決定全面導入生成式 AI：研發部要訓練自家的產品模型，全體員工也要有企業內部的 AI 助理。',
+        '可是 AI 伺服器跟你熟悉的設備完全不同 —— 一台 8-GPU 伺服器就要 10 kW，一般機櫃整座才 8 kW；GPU 熱到要用液體冷卻；GPU 之間的網路一台就要好幾個 400G。',
+        '在 B1 建好一座 AI 運算中心：電力、散熱、網路、消防，一樣都不能少。',
+      ],
+      learn: ['AI 機櫃與電源櫃（PSU）', 'BBU 電池備援', '液冷與 CDU', '400G AI 後端網路', '機房消防與環控', 'PUE'],
+      moveIns: [],
+      events: [
+        { type: 'power-out', at: (t0) => U.nextWeekdayAt(t0, 14, 3), data: { dur: 20 } },
+        { type: 'psu-fail', at: (t0) => U.nextWeekdayAt(t0, 10, 4) },
+        { type: 'dc-fire', at: (t0) => U.nextWeekdayAt(t0, 16, 4), data: { delay: 25 } },
+        { type: 'cdu-leak', at: (t0) => U.nextWeekdayAt(t0, 11, 5) },
+      ],
+      kb: ['k-gpu', 'k-aipower', 'k-liquid', 'k-aifabric', 'k-fire', 'k-ems', 'k-pue'],
+      objectives: [
+        { id: 'c6-rack', text: '採購 AI 機櫃，並裝上電源櫃（PSU）與 BBU', hint: '「採購 → AI 運算」買 ORv3 AI 機櫃、PS-33 電源櫃與 BBU-6。AI 機櫃沒有 PDU，電力完全由你裝的電源櫃決定。', goto: 'shop:ai', kb: 'k-aipower',
+          check: (s) => s.racks.some((r) => { if (r.type !== 'ai') return false; const p = G.Fac.aiRackPower(r.id); return p.total > 0 && p.bbuW > 0; }) },
+        { id: 'c6-gpu', text: '安裝至少 2 台 GX-8 AI 訓練伺服器', hint: '每台 10.2 kW，只能裝在 AI 機櫃。先算算電源櫃容量夠不夠！', goto: 'shop:ai', kb: 'k-gpu',
+          check: () => H.gpus().length >= 2 },
+        { id: 'c6-n1', text: '每座 AI 機櫃的電源櫃都有 N+1 備援', hint: 'N+1 = 少一個 PSU 時仍撐得住整座機櫃。負載超過（PSU 數 − 1）× 5.5 kW 就再加一台電源櫃。', goto: 'rack', kb: 'k-aipower',
+          check: () => { const f = G.R.fac; const ai = G.S.racks.filter((r) => r.type === 'ai' && f && f.racks[r.id] && f.racks[r.id].load > 0); return ai.length > 0 && ai.every((r) => f.racks[r.id].load <= f.racks[r.id].n1); } },
+        { id: 'c6-bbu', text: '停電時撐得住：每座 AI 機櫃的 BBU 容量 ≥ 機櫃負載，而且有發電機', hint: 'BBU 只需要撐過發電機啟動的 1 分鐘，但瞬間功率要夠：兩台 GX-8 就超過一台 BBU-6 的 18 kW。', goto: 'rack', kb: 'k-aipower',
+          check: () => { const f = G.R.fac; const ai = G.S.racks.filter((r) => r.type === 'ai' && f && f.racks[r.id] && f.racks[r.id].load > 0); return !!f && f.gen && ai.length > 0 && ai.every((r) => f.racks[r.id].bbuW >= f.racks[r.id].load); } },
+        { id: 'c6-cdu', text: '建置液冷 CDU，液冷能力 ≥ GPU 的發熱', hint: 'GX-8 的熱有 80% 走冷卻液。CDU 不夠，GPU 就會過熱降頻。', goto: 'shop:ai', kb: 'k-liquid',
+          check: () => G.R.fac && G.R.fac.liquidHeat > 0 && G.R.fac.cduCap >= G.R.fac.liquidHeat },
+        { id: 'c6-fabric', text: 'AI 後端網路：每台 GX-8 都以 400G 接到 AF-6400 AI 交換器', hint: '拓撲頁把 GX-8 連到 AF-6400，速率選 400G。GPU 之間每秒要同步上百 Gbps，企業核心的 100G 會卡住訓練。', goto: 'topo', kb: 'k-aifabric',
+          check: () => { const gx = H.gpus(); return gx.length >= 2 && gx.every(H.aiLink); } },
+        { id: 'c6-store', text: '部署 AI 全快閃儲存（ST-AI）並接上網路', hint: 'GPU 要不停讀訓練資料。把 ST-AI 以 400G 接到 AF-6400，GPU 才不會等資料。', goto: 'shop:ai', kb: 'k-gpu',
+          check: () => Q.roleServers('aistore').some((d) => d.rack && Q.linksOf(d.id).length > 0) },
+        { id: 'c6-fire', text: '機房消防升級：VESDA 極早期偵煙 + 潔淨氣體滅火', hint: 'AI 設備價值上億，一般灑水頭一淋就全毀。到「採購 → 機房設施」。', goto: 'shop:facility', kb: 'k-fire',
+          check: (s) => G.Fac.has('VESDA') && s.room.some((r) => r.model === 'GAS-FS' && s.time >= (r.readyAt || 0)) },
+        { id: 'c6-ems', text: '建置機房環境監控（EMS）', hint: '溫濕度、漏水、煙霧與液冷漏液偵測，一有異常立刻告警。', goto: 'shop:facility', kb: 'k-ems',
+          check: () => G.Fac.has('EMS-1') },
+        { id: 'c6-perf', text: 'AI 算力利用率 ≥ 85% 累積 6 小時', hint: '利用率 = 供電 × 散熱 × 後端網路 × 儲存。到「機房」看 AI 算力，哪一項拖後腿就補哪一項。', goto: 'rack', kb: 'k-gpu',
+          sustain: 360, cond: () => !!G.R.ai && G.R.ai.trainers >= 2 && G.R.ai.util >= 0.85 },
+      ],
+      outro: ['AI 運算中心正式啟用。研發部的第一個模型訓練完成，全公司也都用上了企業內部的 AI 助理。', '從一間空蕩蕩的機房，到一萬人的企業網路與 AI 運算中心 —— 你做到了。'],
     },
   ];
 

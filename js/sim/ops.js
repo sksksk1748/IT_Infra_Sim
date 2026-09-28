@@ -155,7 +155,15 @@
       if (fac.onBattery) Ops.alert('warn', `市電中斷，機房由 UPS 供電（剩餘 ${Math.round(s.power.upsCharge * 100)}%）`, 'ups');
       if (fac.genRunning) Ops.alert('info', '發電機運轉中', 'gen');
       if (fac.coolCap > 0 && fac.heat > fac.coolCap * 0.9) Ops.alert('warn', `冷卻能力接近上限（熱負載 ${fac.heat.toFixed(1)} kW / 冷卻 ${fac.coolCap} kW）`, 'cool');
-      for (const id in fac.racks) { const r = fac.racks[id]; if (r.load > r.limit * 0.85 && r.load <= r.limit) Ops.alert('warn', `機櫃 ${id} 用電 ${(r.load / 1000).toFixed(1)} kW，接近 8 kW 上限`, 'rack:' + id); }
+      for (const id in fac.racks) {
+        const r = fac.racks[id];
+        if (r.load > r.limit * 0.85 && r.load <= r.limit) Ops.alert('warn', r.ai ? `AI 機櫃 ${id} 用電 ${(r.load / 1000).toFixed(1)} kW，接近電源櫃容量 ${(r.limit / 1000).toFixed(1)} kW` : `機櫃 ${id} 用電 ${(r.load / 1000).toFixed(1)} kW，接近 8 kW 上限`, 'rack:' + id);
+        else if (r.ai && r.load > 0 && r.load > r.n1 && r.load <= r.limit) Ops.alert('warn', `AI 機櫃 ${id} 的電源櫃沒有 N+1 備援：壞一個 PSU 就會跳電`, 'n1:' + id);
+      }
+      /* 環控：有 EMS 才看得到濕度與漏液 */
+      if (fac.ems && s.hum > 65) Ops.alert('warn', `機房濕度 ${Math.round(s.hum)}%：有結露風險（建議 40～60%）`, 'hum');
+      if (fac.onBBU) Ops.alert('warn', '市電中斷，AI 機櫃由 BBU 電池供電', 'bbu');
+      if (fac.liquidHeat > 0 && fac.thermal < 0.98) Ops.alert('crit', `液冷容量不足：GPU 發熱 ${fac.liquidHeat.toFixed(1)} kW / CDU ${fac.cduCap} kW，GPU 降頻中`, 'cdu');
     }
     /* 網路告警（需要 NMS） */
     if (nms) {
@@ -174,7 +182,7 @@
         if (n.util >= 0.9) Ops.alert('warn', `${Q.nodeName(id)} 處理量 ${U.pct(n.util)}，效能不足`, 'node:' + id);
       }
       for (const d of Object.values(s.devices)) {
-        if (!d.rack || CAT.devices[d.model].cat === 'ups') continue;
+        if (!d.rack || CAT.infra(CAT.devices[d.model])) continue;
         if (d.status === 'failed') Ops.alert('crit', `設備故障：${d.name}`, 'dev:' + d.id);
       }
     }

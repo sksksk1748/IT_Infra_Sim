@@ -27,13 +27,13 @@
         money: 0, rating: 60,
         chapter: 0, chapterStart: U.at(1, 8), obj: {}, objT: {}, flags: {}, sched: [],
         racks: [], devices: {}, links: {}, isp: [],
-        room: [{ id: 'rm1', model: 'AC-8', status: 'ok', readyAt: 0 }],
+        room: [{ id: 'rm0', model: 'AC-8', status: 'ok', readyAt: 0 }],
         floors: {},
         fw: { rules: [], segmentation: false, guestWifi: false },
         subnets: { wired: 23, wifi: 22, guest: 23, servers: 24, dmz: 28 },
         services: {}, trainingUntil: 0,
         power: { outageUntil: 0, outageStart: 0, upsCharge: 1 },
-        temp: 22,
+        temp: 22, hum: 55, coolSet: 21,
         incidents: [], tickets: [], alerts: [], log: [],
         hist: { t: [], wanIn: [], wanOut: [], wanCap: [], intra: [], users: [], sat: [], lat: [], loss: [], fw: [], temp: [], kw: [], web: [] },
         stats: { breaches: 0, incResolved: 0, incFailed: 0, ticketsResolved: 0, spent: 0, income: 0, mttd: [], mttr: [], ransomPaid: 0 },
@@ -67,6 +67,14 @@
       if (!s || s.v !== 1) return null;
       for (const f of G.BLD.floors) if (!s.floors[f.id]) s.floors[f.id] = newFloorState();
       s.sched = s.sched || [];
+      if (s.hum === undefined) s.hum = 55;
+      if (!s.coolSet) s.coolSet = 21;
+      /* 舊版的內建空調編號（rm1）可能和第一個採購的設施重複：重新編號 */
+      const seen = new Set();
+      for (const r of s.room) {
+        while (seen.has(r.id)) r.id = 'rm' + (s.seq++);
+        seen.add(r.id);
+      }
       return s;
     },
     exportStr(s) {
