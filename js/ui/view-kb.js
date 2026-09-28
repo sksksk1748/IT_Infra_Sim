@@ -19,7 +19,7 @@
       list.appendChild(h('div', { class: 'cat' }, cat));
       for (const c of G.KB.cards.filter((x) => x.cat === cat)) {
         const ok = unlocked(c.id);
-        list.appendChild(h('button', { class: (V.sel === c.id ? 'on' : '') + (ok ? '' : ' lock'), disabled: !ok || null, onclick: () => { V.sel = c.id; UI.refresh(); } },
+        list.appendChild(h('button', { class: (V.sel === c.id ? 'on' : '') + (ok ? '' : ' lock'), disabled: !ok || null, onclick: () => { V.sel = c.id; V.jump = true; UI.refresh(); } },
           h('span', {}, ok ? c.title : '？？？'), ok && !s.kb.seen[c.id] ? h('span', { class: 'chip accent', style: { fontSize: '10px', padding: '0 5px' } }, 'NEW') : null));
       }
     }
@@ -31,10 +31,16 @@
       if (V.m3d && V.m3d.id === card.id && !V.m3d.el.m3dDead) viewer = V.m3d.el;
       else { viewer = G.M3.viewer(models, { height: window.innerWidth < 760 ? 280 : 340 }); V.m3d = { id: card.id, el: viewer }; }
     }
-    el.appendChild(h('div', { class: 'kb-layout' }, list, h('div', { class: 'card' },
+    const body = h('div', { class: 'card' },
       h('div', { class: 'label', style: { marginBottom: '6px' } }, card.cat),
       h('h3', { style: { fontSize: '22px', fontFamily: 'var(--font-display)', marginBottom: '10px' } }, card.title),
       viewer ? h('div', { class: 'kb-3d' }, viewer) : null,
-      UI.kbBody(card))));
+      UI.kbBody(card));
+    el.appendChild(h('div', { class: 'kb-layout' }, list, body));
+    /* 窄螢幕是「清單在上、內容在下」：點了清單要捲到內容，不然看起來像沒反應 */
+    if (V.jump) {
+      V.jump = false;
+      if (window.innerWidth <= 980) requestAnimationFrame(() => body.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+    }
   };
 })(window.G = window.G || {});

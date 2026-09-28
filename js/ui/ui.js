@@ -150,6 +150,9 @@
     U.clear(els.main);
     els.main.scrollTop = 0;
     try { G.Views[view].mount(els.main, UI.cur.param); } catch (e) { console.error(e); els.main.appendChild(h('div', { class: 'note bad' }, '畫面載入失敗：' + e.message)); }
+    /* 參數（例如指定的知識卡、分頁、樓層）只在切換畫面時套用一次；
+       之後的重繪沿用畫面自己的選取，否則玩家點別的項目又會被拉回原本那個 */
+    UI.cur.param = null;
     if (window.innerWidth <= 1240) UI.toggleSide(false);
   };
   UI.refresh = () => {
