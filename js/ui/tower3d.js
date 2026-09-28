@@ -252,9 +252,21 @@
         const mesh = fx.tubeAlong(pts, 0.17, lineMat(CAT.cables[l.cable].color, 1));
         mesh.userData.pick = { kind: 'link', id: l.id };
         cableG.add(mesh);
-        cables.set(l.id, { l, fid: f.id, pts, path: fx.path(pts), mesh, c1: fx.mix(fx.rgb(CAT.cables[l.cable].color), [1, 1, 1], 0.5), c2: fx.rgb(CAT.cables[l.cable].color), dn: 0, up: 0, on: true });
+        const cb = { l, fid: f.id, pts, path: fx.path(pts), mesh, dn: 0, up: 0, on: true };
+        cableCols(cb);
+        cables.set(l.id, cb);
       });
     }
+    /* 流量光點的顏色：深色背景用亮色，淺色背景改用較深的顏色才看得到 */
+    let dark = fx.isDark();
+    const palette = () => ({ ispD: fx.rgb(dark ? '#ffe08a' : '#b87800'), ispU: fx.rgb(dark ? '#f2c14e' : '#8a5a00'), hot: fx.rgb(dark ? '#ffb13b' : '#d45d00') });
+    let PAL = palette();
+    function cableCols(cb) {
+      const base = fx.rgb(CAT.cables[cb.l.cable].color);
+      cb.c1 = dark ? fx.mix(base, [1, 1, 1], 0.5) : fx.mix(base, [0, 0, 0], 0.15);
+      cb.c2 = dark ? base : fx.mix(base, [0, 0, 0], 0.35);
+    }
+    const offTheme = G.bus.on('theme', () => { dark = fx.isDark(); PAL = palette(); for (const cb of cables.values()) cableCols(cb); });
     function buildIsps() {
       const s = G.S;
       clearG(ispG);
@@ -591,7 +603,7 @@
     }
 
     const tmp = [0, 0, 0];
-    const RED = fx.rgb('#ff4d4d'), ISPC = fx.rgb('#ffe08a'), ISPC2 = fx.rgb('#f2c14e'), HOTC = fx.rgb('#ffb13b');
+    const RED = fx.rgb('#ff4d4d');
     return {
       obj: root, frame: frameBox, view: { yaw: 0.5, pitch: 0.14, fill: 0.94 },
       sync,
@@ -606,16 +618,16 @@
             const nu = cb.up > 0.0005 ? Math.min(6, 1 + Math.round(cb.up * 5)) : 0;
             const hot = cb.dn >= 0.9 || cb.up >= 0.9;
             const vd = (10 + cb.dn * 26) / L, vu = (8 + cb.up * 20) / L;
-            for (let i = 0; i < nd; i++) { cb.path.at(1 - ((t * vd + i / nd) % 1), tmp); P.push(tmp[0], tmp[1], tmp[2], hot ? HOTC : cb.c1, 0.95, 1); }
-            for (let i = 0; i < nu; i++) { cb.path.at((t * vu + i / nu + 0.5 / nu) % 1, tmp); P.push(tmp[0], tmp[1], tmp[2], hot ? HOTC : cb.c2, 0.75, 0.75); }
+            for (let i = 0; i < nd; i++) { cb.path.at(1 - ((t * vd + i / nd) % 1), tmp); P.push(tmp[0], tmp[1], tmp[2], hot ? PAL.hot : cb.c1, 0.95, 1); }
+            for (let i = 0; i < nu; i++) { cb.path.at((t * vu + i / nu + 0.5 / nu) % 1, tmp); P.push(tmp[0], tmp[1], tmp[2], hot ? PAL.hot : cb.c2, 0.75, 0.75); }
           }
           for (const x of isps.values()) {
             if (!x.on) continue;
             const L = x.path.len;
             const nd = Math.min(12, 2 + Math.round(x.dn * 10)), nu = Math.min(6, 1 + Math.round(x.up * 5));
             const vd = (18 + x.dn * 30) / L, vu = (14 + x.up * 24) / L;
-            for (let i = 0; i < nd; i++) { x.path.at((t * vd + i / nd) % 1, tmp); P.push(tmp[0], tmp[1], tmp[2], x.dn >= 0.9 ? HOTC : ISPC, 0.95, 1.1); }
-            for (let i = 0; i < nu; i++) { x.path.at(1 - ((t * vu + i / nu) % 1), tmp); P.push(tmp[0], tmp[1], tmp[2], ISPC2, 0.7, 0.8); }
+            for (let i = 0; i < nd; i++) { x.path.at((t * vd + i / nd) % 1, tmp); P.push(tmp[0], tmp[1], tmp[2], x.dn >= 0.9 ? PAL.hot : PAL.ispD, 0.95, 1.1); }
+            for (let i = 0; i < nu; i++) { x.path.at(1 - ((t * vu + i / nu) % 1), tmp); P.push(tmp[0], tmp[1], tmp[2], PAL.ispU, 0.7, 0.8); }
           }
         }
         for (const a of atks) {
@@ -660,6 +672,7 @@
       },
       clickEmpty() { sel = null; renderSel(); },
       dispose() {
+        offTheme();
         for (const fl of floors) fl.tag.remove();
         for (const a of atks) if (a.tag) a.tag.remove();
         for (const m of marks) if (m.tag) m.tag.remove();

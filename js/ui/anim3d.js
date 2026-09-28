@@ -34,8 +34,10 @@
     const T = M3.T(), K = M3.kit, fx = M3.fx;
     const g = new T.Group();
     const L0 = -6, L1 = 6;
-    const glass = K.std('#bfe6ff', { transparent: true, opacity: 0.16, roughness: 0.08, metalness: 0, depthWrite: false });
-    const coreM = K.std('#e9fbff', { transparent: true, opacity: 0.32, roughness: 0.05, metalness: 0, depthWrite: false, emissive: K.col('#3a8fb0'), emissiveIntensity: 0.25 });
+    /* 淺色背景上，透明玻璃與淡藍光點會看不見：改用較深、較不透明的顏色 */
+    const dark = fx.isDark();
+    const glass = K.std(dark ? '#bfe6ff' : '#5f9fc2', { transparent: true, opacity: dark ? 0.16 : 0.3, roughness: 0.08, metalness: 0, depthWrite: false });
+    const coreM = K.std(dark ? '#e9fbff' : '#2f86b4', { transparent: true, opacity: dark ? 0.32 : 0.4, roughness: 0.05, metalness: 0, depthWrite: false, emissive: K.col('#3a8fb0'), emissiveIntensity: 0.25 });
     const fibers = [{ y: 1.7, core: 0.3, jacket: '#2fc6b8' }, { y: -1.7, core: 0.07, jacket: '#f2c14e' }];
     for (const f of fibers) {
       g.add(K.cylX(0.62, 0.62, L0, L1, glass, f.y, 0, 48));
@@ -60,14 +62,14 @@
       { f: 0, pts: zig(1.7, 0, 0) }, { f: 0, pts: zig(1.7, 0.27, 1.3) }, { f: 0, pts: zig(1.7, 0.27, 0.5) },
       { f: 1, pts: zig(-1.7, 0, 0) },
     ];
-    const lineM = new T.LineBasicMaterial({ color: K.col('#7fe3ff'), transparent: true, opacity: 0.3 });
+    const lineM = new T.LineBasicMaterial({ color: K.col(dark ? '#7fe3ff' : '#1d6f99'), transparent: true, opacity: dark ? 0.3 : 0.45 });
     for (const m of modes) {
       m.path = fx.path(m.pts);
       g.add(new T.Line(new T.BufferGeometry().setFromPoints(m.pts.map(vec)), lineM));
     }
     const P = fx.points(300, 0.5);
     g.add(P.obj);
-    const LIGHT = fx.rgb('#c4f6ff');
+    const LIGHT = fx.rgb(dark ? '#c4f6ff' : '#e0730b');
     let pulses = [], next = 0.3;
     const SPEED = 3.0;
     const pos = [0, 0, 0];
@@ -79,7 +81,7 @@
       K.note([L1 + 0.14, -1.7, 0], [1, 0, 0], '單模：脈衝整齊抵達 → 可傳 10 公里以上'),
     ];
     return {
-      obj: g, notes, view: { yaw: 0.22, pitch: 0.2 },
+      obj: g, notes, view: { yaw: 0.22, pitch: 0.2 }, themed: true,
       caption: () => '光在纖芯與包層的交界不斷「全反射」前進（示意圖，尺寸已放大）',
       anim(dt, t) {
         if (t >= next) { next = t + 2.4; for (const m of modes) pulses.push({ m, t0: t }); }
@@ -130,7 +132,8 @@
     g.add(port);
     const P = fx.points(260, 0.2);
     g.add(P.obj);
-    const BLUE = fx.rgb('#7cc0ff'), ORANGE = fx.rgb('#ffb13b');
+    const dark = fx.isDark();
+    const BLUE = fx.rgb(dark ? '#7cc0ff' : '#1f6fd1'), ORANGE = fx.rgb(dark ? '#ffb13b' : '#e07b00');
     const C_OFF = K.col('#2a3036'), C_AMB = K.col('#ffb13b'), C_GRN = K.col('#46e27a');
     const data = [], power = [];
     let acc = 0, pacc = 0, phase = 0;
@@ -143,7 +146,7 @@
     ];
     const CAPS = ['① AP 接上網路線，還沒開機', '② 交換器偵測到 PoE 裝置，開始透過網路線送電（橘）', '③ AP 開機完成：同一條線同時傳資料（藍）與電力（橘）'];
     return {
-      obj: g, notes, view: { yaw: 0.3, pitch: 0.32 },
+      obj: g, notes, view: { yaw: 0.3, pitch: 0.32 }, themed: true,
       caption: () => CAPS[phase],
       anim(dt, t) {
         const c = t % 10;
@@ -231,7 +234,8 @@
     });
     const P = fx.points(260, 0.24);
     g.add(P.obj);
-    const CYAN = fx.rgb('#7fd8ff'), RED = fx.rgb('#ff6b6b');
+    const dark = fx.isDark();
+    const CYAN = fx.rgb(dark ? '#7fd8ff' : '#1478c8'), RED = fx.rgb(dark ? '#ff6b6b' : '#d62828');
     let flow = [], beats = [], facc = 0, bacc = 0, cap = '';
     const pos = [0, 0, 0];
     const name = ['防火牆 A', '防火牆 B'];
@@ -241,7 +245,7 @@
       K.note([hx + 0.35, 0, hz + 0.55], [0, 0, 1], 'HA 心跳線：互相確認對方還活著，並同步連線狀態'),
     ];
     return {
-      obj: g, notes, view: { yaw: 0.3, pitch: 0.22 },
+      obj: g, notes, view: { yaw: 0.3, pitch: 0.22 }, themed: true,
       caption: () => cap,
       anim(dt, t) {
         const cyc = Math.floor(t / 12), ph = t - cyc * 12;

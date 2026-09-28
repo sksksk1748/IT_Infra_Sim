@@ -293,6 +293,7 @@
     v.dispose = () => {
       active.delete(v);
       root.m3dDead = true;
+      if (v.offTheme) v.offTheme();
       if (v.ro) v.ro.disconnect();
       if (v.model) disposeObj(v.model.obj);
       if (v.shadow) disposeObj(v.shadow);
@@ -347,6 +348,8 @@
       if (window.ResizeObserver) { v.ro = new ResizeObserver(() => resize()); v.ro.observe(stage); }
       resize();
       show(0);
+      /* 顏色依明暗主題決定的動畫（model.themed），切換主題時重建 */
+      v.offTheme = G.bus.on('theme', () => { if (v.renderer && v.model && v.model.themed) show(v.idx); });
       active.add(v);
       startLoop();
     }).catch((e) => { msg.textContent = '無法載入 3D 模型：' + e.message; });

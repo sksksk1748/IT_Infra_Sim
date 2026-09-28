@@ -7,13 +7,15 @@
   const fx = M3.fx = {};
 
   /** 目前是否為深色主題（深色背景用加法混色的發光效果，淺色背景用一般混色） */
-  fx.isDark = () => {
-    const v = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
-    const m = /^#([0-9a-f]{6})$/i.exec(v);
-    if (!m) return true;
-    const n = parseInt(m[1], 16);
-    return (((n >> 16) & 255) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114) < 128;
-  };
+  fx.isDark = () => U.isDark();
+  /* 切換明暗主題時，已經在畫面上的粒子也跟著換混色方式 */
+  const liveMats = new Set();
+  G.bus.on('theme', () => {
+    const T = M3.T();
+    if (!T) return;
+    const add = fx.isDark();
+    for (const m of liveMats) { m.blending = add ? T.AdditiveBlending : T.NormalBlending; m.needsUpdate = true; }
+  });
   /** '#rrggbb' → [r, g, b]（0～1，sRGB） */
   fx.rgb = (hex) => { const n = parseInt(hex.slice(1), 16); return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
   fx.mix = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
@@ -65,6 +67,10 @@
       transparent: true, depthWrite: false, depthTest: opts.depthTest !== false,
       blending: additive ? T.AdditiveBlending : T.NormalBlending,
     });
+    if (opts.additive === undefined) {
+      liveMats.add(mat);
+      mat.addEventListener('dispose', () => liveMats.delete(mat));
+    }
     const obj = new T.Points(geo, mat);
     obj.frustumCulled = false;
     obj.renderOrder = opts.order || 5;

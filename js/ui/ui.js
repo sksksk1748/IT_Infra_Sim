@@ -41,6 +41,59 @@
       ...[0, 1, 2, 3, 4, 5, 6, 7].map((i) => U.s('rect', { x: 8.2 + i * 2.6, y: 5, width: 1.2, height: 4, fill: 'var(--pin)' })));
   }
 
+  /* ---------- 明暗主題：跟隨系統 / 淺色 / 深色（存在這台瀏覽器） ---------- */
+  const THEME_KEY = 'infraops.theme';
+  const THEMES = [['auto', '跟隨系統'], ['light', '淺色'], ['dark', '深色']];
+  UI.theme = () => { const t = U.store.get(THEME_KEY); return t === 'light' || t === 'dark' ? t : 'auto'; };
+  UI.setTheme = (t) => {
+    if (t === 'light' || t === 'dark') { U.store.set(THEME_KEY, t); document.documentElement.setAttribute('data-theme', t); }
+    else { U.store.del(THEME_KEY); document.documentElement.removeAttribute('data-theme'); }
+    themeChanged();
+  };
+  function themeChanged() {
+    G.bus.emit('theme', U.isDark());
+    renderThemeBtn();
+    for (const seg of document.querySelectorAll('[data-theme-seg]')) syncThemeSeg(seg);
+    if (els.main && G.S) UI.refresh();
+  }
+  function syncThemeSeg(seg) {
+    const cur = UI.theme();
+    for (const b of seg.children) { const on = b.dataset.k === cur; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); }
+  }
+  /** 三選一的外觀切換（選單與開始畫面使用） */
+  UI.themeSeg = () => {
+    const seg = h('div', { class: 'seg', role: 'group', 'aria-label': '畫面外觀', 'data-theme-seg': '1' },
+      THEMES.map(([k, label]) => h('button', { 'data-k': k, onclick: () => UI.setTheme(k) }, label)));
+    syncThemeSeg(seg);
+    return seg;
+  };
+  const ico = (kind) => {
+    const svg = U.s('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'aria-hidden': 'true' });
+    if (kind === 'sun') {
+      svg.appendChild(U.s('circle', { cx: 12, cy: 12, r: 4.2 }));
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4, c = Math.cos(a), s = Math.sin(a);
+        svg.appendChild(U.s('path', { d: `M${(12 + c * 7.2).toFixed(2)} ${(12 + s * 7.2).toFixed(2)}L${(12 + c * 9.6).toFixed(2)} ${(12 + s * 9.6).toFixed(2)}` }));
+      }
+    } else svg.appendChild(U.s('path', { d: 'M20.5 14.2A8.5 8.5 0 1 1 9.8 3.5a6.8 6.8 0 0 0 10.7 10.7z' }));
+    return svg;
+  };
+  /** 頂部列的快速切換：目前是深色就顯示太陽（切到淺色），反之顯示月亮 */
+  function renderThemeBtn() {
+    const b = els.themeBtn;
+    if (!b) return;
+    const dark = U.isDark();
+    const label = dark ? '切換成淺色背景' : '切換成深色背景';
+    U.mount(b, ico(dark ? 'sun' : 'moon'));
+    b.title = label;
+    b.setAttribute('aria-label', label);
+  }
+  try {
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onSys = () => { if (UI.theme() === 'auto') themeChanged(); };
+    if (mq.addEventListener) mq.addEventListener('change', onSys); else if (mq.addListener) mq.addListener(onSys);
+  } catch (e) { /* 舊瀏覽器不支援就算了 */ }
+
   /* ---------- 殼層 ---------- */
   UI.build = () => {
     const root = document.getElementById('root');
@@ -50,11 +103,13 @@
     els.speed = h('div', { class: 'speed', role: 'group', 'aria-label': '遊戲速度' });
     els.kpis = h('div', { class: 'kpis' });
     els.missionBtn = h('button', { class: 'btn sm', onclick: () => UI.toggleSide() }, '任務');
+    els.themeBtn = h('button', { class: 'btn sm icon', onclick: () => UI.setTheme(U.isDark() ? 'light' : 'dark') });
+    renderThemeBtn();
     const top = h('header', { class: 'topbar' },
       h('div', { class: 'brand' }, UI.logo(30), h('div', {}, h('div', { class: 'name' }, '萬人網管'), h('div', { class: 'sub' }, 'NOVALUX HQ · 21F + B1 MDF'))),
       h('div', { class: 'clock' }, h('div', { class: 'col', style: { gap: '0' } }, els.clockDay, els.clockTime), els.speed),
       els.kpis,
-      h('div', { class: 'top-actions' }, els.missionBtn, h('button', { class: 'btn sm', onclick: () => UI.menu(), 'aria-label': '選單' }, '選單')));
+      h('div', { class: 'top-actions' }, els.themeBtn, els.missionBtn, h('button', { class: 'btn sm', onclick: () => UI.menu(), 'aria-label': '選單' }, '選單')));
     els.rail = h('nav', { class: 'rail', 'aria-label': '主要功能' }, h('div', { class: 'plate' }, 'NX-CORE 48P'));
     NAV.forEach((n, i) => {
       const b = h('button', { class: 'port', onclick: () => UI.go(n.id), title: n.label },
@@ -412,6 +467,7 @@
           h('button', { class: 'btn', onclick: () => { close(); UI.help(); } }, '操作說明'),
           h('button', { class: 'btn', onclick: () => { close(); UI.go('noc'); UI.showLog(); } }, '營運日誌'),
           h('button', { class: 'btn danger', onclick: () => { close(); UI.confirm('回到標題畫面', '目前進度會先自動存檔。', '回到標題', () => { G.State.save(); UI.title(); }); } }, '回到標題')),
+        h('div', { class: 'row wrap', style: { marginTop: '4px' } }, h('span', {}, '畫面外觀'), UI.themeSeg()),
         h('label', { class: 'row', style: { marginTop: '4px' } }, h('input', { type: 'checkbox', id: 'opt-autopause', checked: s.settings.autoPause, onchange: (e) => { s.settings.autoPause = e.target.checked; } }), '重大事件發生時自動暫停'),
         h('p', { class: 'small dim' }, '存檔保存在這個瀏覽器中；換裝置或清除瀏覽資料前，請先匯出存檔。'),
       ],
@@ -518,6 +574,7 @@
           h('h1', {}, h('span', { class: 'en' }, 'INFRAOPS · IT INFRASTRUCTURE SIM'), '萬人網管'),
           h('p', { class: 'lead' }, '一棟 21 層的新總部、一萬名員工、一間空蕩蕩的 B1 機房。從機櫃、路由器、防火牆、樓層光纖到 Wi-Fi，親手打造整間公司的網路，並在流量高峰與駭客攻擊中守住它。'),
           menu,
+          h('div', { class: 'row wrap theme-row' }, h('span', { class: 'small muted' }, '畫面外觀'), UI.themeSeg()),
           h('div', { class: 'topics' }, topics.map((t) => h('span', { class: 'chip' }, t)))),
         rackArt()));
     document.body.appendChild(scr);
