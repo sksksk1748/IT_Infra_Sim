@@ -12,9 +12,12 @@
     if (!V.rack || !s.racks.find((r) => r.id === V.rack)) V.rack = s.racks.length ? s.racks[0].id : null;
     if (V.sel && !s.devices[V.sel]) V.sel = null;
     if (V.armed && (!s.devices[V.armed] || s.devices[V.armed].rack)) V.armed = null;
+    const use3d = UI.pref3d('rack');
     el.appendChild(h('div', { class: 'view-h' },
-      h('div', {}, h('h2', {}, 'B1 主機房（MDF）'), h('div', { class: 'desc' }, '所有核心設備都要安裝在機櫃中才能通電運作。注意每座機櫃的電力上限，以及整間機房的 UPS 與冷卻能力。')),
-      h('div', { class: 'row wrap' }, h('button', { class: 'btn', onclick: () => UI.openKb('k-rack') }, '機櫃與 U 數'), h('button', { class: 'btn', onclick: () => UI.openKb('k-power') }, '電力'), h('button', { class: 'btn', onclick: () => UI.openKb('k-cooling') }, '冷卻'))));
+      h('div', {}, h('h2', {}, 'B1 主機房（MDF）'), h('div', { class: 'desc' }, use3d
+        ? '3D 機房：機櫃正面朝冷通道（藍色冷風）、背面朝熱通道（紅色熱風）。點設備看詳情、點機櫃切換；選好倉庫裡的設備後，點亮起的空位就能上架。'
+        : '所有核心設備都要安裝在機櫃中才能通電運作。注意每座機櫃的電力上限，以及整間機房的 UPS 與冷卻能力。')),
+      h('div', { class: 'row wrap' }, UI.toggle3d('rack'), h('button', { class: 'btn', onclick: () => UI.openKb('k-rack') }, '機櫃與 U 數'), h('button', { class: 'btn', onclick: () => UI.openKb('k-power') }, '電力'), h('button', { class: 'btn', onclick: () => UI.openKb('k-cooling') }, '冷卻'))));
     V.bar = h('div', { class: 'room-bar' });
     el.appendChild(V.bar);
     const tabs = h('div', { class: 'racks-row' });
@@ -25,10 +28,12 @@
     }
     if (s.racks.length < CAT.rack.maxRacks) tabs.appendChild(h('button', { class: 'rack-tab', onclick: () => { const r = UI.res(G.Act.buyRack()); if (r.ok) V.rack = r.id; } }, h('div', { class: 'n' }, '＋ 機櫃'), h('div', { class: 'm mono' }, U.money(CAT.rack.price))));
     el.appendChild(tabs);
-    const left = h('div', { class: 'card' });
+    const left = h('div', { class: 'card' + (use3d ? ' card-3d' : '') });
     const right = h('div', { class: 'col', style: { gap: '10px' } });
-    el.appendChild(h('div', { class: 'rack-layout' }, left, right));
-    if (!V.rack) left.appendChild(h('div', { class: 'empty' }, h('p', {}, '機房裡還沒有機櫃。'), h('button', { class: 'btn primary', style: { marginTop: '10px' }, onclick: () => { const r = UI.res(G.Act.buyRack()); if (r.ok) V.rack = r.id; } }, `採購 42U 機櫃（${U.money(CAT.rack.price)}）`)));
+    el.appendChild(h('div', { class: 'rack-layout' + (use3d ? ' r3d' : '') }, left, right));
+    V.svgWrap = null;
+    if (use3d) left.appendChild(room3d());
+    else if (!V.rack) left.appendChild(h('div', { class: 'empty' }, h('p', {}, '機房裡還沒有機櫃。'), h('button', { class: 'btn primary', style: { marginTop: '10px' }, onclick: () => { const r = UI.res(G.Act.buyRack()); if (r.ok) V.rack = r.id; } }, `採購 42U 機櫃（${U.money(CAT.rack.price)}）`)));
     else { V.svgWrap = h('div', {}); left.appendChild(V.svgWrap); V.drawRack(); }
     /* 倉庫 */
     const inv = Object.values(s.devices).filter((d) => !d.rack);
@@ -54,6 +59,25 @@
     right.appendChild(roomCard());
     V.renderBar();
   };
+
+  /** 3D 機房：畫面重繪時沿用同一個場景（不重建 WebGL、不重設視角） */
+  function room3d() {
+    if (V.m3d && !V.m3d.m3dDead) { V.m3d.m3dStage.poke(); return V.m3d; }
+    V.m3d = G.M3.room({
+      height: window.innerWidth < 760 ? '400px' : 'clamp(440px, 66vh, 660px)',
+      sel: () => ({ rack: V.rack, dev: V.sel, armed: V.armed }),
+      onDev: (id) => { const d = G.S.devices[id]; V.sel = id; V.armed = null; if (d && d.rack) V.rack = d.rack; UI.refresh(); },
+      onRack: (id) => { V.rack = id; UI.refresh(); },
+      onSlot: (rack, u) => {
+        if (!V.armed) return;
+        V.rack = rack;
+        const r = UI.res(G.Act.installDevice(V.armed, rack, u));
+        if (r.ok) { V.sel = V.armed; V.armed = null; }
+        UI.refresh();
+      },
+    });
+    return V.m3d;
+  }
 
   V.renderBar = () => {
     const s = G.S, f = G.R.fac;

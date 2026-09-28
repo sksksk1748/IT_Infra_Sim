@@ -119,8 +119,9 @@
     const stage = h('div', { class: 'm3d-stage', style: { height: (opts.height || 320) + 'px' } });
     const canvas = h('canvas', { 'aria-label': '3D 模型：拖曳旋轉、滾輪縮放' });
     const pins = h('div', { class: 'm3d-pins' });
+    const capHud = h('div', { class: 'm3d-caption', hidden: true });
     const msg = h('div', { class: 'm3d-msg' }, '正在載入 3D 模型…');
-    stage.append(canvas, pins, msg);
+    stage.append(canvas, pins, capHud, msg);
     const bar = h('div', { class: 'm3d-bar' });
     const cap = h('div', { class: 'm3d-cap' });
     root.append(stage, bar, cap);
@@ -164,6 +165,11 @@
       v.yaw = sv ? sv.yaw : v.model.view.yaw;
       v.pitch = sv ? sv.pitch : v.model.view.pitch;
       v.zoom = sv ? sv.zoom : 1;
+      /* 動畫模型：每幀更新，預設不自動旋轉（避免干擾觀看） */
+      v.animT = 0;
+      v.capText = null;
+      capHud.hidden = true;
+      if (v.model.anim && v.auto) { v.auto = false; autoBtn.classList.remove('on'); }
       U.clear(pins);
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'm3d-lines');
@@ -271,6 +277,13 @@
       v.last = now;
       if (!v.model) return;
       if (v.auto && !v.dragging && now - v.idle > 2500) { v.yaw += dt * 0.32; v.needs = true; }
+      if (v.model.anim) {
+        v.animT += dt;
+        v.model.anim(dt, v.animT);
+        v.needs = true;
+        const c = v.model.caption ? v.model.caption() : null;
+        if (c !== v.capText) { v.capText = c; capHud.textContent = c || ''; capHud.hidden = !c; }
+      }
       if (!v.needs) return;
       v.needs = false;
       camAt(v.camera, v.center, v.baseDist * v.zoom, v.yaw, v.pitch);
@@ -350,6 +363,289 @@
     if (!ids.length) return;
     const hgt = Math.round(U.clamp(window.innerHeight * 0.52, 240, 480));
     G.UI.modal({ kicker: '3D 模型', title: title || M3.info(ids[0]).name, wide: true, body: M3.viewer(ids, { height: hgt }) });
+  };
+
+  /* ---------- 即時場景容器（3D 機房、3D 大樓） ----------
+   * opts.create(api) 回傳場景：
+   *   { obj, view:{yaw,pitch,fill}, frame?: Object3D（決定預設取景）, sync(first)（每 0.5 秒讀一次遊戲狀態）,
+   *     tick(dt, t)（每幀動畫）, animating()（是否需要持續重繪）, pickables()（可點選的物件）,
+   *     tip(data) → 提示文字陣列, click(data), clickable(data), dispose() }
+   * 物件以 userData.pick 標記點選資料。
+   */
+  const coarse = () => window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+  M3.stage = (opts) => {
+    const root = h('div', { class: 'm3d m3d-live' });
+    const stage = h('div', { class: 'm3d-stage', style: { height: opts.height || '480px' } });
+    const canvas = h('canvas', { 'aria-label': opts.label || '3D 場景' });
+    const tags = h('div', { class: 'm3d-tags' });
+    const hud = h('div', { class: 'm3d-hud' });
+    const tip = h('div', { class: 'm3d-tip', hidden: true });
+    const msg = h('div', { class: 'm3d-msg' }, '正在載入 3D 場景…');
+    /* 選取資訊卡（場景自行填內容）：在卡片上的操作不觸發旋轉與點選 */
+    const panel = h('div', { class: 'm3d-panel', hidden: true });
+    for (const ev of ['pointerdown', 'pointerup', 'pointermove', 'wheel', 'contextmenu']) panel.addEventListener(ev, (e) => { e.stopPropagation(); if (ev === 'pointermove') tip.hidden = true; }, { passive: true });
+    stage.append(canvas, tags, hud, panel, tip, msg);
+    const bar = h('div', { class: 'm3d-bar' });
+    root.append(stage, bar);
+    const v = { root, needs: true, lastT: 0, lastRender: 0, lastSync: 0, dragging: false, fly: null, tagList: [], atHome: true };
+    const api = { root, stage, hud, bar, panel, request: () => { v.needs = true; } };
+    root.m3dStage = { poke: () => { v.lastSync = 0; v.needs = true; }, api };
+
+    /** 跟著 3D 位置移動的 HTML 標籤 */
+    /** fixed = 固定在原位（例如樓層編號那一列），其他標籤會避開它 */
+    api.tag = (text, cls, align, prio, fixed) => {
+      const el = h('div', { class: 'm3d-tag' + (cls ? ' ' + cls : '') }, text);
+      tags.appendChild(el);
+      const t = {
+        el, text, pos: new (M3.T().Vector3)(), show: true, align: align || 'center', prio: prio || 0, fixed: !!fixed, dirty: true,
+        set(s, c) {
+          if (s !== t.text) { t.text = s; el.textContent = s; t.dirty = true; }
+          const k = 'm3d-tag' + (c ? ' ' + c : '');
+          if (el.className !== k) { el.className = k; t.dirty = true; }
+        },
+        remove() { el.remove(); const i = v.tagList.indexOf(t); if (i >= 0) v.tagList.splice(i, 1); },
+      };
+      v.tagList.push(t);
+      v.tagList.sort((a, b) => b.prio - a.prio);
+      return t;
+    };
+    const home = () => {
+      if (!v.homeV) return;
+      v.fly = { c0: v.center.clone(), c1: v.homeV.center.clone(), d0: v.dist, d1: v.homeV.dist, y0: v.yaw, y1: v.homeV.yaw, p0: v.pitch, p1: v.homeV.pitch, t: 0 };
+      v.atHome = true;
+    };
+    api.home = home;
+    /** 場景範圍改變時重新計算預設取景（使用者沒移動過鏡頭就直接套用） */
+    api.refit = () => resize();
+    /** 把鏡頭飛到某個物件（保持目前角度） */
+    api.focus = (obj, fill) => {
+      if (!v.camera) return;
+      const f = framing(obj);
+      if (!isFinite(f.radius) || f.radius <= 0) return;
+      const d = fitDist(v.camera, f, v.yaw, v.pitch, fill || 0.55);
+      v.fly = { c0: v.center.clone(), c1: f.center.clone(), d0: v.dist, d1: U.clamp(d, v.minD, v.maxD), y0: v.yaw, y1: v.yaw, p0: v.pitch, p1: v.pitch, t: 0 };
+      v.atHome = false;
+    };
+    bar.append(h('button', { class: 'btn xs', onclick: home }, '重設視角'));
+    const hint = h('span', { class: 'm3d-hint' }, coarse() ? '單指旋轉・雙指縮放 / 平移・點兩下聚焦' : '拖曳旋轉・右鍵拖曳平移・滾輪縮放・雙擊聚焦');
+
+    /** 標籤跟著 3D 位置移動；重要的標籤先放，互相重疊的往上推開 */
+    function placeTags() {
+      const T = M3.T();
+      const W = stage.clientWidth, H = stage.clientHeight;
+      const tmp = v.tmpV || (v.tmpV = new T.Vector3());
+      const placed = [];
+      for (const t of v.tagList) {
+        if (!t.show) { if (t.el.style.display !== 'none') t.el.style.display = 'none'; continue; }
+        tmp.copy(t.pos).project(v.camera);
+        const x = (tmp.x + 1) / 2 * W, y = (1 - tmp.y) / 2 * H;
+        if (tmp.z > 1 || x < -60 || x > W + 60 || y < -30 || y > H + 30) { if (t.el.style.display !== 'none') t.el.style.display = 'none'; continue; }
+        if (t.el.style.display === 'none') { t.el.style.display = ''; t.dirty = true; }
+        if (t.dirty) { t.w = t.el.offsetWidth; t.h = t.el.offsetHeight; t.dirty = false; }
+        const left = t.align === 'left' ? x : t.align === 'right' ? x - t.w : x - t.w / 2;
+        let top = y - t.h / 2;
+        for (let k = 0; k < 8 && !t.fixed; k++) {
+          const hit = placed.find((r) => left < r.x + r.w + 3 && left + t.w + 3 > r.x && top < r.y + r.h + 2 && top + t.h + 2 > r.y);
+          if (!hit) break;
+          top = hit.y - t.h - 3;
+        }
+        /* 次要標籤被推離原位太遠就先藏起來，讓位給重要的警示 */
+        if (!t.fixed && t.prio < 2 && y - t.h / 2 - top > t.h * 2.6) { if (!t.el.style.visibility) t.el.style.visibility = 'hidden'; continue; }
+        if (t.el.style.visibility) t.el.style.visibility = '';
+        placed.push({ x: left, y: top, w: t.w, h: t.h });
+        t.el.style.transform = `translate(${left.toFixed(1)}px, ${top.toFixed(1)}px)`;
+      }
+    }
+    function resize() {
+      if (!v.renderer) return;
+      const w = Math.max(10, stage.clientWidth), hh = Math.max(10, stage.clientHeight);
+      v.renderer.setPixelRatio(Math.min(1.5, window.devicePixelRatio || 1));
+      v.renderer.setSize(w, hh, false);
+      v.camera.aspect = w / hh;
+      v.camera.updateProjectionMatrix();
+      if (v.sc) {
+        const f = framing(v.sc.frame || v.sc.obj);
+        const vw = v.sc.view || {};
+        const d = fitDist(v.camera, f, vw.yaw, vw.pitch, vw.fill || 0.8);
+        v.homeV = { center: f.center.clone(), dist: d, yaw: vw.yaw, pitch: vw.pitch };
+        v.minD = d * 0.06; v.maxD = d * 2.2;
+        v.bounds = f;
+        if (v.atHome && !v.fly) { v.center = f.center.clone(); v.dist = d; v.yaw = vw.yaw; v.pitch = vw.pitch; }
+      }
+      v.needs = true;
+    }
+    const ease = (t) => (t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2);
+    v.frame = (now) => {
+      if (!v.sc) return;
+      if (now - v.lastSync >= (opts.syncMs || 500)) {
+        v.lastSync = now;
+        try { v.sc.sync(false); } catch (e) { console.error(e); }
+        v.needs = true;
+      }
+      const anim = v.fly || (v.sc.animating && v.sc.animating());
+      if (!v.needs && !anim) { v.lastT = now; return; }
+      if (!v.dragging && now - v.lastRender < 32) return;
+      const dt = v.lastT ? Math.min(0.1, (now - v.lastT) / 1000) : 0;
+      v.lastT = now;
+      if (v.fly) {
+        const f = v.fly;
+        f.t = Math.min(1, f.t + dt / 0.65);
+        const k = ease(f.t);
+        v.center.lerpVectors(f.c0, f.c1, k);
+        v.dist = f.d0 + (f.d1 - f.d0) * k;
+        v.yaw = f.y0 + (f.y1 - f.y0) * k;
+        v.pitch = f.p0 + (f.p1 - f.p0) * k;
+        if (f.t >= 1) v.fly = null;
+      }
+      if (v.sc.tick) v.sc.tick(dt, now / 1000);
+      camAt(v.camera, v.center, v.dist, v.yaw, v.pitch);
+      v.renderer.render(v.scene, v.camera);
+      placeTags();
+      v.needs = false;
+      v.lastRender = now;
+    };
+    v.dispose = () => {
+      active.delete(v);
+      root.m3dDead = true;
+      if (v.ro) v.ro.disconnect();
+      if (v.sc) { try { if (v.sc.dispose) v.sc.dispose(); } catch (e) { console.error(e); } disposeObj(v.scene); }
+      if (v.env) v.env.dispose();
+      if (v.renderer) { v.renderer.dispose(); v.renderer.forceContextLoss(); v.renderer = null; }
+    };
+
+    /* ---- 點選與提示 ---- */
+    function pickAt(cx, cy) {
+      const T = M3.T();
+      if (!v.ray) { v.ray = new T.Raycaster(); v.ray.params.Line.threshold = 0.001; v.ray.params.Points.threshold = 0; v.ndc = new T.Vector2(); }
+      const r = canvas.getBoundingClientRect();
+      v.ndc.set(((cx - r.left) / r.width) * 2 - 1, -((cy - r.top) / r.height) * 2 + 1);
+      v.ray.setFromCamera(v.ndc, v.camera);
+      const objs = v.sc.pickables ? v.sc.pickables() : [v.sc.obj];
+      const hits = v.ray.intersectObjects(objs, true);
+      for (const hit of hits) {
+        if (hit.object.isPoints || hit.object.isLine) continue;
+        let o = hit.object;
+        while (o && !(o.userData && o.userData.pick)) o = o.parent;
+        if (o) {
+          const data = hit.instanceId !== undefined ? Object.assign({ inst: hit.instanceId }, o.userData.pick) : o.userData.pick;
+          const focus = v.sc.focusObj ? v.sc.focusObj(data) : null;
+          return { data, obj: focus || o, point: hit.point, fill: v.sc.focusFill ? v.sc.focusFill(data) : 0.55 };
+        }
+      }
+      return null;
+    }
+    function showTip(p, cx, cy) {
+      const lines = p && v.sc.tip ? v.sc.tip(p.data) : null;
+      stage.style.cursor = p && v.sc.clickable && v.sc.clickable(p.data) ? 'pointer' : '';
+      if (!lines || !lines.length) { tip.hidden = true; return; }
+      U.mount(tip, ...lines.map((s, i) => h('div', { class: i === 0 ? 't' : '' }, s)));
+      tip.hidden = false;
+      const r = stage.getBoundingClientRect();
+      let x = cx - r.left + 14, y = cy - r.top + 14;
+      const tw = tip.offsetWidth, th = tip.offsetHeight;
+      if (x + tw > r.width - 4) x = cx - r.left - tw - 14;
+      if (y + th > r.height - 4) y = cy - r.top - th - 14;
+      tip.style.transform = `translate(${Math.max(4, x)}px, ${Math.max(4, y)}px)`;
+    }
+    function bind() {
+      const T = M3.T();
+      const ptrs = new Map();
+      let downAt = 0, moved = 0, hoverAt = 0, lastTap = 0, tapX = 0, tapY = 0;
+      const right = new T.Vector3(), up = new T.Vector3();
+      const pan = (dx, dy) => {
+        const k = v.dist * Math.tan(v.camera.fov * Math.PI / 360) * 2 / Math.max(1, stage.clientHeight);
+        right.setFromMatrixColumn(v.camera.matrixWorld, 0);
+        up.setFromMatrixColumn(v.camera.matrixWorld, 1);
+        v.center.addScaledVector(right, -dx * k).addScaledVector(up, dy * k);
+        if (v.bounds) {
+          const b = v.bounds.bbox, m = v.bounds.radius * 0.6;
+          v.center.x = U.clamp(v.center.x, b.min.x - m, b.max.x + m);
+          v.center.y = U.clamp(v.center.y, b.min.y - m, b.max.y + m);
+          v.center.z = U.clamp(v.center.z, b.min.z - m, b.max.z + m);
+        }
+      };
+      const pmin = opts.pitchMin !== undefined ? opts.pitchMin : 0.02, pmax = opts.pitchMax || 1.45;
+      stage.addEventListener('contextmenu', (e) => e.preventDefault());
+      stage.addEventListener('pointerdown', (e) => {
+        try { stage.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+        ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, btn: e.button, mod: e.shiftKey || e.ctrlKey || e.metaKey });
+        if (ptrs.size === 1) { downAt = performance.now(); moved = 0; }
+        v.dragging = true; v.fly = null; v.atHome = false;
+        tip.hidden = true;
+      });
+      stage.addEventListener('pointermove', (e) => {
+        const p = ptrs.get(e.pointerId);
+        if (!p) {
+          if (e.pointerType === 'mouse' && v.sc) { const now = performance.now(); if (now - hoverAt > 60) { hoverAt = now; showTip(pickAt(e.clientX, e.clientY), e.clientX, e.clientY); } }
+          return;
+        }
+        const dx = e.clientX - p.x, dy = e.clientY - p.y;
+        moved += Math.abs(dx) + Math.abs(dy);
+        if (ptrs.size === 1) {
+          if (p.btn === 2 || p.btn === 1 || p.mod) pan(dx, dy);
+          else { v.yaw -= dx * 0.008; v.pitch = U.clamp(v.pitch + dy * 0.006, pmin, pmax); }
+        } else if (ptrs.size === 2) {
+          const other = Array.from(ptrs.entries()).find(([k]) => k !== e.pointerId)[1];
+          const d0 = Math.hypot(p.x - other.x, p.y - other.y), d1 = Math.hypot(e.clientX - other.x, e.clientY - other.y);
+          if (d0 > 0 && d1 > 0) v.dist = U.clamp(v.dist * d0 / d1, v.minD, v.maxD);
+          pan(dx / 2, dy / 2);
+        }
+        p.x = e.clientX; p.y = e.clientY;
+        v.needs = true;
+      });
+      const up2 = (e) => {
+        const p = ptrs.get(e.pointerId);
+        ptrs.delete(e.pointerId);
+        if (ptrs.size) return;
+        v.dragging = false;
+        const now = performance.now();
+        if (e.type === 'pointerup' && p && p.btn === 0 && moved < 7 && now - downAt < 600 && v.sc) {
+          const hit = pickAt(e.clientX, e.clientY);
+          /* 自己判斷雙擊：點選後畫面會重繪，瀏覽器的 dblclick 事件不可靠 */
+          if (now - lastTap < 380 && Math.hypot(e.clientX - tapX, e.clientY - tapY) < 12) { lastTap = 0; if (hit) api.focus(hit.obj, hit.fill); else home(); return; }
+          lastTap = now; tapX = e.clientX; tapY = e.clientY;
+          let handled = false;
+          if (hit && v.sc.click) handled = !!v.sc.click(hit.data);
+          else if (!hit && v.sc.clickEmpty) v.sc.clickEmpty();
+          if (e.pointerType !== 'mouse' && !handled) showTip(hit, e.clientX, e.clientY);
+          v.needs = true;
+        }
+      };
+      stage.addEventListener('pointerup', up2);
+      stage.addEventListener('pointercancel', up2);
+      stage.addEventListener('pointerleave', () => { if (!ptrs.size) { tip.hidden = true; stage.style.cursor = ''; } });
+      stage.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        v.fly = null; v.atHome = false;
+        v.dist = U.clamp(v.dist * Math.exp(e.deltaY * 0.0012), v.minD, v.maxD);
+        v.needs = true;
+      }, { passive: false });
+    }
+    M3.load().then(() => {
+      const T = M3.T();
+      try { v.renderer = makeRenderer(canvas, false); } catch (e) { msg.textContent = '這個瀏覽器無法使用 WebGL，請切回 2D 檢視。'; return; }
+      v.env = makeEnv(v.renderer);
+      v.scene = new T.Scene();
+      v.scene.environment = v.env.texture;
+      addLights(v.scene);
+      v.camera = new T.PerspectiveCamera(opts.fov || 34, 1, 0.05, 5000);
+      api.T = T; api.scene = v.scene; api.camera = v.camera;
+      try {
+        v.sc = opts.create(api);
+        v.scene.add(v.sc.obj);
+        v.sc.sync(true);
+        v.sc.obj.updateMatrixWorld(true);
+      } catch (e) { console.error(e); msg.textContent = '3D 場景建立失敗：' + e.message; v.sc = null; return; }
+      msg.hidden = true;
+      bar.appendChild(hint);
+      bind();
+      if (window.ResizeObserver) { v.ro = new ResizeObserver(() => resize()); v.ro.observe(stage); }
+      v.atHome = true;
+      resize();
+      active.add(v);
+      startLoop();
+    }).catch((e) => { msg.textContent = '無法載入 3D 引擎（' + e.message + '），請切回 2D 檢視。'; });
+    return root;
   };
 
   /* ---------- 縮圖（共用一個離屏渲染器） ---------- */

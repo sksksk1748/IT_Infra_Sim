@@ -459,9 +459,53 @@ table.t td.r, table.t th.r { text-align: right; }
 .m3d-thumb.loading::after { content: '載入 3D 模型…'; }
 .m3d-thumb.failed::after { content: '3D 模型需要網路連線'; }
 .kb-3d { margin-bottom: 14px; }
+.m3d-caption {
+  position: absolute; left: 10px; top: 10px; max-width: calc(100% - 20px); pointer-events: none; font-size: 12.5px; line-height: 1.4; color: var(--text);
+  background: color-mix(in srgb, var(--bg-2) 86%, transparent); border: 1px solid var(--line-2); border-left: 3px solid var(--accent-2); border-radius: 6px; padding: 4px 10px;
+}
+/* 即時 3D 場景（機房、大樓） */
+.card-3d { padding: 8px; }
+.m3d-tags { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.m3d-tag {
+  position: absolute; left: 0; top: 0; white-space: nowrap; font: 600 11px/1.35 var(--font-mono); padding: 1px 6px; border-radius: 4px; will-change: transform;
+  background: color-mix(in srgb, var(--bg-2) 84%, transparent); border: 1px solid var(--line-2); color: var(--text-2);
+}
+.m3d-tag.ok { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.m3d-tag.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 55%, transparent); }
+.m3d-tag.info { color: var(--info); border-color: color-mix(in srgb, var(--info) 45%, transparent); }
+.m3d-tag.bad { color: #fff; background: color-mix(in srgb, var(--bad) 82%, transparent); border-color: var(--bad); }
+.m3d-tip {
+  position: absolute; left: 0; top: 0; z-index: 3; pointer-events: none; max-width: 290px; font-size: 12px; line-height: 1.45; color: var(--text-2);
+  background: var(--bg-2); border: 1px solid var(--line-2); border-radius: 6px; padding: 6px 9px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+}
+.m3d-tip .t { color: var(--text); font-weight: 700; }
+.m3d-hud { position: absolute; left: 8px; bottom: 8px; pointer-events: none; max-width: calc(100% - 16px); }
+.m3d-panel {
+  position: absolute; right: 8px; top: 8px; z-index: 2; width: min(270px, calc(100% - 16px)); display: grid; gap: 5px; cursor: default;
+  font-size: 12px; line-height: 1.45; color: var(--text-2); background: color-mix(in srgb, var(--bg-2) 94%, transparent);
+  border: 1px solid var(--line-2); border-left: 3px solid var(--accent); border-radius: 8px; padding: 8px 10px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+}
+.m3d-panel .hd { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.m3d-panel .hd b { color: var(--text); font-size: 13px; }
+.m3d-panel .row { margin-top: 3px; }
+.m3d-legend { display: grid; gap: 3px; font-size: 11px; color: var(--text-2); background: color-mix(in srgb, var(--bg-2) 80%, transparent); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+.m3d-legend div { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.m3d-legend i { display: inline-block; width: 14px; height: 4px; border-radius: 2px; }
+.m3d-legend .dotp { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #c4f0ff; box-shadow: 0 0 6px #7fd8ff; }
+.rack-layout.r3d { grid-template-columns: minmax(0, 1.75fr) minmax(280px, 1fr); }
+.bld.b3d { grid-template-columns: minmax(0, 1fr); }
+@media (max-width: 980px) {
+  .rack-layout.r3d { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 760px) {
   .m3d-hint { display: none; }
   .m3d-lab { font-size: 10.5px; max-width: 170px; padding: 1px 6px; }
+  .m3d-tag { font-size: 10px; padding: 0 4px; }
+  .m3d-legend { font-size: 10px; }
+  .m3d-caption { font-size: 11.5px; }
+}
+@media (max-width: 560px) {
+  .m3d-hud .m3d-legend { display: none; }
 }
 
 /* ---------- 響應式 ---------- */

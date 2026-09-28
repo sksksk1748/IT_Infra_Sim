@@ -107,6 +107,22 @@
     els.main.scrollTop = st;
   };
 
+  /* ---------- 2D / 3D 檢視切換（每個畫面各自記住，存在這台瀏覽器） ---------- */
+  UI.pref3d = (key, val) => {
+    const k = 'infraops.view3d.' + key;
+    if (val === undefined) return !!G.M3 && U.store.get(k) === '1';
+    U.store.set(k, val ? '1' : '0');
+    return !!val;
+  };
+  UI.toggle3d = (key) => {
+    if (!G.M3) return null;
+    const on = UI.pref3d(key);
+    const set = (v) => { if (v !== UI.pref3d(key)) { UI.pref3d(key, v); UI.refresh(); } };
+    return h('div', { class: 'seg', role: 'group', 'aria-label': '檢視方式' },
+      h('button', { class: on ? '' : 'on', 'aria-pressed': String(!on), onclick: () => set(false) }, '2D'),
+      h('button', { class: on ? 'on' : '', 'aria-pressed': String(on), onclick: () => set(true) }, '3D'));
+  };
+
   UI.renderSpeed = () => {
     if (!els.speed || !G.S) return;
     U.clear(els.speed);

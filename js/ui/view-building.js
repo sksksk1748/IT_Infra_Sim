@@ -21,16 +21,37 @@
 
   V.mount = (el) => {
     V.el = el;
+    const use3d = UI.pref3d('bld');
     V.sum = h('div', { class: 'row wrap' });
     el.appendChild(h('div', { class: 'view-h' },
-      h('div', {}, h('h2', {}, '大樓總覽'), h('div', { class: 'desc' }, '新曜大樓 21 層 + B1 機房。每層樓的 IDF 透過弱電豎井裡的主幹線，連回 B1 機房的核心交換器。點選樓層進入規劃。')),
-      V.sum));
-    V.tower = h('div', { class: 'tower card' });
+      h('div', {}, h('h2', {}, '大樓總覽'), h('div', { class: 'desc' }, use3d
+        ? '3D 剖面：窗戶亮燈 = 進駐人數、顏色 = 滿意度。右前角的弱電豎井裡是各樓層連回 B1 的主幹線，光點代表流量；已偵測到的駭客攻擊會以紅色路徑顯示。點一下樓層看資訊並可進入規劃，點兩下拉近。'
+        : '新曜大樓 21 層 + B1 機房。每層樓的 IDF 透過弱電豎井裡的主幹線，連回 B1 機房的核心交換器。點選樓層進入規劃。')),
+      h('div', { class: 'row wrap' }, UI.toggle3d('bld'), V.sum)));
     V.table = h('div', { class: 'card', style: { padding: '4px 6px' } });
-    el.appendChild(h('div', { class: 'bld' }, V.tower, V.table));
+    if (use3d) {
+      V.tower = null;
+      el.appendChild(h('div', { class: 'bld b3d' }, h('div', { class: 'card card-3d' }, tower3d()), V.table));
+    } else {
+      V.tower = h('div', { class: 'tower card' });
+      el.appendChild(h('div', { class: 'bld' }, V.tower, V.table));
+    }
     V.last = 0;
     V.render();
   };
+  /** 3D 大樓：畫面重繪時沿用同一個場景 */
+  function tower3d() {
+    if (V.m3d && !V.m3d.m3dDead) { V.m3d.m3dStage.poke(); return V.m3d; }
+    V.m3d = G.M3.tower({
+      height: window.innerWidth < 760 ? '460px' : 'clamp(480px, 72vh, 760px)',
+      onFloor: (fid) => UI.go('floor:' + fid),
+      onRack: () => UI.go('rack'),
+      onDev: (id) => { const d = G.S.devices[id], R = G.Views.rack; if (d && R) { R.sel = id; if (d.rack) R.rack = d.rack; } UI.go('rack'); },
+      onTopo: () => UI.go('topo'),
+      onInc: () => UI.go('inc'),
+    });
+    return V.m3d;
+  }
   V.update = () => { const now = performance.now(); if (now - V.last < 1000) return; V.render(); };
 
   V.render = () => {
@@ -42,7 +63,7 @@
       h('span', { class: 'chip' }, `員工 ${U.num(emp)} / ${U.num(G.BLD.totalStaff)}`),
       h('span', { class: 'chip ' + (upN === 21 ? 'ok' : '') }, `上線樓層 ${upN} / 21`),
       sim.sat !== null && sim.sat !== undefined ? h('span', { class: 'chip ' + (sim.sat >= 0.8 ? 'ok' : sim.sat >= 0.6 ? 'warn' : 'bad') }, `滿意度 ${U.pct(sim.sat)}`) : null);
-    U.mount(V.tower, tower());
+    if (V.tower) U.mount(V.tower, tower());
     U.mount(V.table, table());
   };
 

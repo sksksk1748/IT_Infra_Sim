@@ -575,7 +575,7 @@
         const ear = box(0.21, Hm / 100, 0.025, earM);
         ear.position.set(ex, 0, Dm / 200 - 0.0125);
         g.add(ear);
-        for (let i = 0; i < n; i++) {
+        for (let i = 0; i < (sp.lite ? 0 : n); i++) {
           const hole = cylY(0.03, 0.03, holeM, 14);
           hole.rotation.x = Math.PI / 2;
           hole.position.set(ex + sx * 0.03, Hm / 200 - (i + 0.5) * 0.4445, Dm / 200 + 0.002);
@@ -591,7 +591,7 @@
         }
       }
     }
-    if (sp.sticker !== false && Dm >= 250) {
+    if (sp.sticker !== false && !sp.lite && Dm >= 250) {
       const tt = makeTex(70, 34, (c) => {
         D.rect(c, 0, 0, 70, 34, '#f1f2ee');
         D.txt(c, sp.brand || '', 3, 5.5, 4.2, '#1d2227', 'left', 800);
@@ -1102,41 +1102,46 @@
     return { obj: g, notes, view: { yaw: 0.7, pitch: 0.25 } };
   }
 
+  /* ---------- 42U 機櫃框架（前後開放）：展示用機櫃與 3D 機房共用 ---------- */
+  const RACK = { W: 6.0, H: 20.0, D: 10.0, U0: 0.86, UH: 0.4445 };
+  RACK.zRail = RACK.D / 2 - 1.2;
+  let rackRes = null;
+  function rackFrame() {
+    if (!rackRes) {
+      const railT = makeTex(18, 1870, (c, W, H) => {
+        D.rect(c, 0, 0, W, H, '#2b3136');
+        for (let u = 0; u < 42; u++) {
+          const y = H - (u + 0.5) * 44.45;
+          for (const dy of [-15.9, 0, 15.9]) D.rr(c, W / 2 - 4.5, y + dy - 4.5, 9, 9, 1, '#07090b');
+          if (u % 5 === 0 || u === 41) D.txt(c, String(u + 1), W / 2, y - 22, 5, '#e6ecef', 'center', 800);
+        }
+      }, 2.5);
+      railT.m3dShared = true;
+      rackRes = {
+        frameM: std('#1b1f23', { metalness: 0.55, roughness: 0.45 }), sideM: std('#22272c', { metalness: 0.45, roughness: 0.55 }),
+        railM: std('#2b3136', { metalness: 0.6, roughness: 0.4 }), railTM: texMat(railT, { metalness: 0.4 }),
+        post: new T.BoxGeometry(0.35, RACK.H, 0.35), top: new T.BoxGeometry(RACK.W, 0.35, RACK.D), base: new T.BoxGeometry(RACK.W, 0.8, RACK.D),
+        side: new T.BoxGeometry(0.03, RACK.H - 1.15, RACK.D - 0.7), rail: new T.BoxGeometry(0.18, 18.7, 0.05), railP: new T.PlaneGeometry(0.18, 18.7),
+      };
+    }
+    const R = rackRes, g = new T.Group();
+    const RW = RACK.W, RH = RACK.H, RD = RACK.D;
+    const add = (geo, m, x, y, z) => { const o = new T.Mesh(geo, m); o.position.set(x, y, z); g.add(o); return o; };
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(R.post, R.frameM, sx * (RW / 2 - 0.175), RH / 2, sz * (RD / 2 - 0.175));
+    add(R.top, R.frameM, 0, RH - 0.175, 0);
+    add(R.base, R.frameM, 0, 0.4, 0);
+    for (const sx of [-1, 1]) add(R.side, R.sideM, sx * (RW / 2 - 0.02), 0.8 + (RH - 1.15) / 2, 0);
+    for (const sx of [-1, 1]) {
+      add(R.rail, R.railM, sx * 2.33, RACK.U0 + 18.7 / 2, RACK.zRail);
+      add(R.railP, R.railTM, sx * 2.33, RACK.U0 + 18.7 / 2, RACK.zRail + 0.026);
+    }
+    return g;
+  }
+
   /* ---------- 42U 機櫃（含設備） ---------- */
   function rack42() {
-    const g = new T.Group();
-    const RW = 6.0, RH = 20.0, RD = 10.0, U0 = 0.86, UH = 0.4445;
-    const frameM = std('#1b1f23', { metalness: 0.55, roughness: 0.45 });
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-      const p = box(0.35, RH, 0.35, frameM);
-      p.position.set(sx * (RW / 2 - 0.175), RH / 2, sz * (RD / 2 - 0.175));
-      g.add(p);
-    }
-    const top = box(RW, 0.35, RD, frameM); top.position.y = RH - 0.175; g.add(top);
-    const base = box(RW, 0.8, RD, frameM); base.position.y = 0.4; g.add(base);
-    const sideM = std('#22272c', { metalness: 0.45, roughness: 0.55 });
-    for (const sx of [-1, 1]) {
-      const sp = box(0.03, RH - 1.15, RD - 0.7, sideM);
-      sp.position.set(sx * (RW / 2 - 0.02), 0.8 + (RH - 1.15) / 2, 0);
-      g.add(sp);
-    }
-    const zRail = RD / 2 - 1.2;
-    const railT = makeTex(18, 1870, (c, W, H) => {
-      D.rect(c, 0, 0, W, H, '#2b3136');
-      for (let u = 0; u < 42; u++) {
-        const y = H - (u + 0.5) * 44.45;
-        for (const dy of [-15.9, 0, 15.9]) D.rr(c, W / 2 - 4.5, y + dy - 4.5, 9, 9, 1, '#07090b');
-        if (u % 5 === 0 || u === 41) D.txt(c, String(u + 1), W / 2, y - 22, 5, '#e6ecef', 'center', 800);
-      }
-    }, 2.5);
-    for (const sx of [-1, 1]) {
-      const rail = box(0.18, 18.7, 0.05, std('#2b3136', { metalness: 0.6, roughness: 0.4 }));
-      rail.position.set(sx * 2.33, U0 + 18.7 / 2, zRail);
-      g.add(rail);
-      const rp = plane(0.18, 18.7, texMat(railT, { metalness: 0.4 }));
-      rp.position.set(sx * 2.33, U0 + 18.7 / 2, zRail + 0.026);
-      g.add(rp);
-    }
+    const g = rackFrame();
+    const RW = RACK.W, RD = RACK.D, U0 = RACK.U0, UH = RACK.UH, zRail = RACK.zRail;
     const placements = [['UPS-10K', 1], ['ST-4U', 10], ['ST-4U', 14], ['SV-2U', 19], ['SV-2U', 21], ['SV-1U', 23], ['SV-1U', 24], ['SV-1U', 25], ['SV-1U', 26],
       ['WC-500', 34], ['NR-5500', 35], ['SG-3000', 37], ['CX-6400', 40], ['cm1u', 41], ['patch24', 42]];
     const used = new Set();
@@ -1269,6 +1274,10 @@
     'qsfp-sr4': { name: 'QSFP28 光模組（100GBASE-SR4）', cap: '100G 模組，SR4 用 MPO 接頭的多模光纖（4 發 4 收）。' },
     'qsfp-lr4': { name: 'QSFP28 光模組（100GBASE-LR4）', cap: '100G 單模模組，一顆就要數萬元。' },
   };
+  /** 其他 3D 模組（動畫、3D 機房、3D 大樓）共用的建模工具 */
+  M3.kit = { D, LEDC, MONO, hash, col, std, glow, texMat, box, plane, cylY, cylX, tube, makeTex, note, chassis, SPEC, RACK, rackFrame };
+  /** 登錄新模型：fn() 回傳 { obj, notes, view, anim?, caption? } */
+  M3.register = (id, fn, info) => { BUILD[id] = fn; if (info) EXTRA[id] = info; };
   M3.has = (id) => !!BUILD[id];
   M3.info = (id) => {
     if (EXTRA[id]) return EXTRA[id];
@@ -1291,15 +1300,15 @@
     'k-hier': ['CX-6400', 'AX-48P'],
     'k-rack': ['rack42', 'SV-2U'],
     'k-mdf': ['patch24', 'rack42'],
-    'k-cable': ['cat6', 'cat6a', 'om4', 'os2'],
+    'k-cable': ['anim-fiber', 'cat6', 'cat6a', 'om4', 'os2'],
     'k-optics': ['sfp-sr', 'sfp-lr', 'qsfp-sr4', 'qsfp-lr4'],
-    'k-poe': ['AX-48P', 'AP-600'],
-    'k-wifi': ['AP-600', 'AP-700', 'AP-500'],
+    'k-poe': ['anim-poe', 'AX-48P', 'AP-600'],
+    'k-wifi': ['anim-wifi', 'AP-600', 'AP-700', 'AP-500'],
     'k-channel': ['AP-610E'],
     'k-wlc': ['WC-500', 'AP-600'],
     'k-power': ['UPS-10K', 'UPS-80K', 'GEN-250'],
-    'k-cooling': ['CRAC-25', 'CRAC-60'],
-    'k-ha': ['ha-pair'],
+    'k-cooling': ['anim-aisle', 'CRAC-25', 'CRAC-60'],
+    'k-ha': ['anim-ha', 'ha-pair'],
     'k-lacp': ['om4', 'sfp-sr'],
     'k-dhcpdns': ['SV-1U'],
     'k-nms': ['SV-1U'],
