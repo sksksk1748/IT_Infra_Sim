@@ -105,9 +105,9 @@
   };
 
   /* ---------- 設備 ---------- */
-  const PREFIX = { router: 'RTR', firewall: 'FW', server: 'SRV', wlc: 'WLC', ups: 'UPS', power: 'PSU', bbu: 'BBU' };
+  const PREFIX = { router: 'RTR', firewall: 'FW', server: 'SRV', wlc: 'WLC', ups: 'UPS', power: 'PSU', bbu: 'BBU', storage: 'STOR' };
   function defaultName(m) {
-    const p = m.gpu ? 'GPU' : m.roles && m.roles[0] === 'aistore' ? 'AIS' : m.ai && m.cat === 'switch' ? 'AISW' : m.cat === 'switch' ? (m.layer === 3 ? 'CORE' : 'SW') : PREFIX[m.cat];
+    const p = m.gpu ? 'GPU' : m.hv ? 'HV' : m.san ? 'SAN' : m.shelf ? 'DS' : m.tape ? 'TAPE' : m.roles && m.roles[0] === 'pbx' ? 'PBX' : m.roles && m.roles[0] === 'sbc' ? 'SBC' : m.roles && m.roles[0] === 'sdwan' ? 'SDW' : m.roles && m.roles[0] === 'aistore' ? 'AIS' : m.ai && m.cat === 'switch' ? 'AISW' : m.cat === 'switch' ? (m.layer === 3 ? 'CORE' : 'SW') : PREFIX[m.cat];
     const names = new Set(Object.values(G.S.devices).map((d) => d.name));
     let n = 1;
     while (names.has(`${p}-${n}`)) n++;
@@ -117,6 +117,7 @@
     const s = G.S, m = CAT.devices[model];
     qty = qty || 1;
     if (!m) return err('未知設備');
+    if (m.virtual) return err('VM 不用採購：在「系統 → 虛擬化」建立');
     if (!Q.unlocked(m)) return err(`第 ${m.unlock} 章解鎖`);
     const cost = m.price * qty;
     if (!Act.spend(cost, `採購 ${m.name}${qty > 1 ? ' × ' + qty : ''}`)) return need(cost);
@@ -124,7 +125,8 @@
     for (let i = 0; i < qty; i++) {
       const id = Q.nextId('d');
       /* 只有一種用途的伺服器（AI 運算、AI 儲存）直接設好角色 */
-      s.devices[id] = { id, model, name: defaultName(m), rack: null, u: null, role: m.roles && m.roles.length === 1 && m.ai ? m.roles[0] : null, status: 'ok', bootUntil: 0, boughtAt: s.time };
+      s.devices[id] = { id, model, name: defaultName(m), rack: null, u: null, role: m.roles && m.roles.length === 1 && (m.ai || m.sys) ? m.roles[0] : null, status: 'ok', bootUntil: 0, boughtAt: s.time };
+      if (m.rawTB && !m.shelf) s.devices[id].raid = 'raid6';
       ids.push(id);
     }
     changed('devices');
@@ -210,6 +212,8 @@
     const s = G.S, d = s.devices[id];
     if (!d) return err('找不到設備');
     const m = CAT.devices[d.model];
+    if (d.host) return G.VM.remove(id);
+    if (m.hv && G.VM.onHost(id).length) return err(`${d.name} 上還有 ${G.VM.onHost(id).length} 台 VM：先遷移或刪除`);
     for (const l of Q.linksOf(id)) delete s.links[l.id];
     for (const c of s.isp) if (c.router === id) { c.router = null; c.port = null; }
     delete s.devices[id];
@@ -287,7 +291,7 @@
     if (!other) return null;
     const k = Q.nodeKind(other);
     if (k === 'router') return 'outside';
-    if (k === 'server' || k === 'wlc') return 'dmz';
+    if (k === 'server' || k === 'wlc' || k === 'storage') return 'dmz';
     if (k === 'switch') {
       const d = G.S.devices[other];
       return d && CAT.devices[d.model].layer === 2 && !Q.linksOf(other).some((l) => Q.nodeKind(Q.other(l, other)) === 'floor') ? 'dmz' : 'inside';
@@ -302,9 +306,11 @@
     count = Math.max(1, Math.min(8, count | 0));
     if (a === b) errs.push('不能連到自己');
     if (ka === 'internet' || kb === 'internet' || ka === 'isp' || kb === 'isp') errs.push('ISP 線路請在 ISP 節點上選「接到路由器」');
-    if (['ups', 'power', 'bbu'].includes(ka) || ['ups', 'power', 'bbu'].includes(kb)) errs.push('UPS、電源櫃與 BBU 不是網路設備');
+    const infraId = (id) => { const d = s.devices[id]; return !!d && CAT.infra(CAT.devices[d.model]); };
+    if (infraId(a) || infraId(b)) errs.push('UPS、電源櫃、BBU 與儲存擴充櫃不是網路設備');
+    if ((s.devices[a] && s.devices[a].host) || (s.devices[b] && s.devices[b].host)) errs.push('VM 是虛擬的：它的網路走所在主機的網卡，請把主機接上交換器');
     if (ka === 'floor' && kb === 'floor') errs.push('樓層之間不直接互連，請各自上連到 B1 核心');
-    const endpoint = (k) => k === 'server' || k === 'wlc';
+    const endpoint = (k) => k === 'server' || k === 'wlc' || k === 'storage';
     if ((ka === 'floor' && endpoint(kb)) || (kb === 'floor' && endpoint(ka))) errs.push('樓層 IDF 應上連到交換器（核心），不是伺服器');
     if ((ka === 'floor' && kb === 'router') || (kb === 'floor' && ka === 'router')) warns.push('樓層直接接路由器會繞過防火牆！');
     if (endpoint(ka) && endpoint(kb)) errs.push('伺服器之間請透過交換器互連');
@@ -443,7 +449,7 @@
   /* ---------- 樓層 ---------- */
   Act.floorDrops = (fid) => {
     const f = G.BLD.byId[fid], ft = G.FT[f.type];
-    return Math.ceil(f.staff * ft.wired) + Math.ceil(f.staff / 40) + 40;
+    return Math.ceil(f.staff * ft.wired) + Math.ceil(f.staff / 40) + (ft.pos || 0) + 40;
   };
   Act.cablingCost = (fid, std) => Act.floorDrops(fid) * CAT.horizontal[std].perDrop;
   Act.startCabling = (fid, std) => {
@@ -716,6 +722,7 @@
     if (!Q.unlocked(svc)) return err(`第 ${svc.unlock} 章解鎖`);
     if (s.services[id]) return ok('');
     if (svc.needsRole && !Q.roleServers(svc.needsRole).some((d) => d.rack)) return err(`需要先部署${CAT.roles[svc.needsRole].name}`);
+    if (svc.needsTape && !Object.values(s.devices).some((d) => d.rack && CAT.devices[d.model].tape)) return err('需要先安裝磁帶櫃（TL-48）：保全公司要收走的是磁帶');
     const first = Math.round(Q.monthlyServiceCost(id));
     if (first > 0 && !Act.spend(first, `訂閱 ${svc.name}（首月）`)) return need(first);
     s.services[id] = { since: s.time };

@@ -1,4 +1,4 @@
-/* 劇情模式：六個章節、任務目標、進駐時程與劇本事件 */
+/* 劇情模式：八個章節、任務目標、進駐時程、據點開幕與劇本事件 */
 (function (G) {
   'use strict';
   const U = G.U, CAT = G.CAT, Q = G.Q;
@@ -28,7 +28,7 @@
     },
     sat: (fid) => (G.R.satEma ? G.R.satEma[fid] : null),
     present: (fid) => (G.R.sim && G.R.sim.floors[fid] ? G.R.sim.floors[fid].present : 0),
-    serverLinked: (d) => Q.linksOf(d.id).some((l) => ['switch', 'firewall'].includes(Q.nodeKind(Q.other(l, d.id)))),
+    serverLinked: (d) => (d.host ? !!G.S.devices[d.host] && H.serverLinked(G.S.devices[d.host]) : Q.linksOf(d.id).some((l) => ['switch', 'firewall'].includes(Q.nodeKind(Q.other(l, d.id))))),
     roleUp: (role) => Q.roleServers(role).some((d) => d.rack && H.serverLinked(d)),
     workTime: () => !U.isWeekend(G.S.time) && U.hourOf(G.S.time) >= 9 && U.hourOf(G.S.time) < 18,
     dhcpOk: () => {
@@ -51,7 +51,7 @@
     {
       id: 'c1', title: '第一章｜B1 機房開張', grant: 12000000,
       story: [
-        '2026 年秋天，新曜集團的一萬名員工即將遷入剛落成的 21 層總部「新曜大樓」。',
+        '2026 年秋天，新曜集團的一萬名員工即將遷入剛落成的 23 層總部「新曜大樓」（頂樓兩層是員工餐廳）。',
         '你是剛上任的基礎架構工程師。大樓裡只有水泥、電力，和一間空蕩蕩的 B1 機房。',
         '週一早上 9 點，資訊部與總務部的 527 位同仁就要搬進 2F。你有一個週末的時間，讓他們一坐下就能上網。',
       ],
@@ -298,7 +298,90 @@
         { id: 'c6-perf', text: 'AI 算力利用率 ≥ 85% 累積 6 小時', hint: '利用率 = 供電 × 散熱 × 後端網路 × 儲存。到「機房」看 AI 算力，哪一項拖後腿就補哪一項。', goto: 'rack', kb: 'k-gpu',
           sustain: 360, cond: () => !!G.R.ai && G.R.ai.trainers >= 2 && G.R.ai.util >= 0.85 },
       ],
-      outro: ['AI 運算中心正式啟用。研發部的第一個模型訓練完成，全公司也都用上了企業內部的 AI 助理。', '從一間空蕩蕩的機房，到一萬人的企業網路與 AI 運算中心 —— 你做到了。'],
+      outro: ['AI 運算中心正式啟用。研發部的第一個模型訓練完成，全公司也都用上了企業內部的 AI 助理。', '慶功宴上，董事長宣布：集團要擴張了 —— 台中、高雄、越南、東京，還有總部頂樓的員工餐廳。'],
+    },
+    {
+      id: 'c7', title: '第七章｜集團版圖', grant: 38000000,
+      story: [
+        '新曜集團併購了台中的精密零件廠、在高雄設立營業所，越南胡志明市的新工廠正式投產，東京辦公室負責日本市場。四個據點都要連回總部的 ERP、檔案與電話。',
+        '總部頂樓的員工餐廳也要開幕了：午餐時間上千人擠在 22、23 樓，人人拿著手機。',
+        '還有：大樓附的舊型總機即將停產，客服中心要換成 IP 電話交換機；董事會也決定把郵件搬上 Microsoft 365。',
+      ],
+      learn: ['MPLS / IPLC / SD-WAN', 'VPN 與線路備援', 'IP-PBX、SIP 中繼與 SBC', '語音 QoS 與 MOS', 'SaaS 與雲端專線', '高密度 Wi-Fi（員工餐廳）'],
+      moveIns: [{ floor: '22F', at: (t0) => U.nextWeekdayAt(t0, 10, 1) }, { floor: '23F', at: (t0) => U.nextWeekdayAt(t0, 10, 1) }],
+      sites: [{ id: 'tc', at: (t0) => U.nextWeekdayAt(t0, 9, 2) }, { id: 'ks', at: (t0) => U.nextWeekdayAt(t0, 9, 2) }, { id: 'vn', at: (t0) => U.nextWeekdayAt(t0, 9, 3) }, { id: 'jp', at: (t0) => U.nextWeekdayAt(t0, 9, 3) }],
+      events: [
+        { type: 'call-surge', at: (t0) => U.nextWeekdayAt(t0, 14, 2) },
+        { type: 'wan-down', at: (t0) => U.nextWeekdayAt(t0, 10, 4), data: { site: 'tc', type: 'mpls' } },
+        { type: 'toll-fraud', at: (t0) => U.nextWeekdayAt(t0, 2, 4) },
+        { type: 'cable-cut', at: (t0) => U.nextWeekdayAt(t0, 20, 5) },
+      ],
+      kb: ['k-mpls', 'k-sdwan', 'k-cloud', 'k-pbx', 'k-qos', 'k-canteen'],
+      objectives: [
+        { id: 'c7-canteen', text: '22F、23F 員工餐廳完成佈建（布線、交換器、上行、Wi-Fi 覆蓋 ≥ 90%）', hint: '餐廳的 AP 要照「人數」規劃：午餐時一層樓就有七百多人。冷凍庫是金屬牆，訊號穿不透。收銀機也要有網路孔。', goto: 'floor:22F', kb: 'k-canteen',
+          check: () => H.floorReady('22F', 0.9) && H.floorReady('23F', 0.9), progress: () => `${['22F', '23F'].filter((f) => H.floorReady(f, 0.9)).length}/2` },
+        { id: 'c7-lunch', text: '午餐尖峰：兩層餐廳的用餐 Wi-Fi 容量 ≥ 90%、收銀機都能刷卡（累積 30 分鐘）', hint: '12:00～13:00 是尖峰。用 AP 負載圖層找出超載的 AP，改用「自動規劃 AP」或 Wi-Fi 6E / 7。', goto: 'floor:22F', kb: 'k-canteen',
+          sustain: 30, cond: () => ['22F', '23F'].every((f) => { const st = G.R.sim && G.R.sim.floors[f]; return st && st.diners > 200 && st.dinerRatio >= 0.9 && st.posOk; }) },
+        { id: 'c7-pbx', text: '部署 IP 電話交換機（IP-PBX），並申請 SIP 中繼（外線）', hint: '「採購 → 系統」買 PX-500 上架、接上核心；再到「系統 → 語音」申請 SIP 中繼。第一次開通要 6 小時。', goto: 'sys:voice', kb: 'k-pbx',
+          check: (s) => H.roleUp('pbx') && s.voice.trunk > 0 },
+        { id: 'c7-sbc', text: '用 DMZ 的 SBC 對接電信業者，電話交換機不直接對外開放 SIP', hint: 'SBC-2 接到防火牆的 DMZ 介面；規則開 INTERNET → DMZ：SIP 與 DMZ → SERVERS：SIP，不要開 INTERNET → SERVERS：SIP。', goto: 'sys:voice', kb: 'k-pbx',
+          check: () => G.Sec.serverZones('sbc').some((x) => x.zone === 'DMZ') && !G.Sec.allows('INTERNET', 'SERVERS', 'SIP') && !!G.R.voice && G.R.voice.trunkOk && G.R.voice.sbc },
+        { id: 'c7-voice', text: '客服中心：外線阻塞率 < 2%、通話品質 MOS ≥ 4（累積 2 小時）', hint: '外線路數用 Erlang B 規劃（「系統 → 語音」有試算）；啟用語音 QoS，網路壅塞時電話才不會斷斷續續。', goto: 'sys:voice', kb: 'k-qos',
+          sustain: 120, cond: () => { const v = G.R.voice; return !!v && v.active && v.calls > 50 && v.blocking < 0.02 && v.mos >= 4; } },
+        { id: 'c7-tc', text: '台中工廠以 MPLS 連回總部，ERP 延遲 < 40 ms', hint: '「據點」頁：台中工廠申請 MPLS，總部也要申請 MPLS 匯接；防火牆開 WAN → SERVERS 的 SQL、SMB、LDAP、DNS。頻寬不夠延遲就會飆高。', goto: 'wan:tc', kb: 'k-mpls',
+          check: () => { const x = G.R.wan && G.R.wan.sites.tc; return !!x && x.open && x.cls.erp && x.cls.erp.path === 'mpls' && x.cls.erp.ratio > 0.95 && x.erpRtt < 40; } },
+        { id: 'c7-vn', text: '越南廠：ERP 延遲 < 120 ms，而且有兩條不同的線路', hint: 'IPLC 延遲最低但最貴、而且是單一路徑；當地寬頻便宜但晚上很塞。用 IPLC + 寬頻，再搭配 VPN 或 SD-WAN 當備援。', goto: 'wan:vn', kb: 'k-sdwan',
+          check: (s) => { const x = G.R.wan && G.R.wan.sites.vn; return !!x && x.open && x.cls.erp && x.cls.erp.ratio > 0.9 && x.erpRtt < 120 && s.wan.sites.vn.links.filter((l) => l.status === 'active').length >= 2; } },
+        { id: 'c7-sdwan', text: '至少兩個據點使用 SD-WAN（總部要有 SD-WAN 集中器）', hint: '「採購 → 系統」買 SDW-1 放在 DMZ，再到「據點」勾選 SD-WAN。上網就近從據點出去，專線只留給 ERP。', goto: 'wan', kb: 'k-sdwan',
+          check: () => G.SITE_IDS.filter((id) => G.R.wanPlans && G.R.wanPlans[id] && G.R.wanPlans[id].sd).length >= 2, progress: () => `${G.SITE_IDS.filter((id) => G.R.wanPlans && G.R.wanPlans[id] && G.R.wanPlans[id].sd).length}/2` },
+        { id: 'c7-cloud', text: '導入 Microsoft 365，而且全員啟用 MFA', hint: '「據點 → 公有雲」啟用 Microsoft 365。上雲之後，每個人的流量都改走網際網路：ISP 頻寬要夠。雲端帳號一定要 MFA。', goto: 'wan:cloud', kb: 'k-cloud',
+          check: () => Q.hasService('m365') && Q.hasService('mfa') },
+        { id: 'c7-sites', text: '四個據點都營運中，所有據點與全公司滿意度 ≥ 80%（累積 6 小時）', hint: '到「據點」看哪一類應用卡住了：頻寬、延遲、防火牆規則，還是晚上的國際網路。', goto: 'wan', kb: 'k-sdwan',
+          sustain: 360, cond: () => { const R = G.R.wan; if (!R || !G.R.sim || G.R.sim.sat < 0.8) return false; return G.SITE_IDS.every((id) => R.sites[id] && R.sites[id].open && R.sites[id].sat >= 0.8); } },
+      ],
+      outro: ['四個據點、兩層員工餐廳、全新的電話系統與雲端服務，全部上線。', '但稽核報告讓資訊長皺起眉頭：「伺服器三十幾台各自為政、備份從沒還原過、一萬台電腦的修補狀況不明。」'],
+    },
+    {
+      id: 'c8', title: '第八章｜系統維運', grant: 42000000,
+      story: [
+        'ISO 27001 稽核即將到來。稽核員列了一長串問題：三十幾台實體伺服器、每台只用了一成的效能；備份從來沒有還原過；沒人知道一萬台電腦裝了哪些更新；防火牆有沒修補的漏洞……',
+        '這一章要把機房的「系統」整頓好：虛擬化、共用儲存、3-2-1 備份、端點管理，以及弱點管理。',
+        '記住：真正的考驗不是建好，而是出事的時候還撐得住。',
+      ],
+      learn: ['虛擬化與 HA', 'SAN 與 RAID', '備份 3-2-1 與還原演練', '端點管理與修補', '弱點掃描與 CVSS', '維護窗口'],
+      moveIns: [],
+      patchAt: (t0) => U.nextWeekdayAt(t0, 1, 2),
+      events: [
+        { type: 'hw-fail', at: (t0) => U.nextWeekdayAt(t0, 11, 2), data: { hvFirst: true } },
+        { type: 'disk-fail', at: (t0) => U.nextWeekdayAt(t0, 15, 2) },
+        { type: 'kev', at: (t0) => U.nextWeekdayAt(t0, 14, 3) },
+        { type: 'del-file', at: (t0) => U.nextWeekdayAt(t0, 16, 3) },
+        { type: 'laptop-lost', at: (t0) => U.nextWeekdayAt(t0, 19, 4) },
+      ],
+      kb: ['k-vm', 'k-san', 'k-backup', 'k-uem', 'k-patch', 'k-vuln'],
+      objectives: [
+        { id: 'c8-cluster', text: '建置虛擬化叢集：至少 3 台虛擬化主機 + SAN 共用儲存，開啟 HA', hint: '「採購 → 系統」買 HV-2U 與 SAN-5K，上架並接上核心交換器（25G）。「系統 → 虛擬化」確認 HA 已開啟。', goto: 'sys:vm', kb: 'k-vm',
+          check: () => { const c = G.VM.cluster(); return c.hosts >= 3 && c.up >= 3 && c.shared && c.ha; }, progress: () => `${G.VM.cluster().up}/3 台主機${G.VM.cluster().shared ? ' · SAN ✓' : ''}` },
+        { id: 'c8-vms', text: '至少 6 個服務跑在 VM 上（新建 VM 或 P2V 實體轉虛擬）', hint: '在實體伺服器的詳情按「轉成 VM（P2V）」，完成後舊主機就能出售，省下機櫃、電費與維護費。', goto: 'sys:vm', kb: 'k-vm',
+          check: () => G.VM.vms().filter((v) => v.role && G.Net.devUp(v)).length >= 6, progress: () => `${G.VM.vms().filter((v) => v.role && G.Net.devUp(v)).length}/6` },
+        { id: 'c8-n1', text: 'HA 可以承受任一台主機故障（N+1），所有 VM 的硬碟都在 SAN', hint: '壞掉一台主機後，剩下的主機記憶體要放得下所有 VM。放在主機本機硬碟的 VM 不能 HA。', goto: 'sys:vm', kb: 'k-vm',
+          check: () => { const c = G.VM.cluster(); return c.ha && c.n1 && c.vms > 0 && G.VM.vms().every((v) => v.disk === 'san'); } },
+        { id: 'c8-raid', text: '儲存都用 RAID 6 或 RAID 10，使用率都 < 80%', hint: '大容量硬碟重建要十幾個小時：RAID 5 在重建時再壞一顆就全毀。到「系統 → 儲存」調整，空間不夠就加擴充櫃。', goto: 'sys:stor', kb: 'k-san',
+          check: () => { const P = G.R.stor ? G.R.stor.pools.filter((p) => p.kind !== 'local') : []; return P.length > 0 && P.every((p) => p.raid !== 'raid5' && p.ratio < 0.8); } },
+        { id: 'c8-321', text: '備份符合 3-2-1：本地備份 + 另一種媒體 + 一份在異地', hint: '備份伺服器之外，再加磁帶櫃（啟用異地保管）或雲端備份。雲端備份要開 SERVERS → INTERNET：WEB。', goto: 'sys:bkp', kb: 'k-backup',
+          check: () => G.Stor.rule321().ok },
+        { id: 'c8-drill', text: '完成一次成功的還原演練', hint: '「系統 → 備份」→ 進行還原演練（2 小時）。沒有演練過的備份，出事時可能根本還原不了。', goto: 'sys:bkp', kb: 'k-backup',
+          check: (s) => !!s.bkp.drillOk && s.bkp.drillAt >= s.chapterStart },
+        { id: 'c8-uem', text: '導入端點管理平台，開啟分批派送與 BitLocker', hint: '「系統 → 端點」。分批派送讓出包的更新只影響試點電腦；BitLocker 讓遺失的筆電不會洩漏資料。', goto: 'sys:ep', kb: 'k-uem',
+          check: (s) => G.Ep.uem() && s.ep.rings && s.ep.bitlocker },
+        { id: 'c8-patch', text: '安全更新發布後，全公司的修補合規率 ≥ 95%', hint: '更新發布後由端點管理平台派送。一萬台電腦一起從網際網路下載會塞爆對外頻寬：先建一台更新快取（UPD 角色的 VM）。', goto: 'sys:ep', kb: 'k-patch',
+          check: (s) => s.ep.releaseAt >= s.chapterStart && s.ep.patch >= 0.95, progress: () => (G.S.ep.releaseAt >= G.S.chapterStart ? U.pct(G.S.ep.patch) : '等待更新發布') },
+        { id: 'c8-vuln', text: '部署弱點掃描：沒有超過 SLA 的嚴重弱點，對外設備沒有嚴重弱點', hint: '建一台弱點掃描 VM（VS 角色），到「防火牆 → 弱點管理」把嚴重與高風險的弱點排入維護窗口。', goto: 'fw:vuln', kb: 'k-vuln',
+          check: (s) => G.Vuln.scannerUp() && s.vuln.lastScan !== null && s.vuln.lastScan >= s.chapterStart && !G.Vuln.known().some((x) => x.sev === 'crit' && G.Vuln.overdue(x)) && !G.Vuln.exposedCrit().length },
+        { id: 'c8-audit', text: '資安健檢評分 A', hint: '到「防火牆 → 資安健檢」逐項處理：備份、修補、弱點、雲端 MFA……', goto: 'fw:audit', kb: 'k-vuln',
+          check: () => G.Sec.audit().grade === 'A' },
+      ],
+      outro: ['稽核員闔上筆電：「這是我今年看過最整齊的機房。」', '從一間空蕩蕩的 B1 機房，到橫跨四個據點、上雲、上萬台電腦與 AI 運算中心的企業 IT —— 你做到了。'],
     },
   ];
 
@@ -323,8 +406,13 @@
     if (s.mode === 'sandbox') {
       s.money = 150000000;
       s.rating = 60;
-      const plan = [['2F', '3F', '4F', '5F', '6F'], ['7F', '8F', '9F', '10F', '11F'], ['12F', '13F', '14F', '15F', '16F'], ['17F', '18F', '19F', '20F', '21F', '1F']];
+      const plan = [['2F', '3F', '4F', '5F', '6F'], ['7F', '8F', '9F', '10F', '11F'], ['12F', '13F', '14F', '15F', '16F'], ['17F', '18F', '19F', '20F', '21F', '1F', '22F', '23F']];
       plan.forEach((g, i) => g.forEach((fid) => { s.floors[fid].moveInAt = U.at(3 + i, 9); }));
+      /* 分支據點：第 5～7 天陸續開幕 */
+      Object.assign(s.wan.sites.tc, { openAt: U.at(5, 9) });
+      Object.assign(s.wan.sites.ks, { openAt: U.at(5, 9) });
+      Object.assign(s.wan.sites.vn, { openAt: U.at(6, 9) });
+      Object.assign(s.wan.sites.jp, { openAt: U.at(7, 9) });
       for (const c of G.KB.cards) s.kb.unlocked[c.id] = s.time;
       Campaign.scheduleMoveIns(s);
       return;
@@ -343,6 +431,9 @@
       if (fs.movedIn === 0 && fs.moveInAt === null) fs.moveInAt = mi.at(s.time);
     }
     if (ch.flags) Object.assign(s.flags, ch.flags(s.time));
+    /* 分支據點開幕、提前發布一次安全更新（讓本章可以練習派送） */
+    for (const x of ch.sites || []) { const w = s.wan.sites[x.id]; if (w && w.openAt === null) w.openAt = x.at(s.time); }
+    if (ch.patchAt) s.ep.forceAt = ch.patchAt(s.time);
     for (const ev of ch.events || []) s.sched.push({ at: ev.at(s.time), type: ev.type, data: ev.data || {}, chapter: idx });
     for (const id of ch.kb || []) G.Ev && G.Ev.unlockKb(id);
     s.flags.introShown = false;

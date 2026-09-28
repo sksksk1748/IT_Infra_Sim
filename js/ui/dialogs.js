@@ -15,7 +15,18 @@
   /** 設備狀態 */
   UI.devStatus = (d) => {
     const s = G.S;
+    if (d.host) {
+      const h = s.devices[d.host];
+      if (d.encrypted) return { t: '已被加密', c: 'bad' };
+      if (!h || !h.rack || !G.Net.devUp(h)) return d.haSince ? { t: 'HA 重啟中', c: 'warn' } : { t: '主機停機', c: 'bad' };
+      if (d.disk === 'san' && !G.VM.sanUp()) return { t: 'SAN 無法存取', c: 'bad' };
+      if (d.disk === 'san' && G.R.stor && G.R.stor.sanFull) return { t: 'SAN 空間已滿（暫停）', c: 'bad' };
+      if (d.p2vFrom && s.time < d.bootUntil) return { t: `P2V 轉換中 ${d.bootUntil - s.time} 分`, c: 'warn' };
+      if (s.time < (d.bootUntil || 0)) return { t: `開機中 ${d.bootUntil - s.time} 分`, c: 'warn' };
+      return { t: '運作中', c: 'ok' };
+    }
     if (!d.rack) return { t: '未上架', c: '' };
+    if (d.lost) return { t: '資料毀損', c: 'bad' };
     if (d.status === 'failed') return { t: '故障', c: 'bad' };
     if (d.status === 'rma') return { t: 'RMA 維修中', c: 'bad' };
     if (d.encrypted) return { t: '已被加密', c: 'bad' };
@@ -160,6 +171,7 @@
     opts = opts || {};
     const s = G.S, d = s.devices[id];
     if (!d) return h('div', { class: 'empty' }, '設備已不存在');
+    if (d.host) return UI.vmCard(id);
     const m = CAT.devices[d.model];
     const st = UI.devStatus(d);
     const sim = G.R.sim || { nodes: {} };
@@ -197,13 +209,40 @@
         h('span', { class: 'k' }, '電源櫃容量'), h('span', { class: 'v mono ' + (load > p.total ? 'bad-t' : load > p.n1 ? 'warn-t' : 'ok-t') }, `${(p.total / 1000).toFixed(1)} kW · N+1 ${(p.n1 / 1000).toFixed(1)} kW`),
         h('span', { class: 'k' }, 'BBU'), h('span', { class: 'v mono ' + (p.bbuW && p.bbuW >= load ? '' : 'warn-t') }, p.bbuW ? `${(p.bbuW / 1000).toFixed(0)} kW · 可撐 ${load > 0 && p.bbuW >= load ? (4 * p.bbuW / load).toFixed(1) + ' 分鐘' : load > 0 ? '容量不足' : '—'}` : '沒有 BBU')));
     }
-    if (m.cat === 'server') {
+    /* 虛擬化主機：上面的 VM 與資源 */
+    if (m.hv) {
+      const u = G.VM.used(id);
+      const vms = G.VM.onHost(id);
+      card.appendChild(h('div', { class: 'col', style: { gap: '6px' } },
+        UI.meter('vCPU（4:1 超用）', u.vcpu, m.vcpu, ''), UI.meter('記憶體', u.ram, m.ram, ' GB'),
+        vms.length ? h('div', { class: 'row wrap' }, vms.map((v) => h('span', { class: 'chip ' + UI.devStatus(v).c }, `${v.name}`))) : h('div', { class: 'small muted' }, '還沒有 VM。'),
+        h('div', { class: 'row wrap' },
+          h('button', { class: 'btn primary sm', onclick: () => UI.go('sys:vm') }, '虛擬化管理'),
+          vms.length ? h('button', { class: 'btn sm', onclick: () => { const r = G.VM.evacuate(id); UI.toast(`維護模式：遷走 ${r.moved} 台 VM${r.failed ? `，${r.failed} 台沒有地方放` : ''}`, r.failed ? 'warn' : 'ok'); G.bus.emit('change', { what: 'devices' }); } }, '維護模式（遷走 VM）') : null)));
+    }
+    /* 儲存：容量與 RAID */
+    if (m.rawTB && !m.shelf && G.R.stor) {
+      const p = G.R.stor.pools.find((x) => x.dev === d || (m.san && x.kind === 'san'));
+      if (p) {
+        card.appendChild(h('div', { class: 'col', style: { gap: '6px' } },
+          UI.meter(`${p.name}（${CAT.raid[p.raid].name}）`, p.used, p.cap, ' TB'),
+          h('div', { class: 'small muted' }, Object.entries(p.items).map(([k, v]) => `${k} ${v.toFixed(1)} TB`).join('、') || '還沒有資料'),
+          d.rebuildUntil > s.time ? h('div', { class: 'note warn small' }, `RAID 重建 / 重新配置中，剩 ${U.dur(d.rebuildUntil - s.time)}`) : null,
+          h('div', { class: 'seg' }, Object.entries(CAT.raid).map(([k, r]) => h('button', { class: (d.raid || 'raid6') === k ? 'on' : '', onclick: () => UI.res(G.Stor.setRaid(id, k)) }, r.name))),
+          h('div', { class: 'tiny dim' }, CAT.raid[d.raid || 'raid6'].desc)));
+      }
+    }
+    if (m.tape) card.appendChild(h('div', { class: 'small muted' }, `LTO-9 磁帶：每捲 ${m.tapeTB} TB · ${m.slots} 格。${s.bkp.lastTape ? `最後一次寫入磁帶：${U.stamp(s.bkp.lastTape)}` : '還沒有寫入過備份（要有備份伺服器）'}`));
+    if (m.cat === 'server' && !m.hv) {
       const sel = h('select', { id: 'role-' + id, onchange: (e) => UI.res(G.Act.setRole(id, e.target.value || null)) },
         h('option', { value: '' }, '— 尚未設定角色 —'),
         m.roles.map((r) => h('option', { value: r, selected: d.role === r || null }, CAT.roles[r].name)));
       card.appendChild(h('label', { class: 'field' }, h('span', {}, '伺服器角色'), sel));
       if (d.role) card.appendChild(h('div', { class: 'small muted' }, CAT.roles[d.role].desc));
       else card.appendChild(h('div', { class: 'note warn' }, '伺服器需要設定角色才會提供服務。'));
+      if (d.role && d.rack && G.VM.hosts().length && CAT.devices.VM.roles.includes(d.role) && Q.unlocked(CAT.devices.VM)) {
+        card.appendChild(h('button', { class: 'btn sm', style: { alignSelf: 'flex-start' }, title: '把這台實體伺服器的服務搬到虛擬化叢集上', onclick: () => UI.res(G.VM.p2v(id)) }, `轉成 VM（P2V，${U.money(CAT.vmCfg.p2vFee)}）`));
+      }
     }
     if (m.cat === 'router' || m.cat === 'firewall') {
       const ni = sim.nodes[id];
@@ -251,6 +290,44 @@
     if (d.rack) acts.appendChild(h('button', { class: 'btn sm', onclick: () => UI.res(G.Act.uninstallDevice(id)) }, '下架'));
     acts.appendChild(h('button', { class: 'btn danger sm', onclick: () => UI.confirm('出售設備', `出售 ${d.name}？會拆除它的所有連線，回收 ${U.money(m.price * 0.4)}。`, '出售', () => UI.res(G.Act.sellDevice(id)), 'danger') }, '出售'));
     card.appendChild(acts);
+    return card;
+  };
+
+  /** 用量條：label、已用 / 總量 */
+  UI.meter = (label, used, total, unit) => {
+    const u = total > 0 ? used / total : used > 0 ? 2 : 0;
+    const fmt = (v) => (v >= 100 ? Math.round(v) : Math.round(v * 10) / 10);
+    return h('div', {},
+      h('div', { class: 'row between small' }, h('span', { class: 'muted' }, label), h('span', { class: 'mono ' + (u > 1 ? 'bad-t' : u > 0.85 ? 'warn-t' : '') }, `${U.num(fmt(used), used < 100 && used % 1 ? 1 : 0)} / ${U.num(fmt(total), total < 100 && total % 1 ? 1 : 0)}${unit || ''}`)),
+      h('div', { class: 'bar ' + (u > 1 ? 'bad' : u > 0.85 ? 'warn' : 'ok') }, h('i', { style: { width: Math.min(100, u * 100) + '%' } })));
+  };
+
+  /** VM 詳情卡 */
+  UI.vmCard = (id) => {
+    const s = G.S, v = s.devices[id];
+    if (!v) return h('div', { class: 'empty' }, 'VM 已不存在');
+    const st = UI.devStatus(v);
+    const host = s.devices[v.host];
+    const z = G.Net.zones().get(id);
+    const card = h('div', { class: 'card col', style: { gap: '10px' } });
+    card.appendChild(h('div', { class: 'row between' },
+      h('div', { class: 'col', style: { gap: '0' } }, h('b', { style: { fontSize: '16px' } }, v.name), h('span', { class: 'small muted' }, `虛擬機 · ${v.role ? CAT.roles[v.role].name : '沒有角色'}`)),
+      h('span', { class: 'chip ' + st.c }, st.t)));
+    card.appendChild(h('div', { class: 'kv' },
+      h('span', { class: 'k' }, '所在主機'), h('span', { class: 'v' }, host ? `${host.name}（${UI.devStatus(host).t}）` : '主機已不存在'),
+      h('span', { class: 'k' }, '規格'), h('span', { class: 'v mono' }, `${v.vcpu} vCPU · ${v.ram} GB`),
+      h('span', { class: 'k' }, '虛擬硬碟'), h('span', { class: 'v ' + (v.disk === 'san' ? '' : 'warn-t') }, v.disk === 'san' ? 'SAN 共用儲存（可 HA、可線上遷移）' : '主機本機硬碟（主機故障就停擺）'),
+      z ? h('span', { class: 'k' }, '安全區域') : null, z ? h('span', { class: 'v' }, zoneText(z.zone)) : null,
+      v.haMoves ? h('span', { class: 'k' }, 'HA 重啟次數') : null, v.haMoves ? h('span', { class: 'v mono' }, String(v.haMoves)) : null));
+    if (v.role) card.appendChild(h('div', { class: 'small muted' }, CAT.roles[v.role].desc));
+    const hosts = G.VM.hosts().filter((x) => x.id !== v.host);
+    const sel = h('select', { id: 'vm-move-' + id }, h('option', { value: '' }, '— 遷移到哪台主機 —'), hosts.map((x) => { const f = G.VM.free(x.id); return h('option', { value: x.id, disabled: f.ram < v.ram || f.vcpu < v.vcpu || null }, `${x.name}（剩 ${f.ram} GB）`); }));
+    card.appendChild(h('div', { class: 'row wrap' }, sel,
+      h('button', { class: 'btn sm', disabled: !hosts.length || null, onclick: () => { if (sel.value) UI.res(G.VM.migrate(id, sel.value)); } }, v.disk === 'san' ? '線上遷移（vMotion）' : '冷遷移')));
+    card.appendChild(h('div', { class: 'row wrap' },
+      h('button', { class: 'btn primary sm', onclick: () => UI.go('sys:vm') }, '虛擬化管理'),
+      v.disk !== 'san' ? h('button', { class: 'btn sm', disabled: !G.VM.sanUp() || null, onclick: () => UI.res(G.VM.toSan(id)) }, '硬碟搬到 SAN') : null,
+      h('button', { class: 'btn danger sm', onclick: () => UI.confirm('刪除 VM', `刪除 ${v.name}？上面的服務會立刻停止。`, '刪除', () => UI.res(G.VM.remove(id)), 'danger') }, '刪除 VM')));
     return card;
   };
 

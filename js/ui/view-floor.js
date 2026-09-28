@@ -34,7 +34,9 @@
     const mi = fs.moveInAt !== null && fs.movedIn < f.staff ? (fs.moveInAt > s.time ? `預計 ${U.stamp(fs.moveInAt)} 進駐（${U.dur(fs.moveInAt - s.time)} 後）` : '進駐中') : fs.movedIn ? '已進駐' : '尚未排定進駐';
     const use3d = UI.pref3d('floor');
     el.appendChild(h('div', { class: 'view-h' },
-      h('div', {}, h('h2', {}, `${f.id} ${f.dept}`), h('div', { class: 'desc' }, `${ft.name}樓層 · 編制 ${U.num(f.staff)} 人 · 有線座位約 ${U.pct(ft.wired)} · ${mi}`)),
+      h('div', {}, h('h2', {}, `${f.id} ${f.dept}`), h('div', { class: 'desc' }, ft.dine
+        ? `${ft.name} · 廚師與服務人員 ${U.num(f.staff)} 人 · 午餐尖峰約 ${U.num(ft.diners)} 人同時用餐（人人滑手機）· 收銀機 ${ft.pos} 台 · ${mi}`
+        : `${ft.name}樓層 · 編制 ${U.num(f.staff)} 人 · 有線座位約 ${U.pct(ft.wired)} · ${mi}`)),
       h('div', { class: 'row wrap' }, UI.toggle3d('floor'), h('span', { class: 'chip' }, `主幹距離 B1 ${G.BLD.riserLength(f.id)} m`), G.BLD.riserLength(f.id) > 100 ? h('span', { class: 'chip warn' }, '超過 100m：銅纜無法使用') : null)));
 
     const left = h('div', { class: 'col', style: { gap: '10px' } });
@@ -114,12 +116,15 @@
     const col = {};
     col[T.OPEN] = tk.floor; col[T.DESK] = tk.desk; col[T.MEET] = tk.room; col[T.OFFICE] = tk.room; col[T.LAB] = tk.room; col[T.CAFE] = tk.room; col[T.LOBBY] = tk.floor;
     col[T.CORE] = tk.core; col[T.IDF] = tk.core; col[T.WALL] = tk.wall; col[T.GLASS] = tk.glass; col[T.EXT] = tk.line2;
+    col[T.KITCHEN] = tk.kitchen; col[T.SERVE] = tk.serve; col[T.DINE] = tk.dine; col[T.COLD] = tk.cold;
     for (let y = 0; y < L.H; y++) {
       for (let x = 0; x < L.W; x++) {
         const t = L.type[y * L.W + x];
         ctx.fillStyle = col[t];
         ctx.fillRect(x * cs, y * cs, cs + 0.6, cs + 0.6);
         if (t === T.DESK && cs >= 6) { ctx.fillStyle = tk.bg3; ctx.fillRect(x * cs + cs * 0.18, y * cs + cs * 0.22, cs * 0.64, cs * 0.5); }
+        /* 用餐區：每 3 × 3 格一張桌子 */
+        if (t === T.DINE && cs >= 5 && x % 3 === 1 && y % 3 === 1) { ctx.fillStyle = tk.serve; ctx.fillRect(x * cs - cs * 0.3, y * cs + cs * 0.1, cs * 1.6, cs * 0.8); }
       }
     }
     if (V.layer === 'rssi' || V.layer === 'load') {
@@ -271,8 +276,10 @@
     R.appendChild(h('div', { class: 'card' },
       h('div', { class: 'card-h' }, h('h3', {}, '樓層狀態'), h('span', { class: 'chip ' + G.Views.building.floorStatus(V.fid).c }, G.Views.building.floorStatus(V.fid).t)),
       h('div', { class: 'kv' },
-        h('span', { class: 'k' }, '已進駐 / 編制'), h('span', { class: 'v mono' }, `${U.num(fs.movedIn)} / ${U.num(f.staff)}`),
-        h('span', { class: 'k' }, '目前在座'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x ? U.num(Math.round(x.present)) + ' 人' + (x.guests > 1 ? `＋訪客 ${Math.round(x.guests)}` : '') : '—'; })),
+        h('span', { class: 'k' }, ft.dine ? '餐廳人員（進駐 / 編制）' : '已進駐 / 編制'), h('span', { class: 'v mono' }, `${U.num(fs.movedIn)} / ${U.num(f.staff)}`),
+        h('span', { class: 'k' }, ft.dine ? '用餐人數' : '目前在座'), h('span', { class: 'v mono' }, live(() => { const x = st(); if (!x) return '—'; if (ft.dine) return `${U.num(Math.round(x.diners || 0))} 人（尖峰約 ${U.num(ft.diners)}）`; return U.num(Math.round(x.present)) + ' 人' + (x.guests > 1 ? `＋訪客 ${Math.round(x.guests)}` : ''); })),
+        ft.dine ? h('span', { class: 'k' }, '用餐 Wi-Fi 容量') : null, ft.dine ? h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.diners > 5 ? U.pct(x.dinerRatio) : '—（非用餐時間）'; })) : null,
+        ft.pos ? h('span', { class: 'k' }, `收銀 POS（${ft.pos} 台）`) : null, ft.pos ? h('span', { class: 'v mono' }, live(() => { const x = st(); return !x || !fs.movedIn ? '—' : x.posOk ? '可刷卡' : '無法連線'; })) : null,
         h('span', { class: 'k' }, '可連線比例'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? U.pct(x.conn) : '—'; })),
         h('span', { class: 'k' }, '頻寬滿足率'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? U.pct(x.thr) : '—'; })),
         h('span', { class: 'k' }, '延遲'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? `${x.lat.toFixed(1)} ms` : '—'; })),
@@ -318,7 +325,7 @@
           h('span', { class: 'n' }, String(stg.count)),
           h('button', { onclick: () => { stg.count = Math.min(16, stg.count + 1); V.renderSide(); }, 'aria-label': '增加' }, '+')),
         h('button', { class: 'btn sm', onclick: () => { stg.count = Math.max(1, Math.ceil((need.seats + need.printers + Math.max(need.aps, 20)) * 1.1 / am.ports)); V.renderSide(); } }, '建議數量')),
-      barRow('埠數', portsAvail, need.total, `座位 ${need.seats} + AP ${need.aps} + 印表機 ${need.printers}`),
+      barRow('埠數', portsAvail, need.total, `座位 ${need.seats} + AP ${need.aps} + 印表機 ${need.printers}${need.pos ? ` + 收銀機 ${need.pos}` : ''}`),
       barRow('PoE', budget, poe.used, poe.phones ? `IP 電話 ${poe.phones}W + AP ${poe.aps}W` : `AP ${poe.aps}W`, 'W'),
       h('div', { class: 'small muted mono' }, `上行埠：${stg.count * am.uplinks} 個（≤${U.speed(am.uplinkMax)}）　AP 上行：${U.bw(Math.min(am.portSpeed, fs.cabling.std ? CAT.horizontal[fs.cabling.std].maxSpeed : 1000))}`),
       changed ? h('button', { class: 'btn primary', onclick: () => { const r = UI.res(G.Act.setAccess(V.fid, stg.model, stg.count)); if (!r.ok) { V.stage = null; } } }, delta >= 0 ? `套用（${U.money(delta)}）` : `套用（回收 ${U.money(-delta)}）`) : null,

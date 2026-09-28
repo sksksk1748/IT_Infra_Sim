@@ -4,13 +4,14 @@
   const U = G.U, h = U.h, CAT = G.CAT, Q = G.Q, UI = G.UI;
   const V = { tab: 'net', provider: 'A' };
   G.Views.shop = V;
-  const TABS = [['net', '網路設備'], ['srv', '伺服器'], ['wifi', '無線網路'], ['facility', '機房設施'], ['ai', 'AI 運算'], ['cable', '線材與光模組'], ['isp', 'ISP 專線']];
+  const TABS = [['net', '網路設備'], ['srv', '伺服器'], ['sys', '系統'], ['wifi', '無線網路'], ['facility', '機房設施'], ['ai', 'AI 運算'], ['cable', '線材與光模組'], ['isp', 'ISP 專線']];
+  V.TABS = TABS;
   const thumb = (id, title) => (G.M3 && G.M3.has(id) ? G.M3.thumbButton(id, title) : null);
 
   V.mount = (el, param) => {
     if (param && TABS.some((t) => t[0] === param)) V.tab = param;
     V.el = el;
-    const inv = Object.values(G.S.devices).filter((d) => !d.rack).length;
+    const inv = Object.values(G.S.devices).filter((d) => !d.rack && !d.host).length;
     el.appendChild(h('div', { class: 'view-h' },
       h('div', {}, h('h2', {}, '採購'), h('div', { class: 'desc' }, '點圖片可以 360° 旋轉查看設備的 3D 模型與零件說明。機房設備買來後先放在倉庫，要到「機房」上架才能通電；樓層的接入交換器與 AP 在「樓層」頁面配置。')),
       h('div', { class: 'row wrap' }, h('span', { class: 'chip' }, `預算 ${U.money(G.S.money)}`), inv ? h('button', { class: 'btn primary sm', onclick: () => UI.go('rack') }, `倉庫有 ${inv} 台未上架 →`) : null)));
@@ -19,11 +20,16 @@
     const kbRow = (ids) => el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } }, ids.map((k) => h('button', { class: 'btn ghost xs', onclick: () => UI.openKb(k) }, G.KB.byId[k].title))));
     if (V.tab === 'net') {
       kbRow(['k-router', 'k-firewall', 'k-switch', 'k-optics']);
-      for (const [id, m] of Object.entries(CAT.devices)) if (['router', 'firewall', 'switch'].includes(m.cat) && !m.ai) grid.appendChild(devCard(id, m));
+      for (const [id, m] of Object.entries(CAT.devices)) if (['router', 'firewall', 'switch'].includes(m.cat) && !m.ai && !m.sys) grid.appendChild(devCard(id, m));
     } else if (V.tab === 'srv') {
       el.appendChild(h('div', { class: 'card', style: { marginBottom: '12px' } }, h('h3', { style: { marginBottom: '8px' } }, '伺服器角色'),
         h('div', { class: 'grid c3' }, Object.entries(CAT.roles).filter(([k]) => k !== 'ai' && k !== 'aistore').map(([k, r]) => h('div', { class: 'small' }, h('b', {}, `${r.short}　${r.name}`), h('div', { class: 'muted' }, r.desc))))));
-      for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'server' && !m.ai) grid.appendChild(devCard(id, m));
+      for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'server' && !m.ai && !m.sys && !m.virtual) grid.appendChild(devCard(id, m));
+    } else if (V.tab === 'sys') {
+      el.appendChild(h('div', { class: 'note', style: { marginBottom: '10px' } }, h('b', {}, '系統設備：'), '虛擬化主機與共用儲存（SAN）、儲存擴充櫃、磁帶櫃，以及電話與廣域網路設備。VM 不用採購：主機上架後，到「系統 → 虛擬化」建立。',
+        h('button', { class: 'btn ghost xs', style: { marginLeft: '6px' }, onclick: () => UI.go('sys') }, '前往系統管理')));
+      kbRow(['k-vm', 'k-san', 'k-backup'].filter((k) => G.KB.byId[k]));
+      for (const [id, m] of Object.entries(CAT.devices)) if (m.sys) grid.appendChild(devCard(id, m));
     } else if (V.tab === 'ai') {
       aiTab(el, grid, kbRow);
     } else if (V.tab === 'wifi') {
@@ -56,7 +62,10 @@
     if (m.cat === 'router') rows.push(['路由效能', U.bw(m.thr)], ['多 ISP', m.multiWan === 'bgp' ? 'BGP 負載分擔' : '僅主備援']);
     if (m.cat === 'firewall') rows.push(['防火牆吞吐', U.bw(m.fw)], ['開啟 IPS', U.bw(m.ips)]);
     if (m.cat === 'switch') rows.push(['層級', m.layer === 3 ? 'L3（可路由）' : 'L2']);
-    if (m.cat === 'server') rows.push(['角色', m.roles.map((r) => CAT.roles[r].short).join(' / ')]);
+    if (m.cat === 'server' && m.roles.length) rows.push(['角色', m.roles.map((r) => CAT.roles[r].short).join(' / ')]);
+    if (m.hv) rows.push(['虛擬化資源', `${m.vcpu} vCPU · ${m.ram} GB 記憶體`], ['授權', `${U.money(CAT.vmCfg.license)} / 月`]);
+    if (m.rawTB) rows.push(['原始容量', `${m.rawTB} TB${m.flash ? '（全快閃）' : ''}`], [m.shelf ? '加入 SAN 後可用' : 'RAID 6 可用', `約 ${Math.round(m.rawTB * 0.8 * 0.95)} TB`]);
+    if (m.tape) rows.push(['磁帶', `LTO-9 · 每捲 ${m.tapeTB} TB · ${m.slots} 格`]);
     if (m.cat === 'wlc') rows.push(['管理 AP', `${m.maxAps} 台`]);
     if (m.cat === 'ups') rows.push(['容量', `${m.capW / 1000} kW`], ['滿載續航', `${m.runtime} 分鐘`]);
     if (m.gpu) rows.push(['GPU', `${m.gpu} 顆 · ${m.pf} PFLOPS`], ['散熱', m.liquid ? '直接液冷（需要 CDU）' : '氣冷']);

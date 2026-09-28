@@ -16,12 +16,13 @@
     ups:      { name: '機架式 UPS', en: 'UPS', color: '#9aa7ad' },
     power:    { name: '電源櫃', en: 'Power Shelf', color: '#f2c14e' },
     bbu:      { name: '電池備援', en: 'BBU', color: '#e86fa8' },
+    storage:  { name: '儲存設備', en: 'Storage', color: '#c39b6a' },
   };
-  /** 不是網路設備（沒有連接埠、不出現在拓撲圖）：UPS、電源櫃、BBU */
-  CAT.infra = (m) => m.cat === 'ups' || m.cat === 'power' || m.cat === 'bbu';
+  /** 不是網路設備（沒有連接埠、不出現在拓撲圖）：UPS、電源櫃、BBU、儲存擴充櫃（接在 SAN 後面） */
+  CAT.infra = (m) => m.cat === 'ups' || m.cat === 'power' || m.cat === 'bbu' || !!m.shelf;
 
   /* 開機時間（遊戲分鐘） */
-  CAT.bootMin = { router: 5, firewall: 8, switch: 4, server: 10, wlc: 6, ups: 1, power: 1, bbu: 1 };
+  CAT.bootMin = { router: 5, firewall: 8, switch: 4, server: 10, wlc: 6, ups: 1, power: 1, bbu: 1, storage: 8 };
 
   /* ---------- 機房設備（安裝在 B1 機櫃中） ----------
    * ports: rj45 = 1G 銅纜埠；sfp = SFP+/SFP28 光纖埠（上限 sfpMax）；qsfp = 40/100G 埠
@@ -68,14 +69,14 @@
 
     /* 伺服器（角色在安裝後設定） */
     'SV-1U': { cat: 'server', name: 'SV-1U 通用伺服器', price: 220000, u: 1, watts: 350,
-      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db'], unlock: 1,
-      desc: '1U 雙路伺服器，2 × 10G 網卡。可擔任 AD/DNS/DHCP、網站、網管、資料庫。' },
+      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'pbx', 'vscan', 'upd'], unlock: 1,
+      desc: '1U 雙路伺服器，2 × 10G 網卡。可擔任 AD/DNS/DHCP、網站、網管、資料庫，以及電話交換機、弱點掃描、更新派送。' },
     'SV-2U': { cat: 'server', name: 'SV-2U 高效能伺服器', price: 520000, u: 2, watts: 750,
-      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'siem'], unlock: 1,
+      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'siem', 'vscan', 'upd'], unlock: 1,
       desc: '2U 高效能伺服器，2 × 25G 網卡。可擔任 SIEM 等重負載角色。' },
-    'ST-4U': { cat: 'server', name: 'ST-4U 儲存伺服器', price: 980000, u: 4, watts: 900,
+    'ST-4U': { cat: 'server', name: 'ST-4U 儲存伺服器', price: 980000, u: 4, watts: 900, rawTB: 192,
       ports: { rj45: 2, sfp: 4, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['file', 'backup'], unlock: 2,
-      desc: '4U 大容量儲存 (NAS)，4 × 25G 網卡。擔任檔案伺服器或備份伺服器。' },
+      desc: '4U 大容量儲存 (NAS)，24 × 8 TB 硬碟（原始 192 TB），4 × 25G 網卡。擔任檔案伺服器或備份伺服器。' },
 
     /* 無線控制器 */
     'WC-500': { cat: 'wlc', name: 'WC-500 無線控制器', price: 380000, u: 1, watts: 150, maxAps: 250,
@@ -109,6 +110,36 @@
     'BBU-6': { cat: 'bbu', ai: true, aiRack: true, name: 'BBU-6 電池備援櫃（6 × 3 kW）', price: 380000, u: 1, watts: 0, bbuW: 18000, holdMin: 4,
       ports: { rj45: 0, sfp: 0, qsfp: 0 }, unlock: 6,
       desc: '鋰電池模組直接掛在 54V 匯流排上：停電時瞬間接手，撐到發電機啟動（約 1 分鐘）。18 kW 滿載約 4 分鐘，負載越輕撐越久。' },
+
+    /* ---------- 電話語音（第七章）：在「採購 → 系統」 ---------- */
+    'PX-500': { cat: 'server', sys: true, name: 'PX-500 IP 電話交換機（IP-PBX）', price: 680000, u: 1, watts: 150,
+      ports: { rj45: 4, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['pbx'], unlock: 7,
+      desc: '企業總機：最多 3,000 支分機註冊、客服中心排隊與錄音（ACD / IVR）。專用硬體、雙電源，也可以改用 VM。' },
+    'SBC-2': { cat: 'server', sys: true, name: 'SBC-2 語音邊界控制器', price: 420000, u: 1, watts: 120,
+      ports: { rj45: 4, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['sbc'], unlock: 7,
+      desc: 'Session Border Controller：放在 DMZ，替電話交換機對接電信業者的 SIP 中繼。只接受電信業者的連線、隱藏內部架構、擋掉盜打與 SIP 掃描。' },
+
+    /* ---------- 廣域網路（第七章） ---------- */
+    'SDW-HUB': { cat: 'server', sys: true, name: 'SDW-1 SD-WAN 集中器', price: 560000, u: 1, watts: 200,
+      ports: { rj45: 4, sfp: 4, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['sdwan'], unlock: 7,
+      desc: '總部端的 SD-WAN 集中器（Hub）：各據點的 SD-WAN 設備透過網際網路建立加密隧道連回這裡。一般放在 DMZ，由防火牆保護。' },
+
+    /* ---------- 虛擬化與儲存（第八章）：在「採購 → 系統」 ---------- */
+    'HV-2U': { cat: 'server', hv: true, sys: true, name: 'HV-2U 虛擬化主機', price: 780000, u: 2, watts: 900, vcpu: 256, ram: 1024,
+      ports: { rj45: 2, sfp: 4, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: [], unlock: 8,
+      desc: '雙路 64 核、1 TB 記憶體、4 × 25G 網卡。裝好 Hypervisor 就能同時跑十幾台虛擬機（VM）；兩台以上組成叢集、搭配共用儲存（SAN），主機故障時 VM 會自動在別台重啟（HA）。' },
+    'VM': { cat: 'server', virtual: true, name: '虛擬機（VM）', price: 0, u: 0, watts: 0,
+      ports: { rj45: 0, sfp: 0, qsfp: 0 }, sfpMax: 0, qsfpMax: 0, roles: ['ad', 'web', 'db', 'nms', 'siem', 'file', 'backup', 'pbx', 'sbc', 'sdwan', 'vscan', 'upd'], unlock: 8,
+      desc: '跑在虛擬化主機上的伺服器：幾分鐘就能建好一台，不佔機櫃、不用另外買硬體。' },
+    'SAN-5K': { cat: 'storage', san: true, sys: true, name: 'SAN-5K 全快閃儲存陣列', price: 5200000, u: 2, watts: 800, rawTB: 92, flash: true,
+      ports: { rj45: 2, sfp: 8, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, unlock: 8,
+      desc: '雙控制器、24 顆 NVMe SSD（原始 92 TB），8 × 25G iSCSI。虛擬化叢集的共用儲存：VM 的硬碟都放這裡，任何一台主機都讀得到，HA 才做得到。' },
+    'DS-24': { cat: 'storage', shelf: true, sys: true, name: 'DS-24 擴充櫃（大容量硬碟）', price: 1600000, u: 4, watts: 450, rawTB: 384,
+      ports: { rj45: 0, sfp: 0, qsfp: 0 }, sfpMax: 0, qsfpMax: 0, unlock: 8,
+      desc: '24 顆 16 TB 大容量硬碟（原始 384 TB），以 SAS 線接在 SAN 後面擴充容量。便宜、容量大，但比全快閃慢，硬碟越大 RAID 重建越久。' },
+    'TL-48': { cat: 'storage', tape: true, sys: true, name: 'TL-48 磁帶櫃（LTO-9）', price: 1200000, u: 4, watts: 300, tapeTB: 18, slots: 48,
+      ports: { rj45: 1, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, unlock: 8,
+      desc: '48 格磁帶槽、2 台 LTO-9 磁帶機（每捲 18 TB）。磁帶可以退出來送到異地保存：離線、便宜、放十幾年，勒索軟體也加密不到。' },
   };
 
   /* ---------- 機房設施（非機櫃設備） ---------- */
@@ -244,6 +275,34 @@
       desc: '訓練與推論企業 AI 模型。多台 GPU 伺服器要透過高速後端網路同步參數，才能一起訓練同一個模型。' },
     aistore: { name: 'AI 資料儲存', short: 'AIS',
       desc: '存放訓練資料與模型檢查點（checkpoint）。要夠快，GPU 才不會停下來等資料。' },
+    pbx:    { name: 'IP 電話交換機（IP-PBX）', short: 'PBX',
+      desc: '公司的總機：分機註冊、撥號、轉接、客服中心的排隊與錄音（ACD / IVR）。對外打電話要再接電信業者的 SIP 中繼。' },
+    vscan:  { name: '弱點掃描', short: 'VS',
+      desc: '定期掃描所有伺服器、網路設備與電腦，找出沒修補的已知漏洞（CVE），依嚴重程度（CVSS）排出修補順序。' },
+    upd:    { name: '更新派送（WSUS / 快取）', short: 'UPD',
+      desc: '在內網快取作業系統與軟體更新：更新只從網際網路下載一次，一萬台電腦再從內網取得，不會塞爆對外頻寬。' },
+    sbc:    { name: '語音邊界控制器（SBC）', short: 'SBC',
+      desc: '語音的防火牆：放在 DMZ 對接電信業者的 SIP 中繼，內部的電話交換機不直接暴露在網際網路上。' },
+    sdwan:  { name: 'SD-WAN 集中器', short: 'SDW',
+      desc: '各據點的 SD-WAN 設備經網際網路建立加密隧道連回總部的集中器，依應用程式自動選路、斷線瞬間切換。' },
+  };
+  /* ---------- 電話語音：SIP 中繼（向電信業者租用的外線路數） ---------- */
+  CAT.voice = {
+    trunks: { 60: { monthly: 48000, setup: 30000 }, 120: { monthly: 90000, setup: 40000 }, 240: { monthly: 170000, setup: 60000 }, 480: { monthly: 320000, setup: 80000 } },
+    lead: 360, unlock: 7,
+    /* 每位在座員工同時在講電話的比例：客服中心很高、一般辦公很低；外線比例 */
+    rate: { callcenter: 0.2, office: 0.015, rnd: 0.01, creative: 0.012, exec: 0.025, conference: 0.008, lobby: 0.015 },
+    ext: { callcenter: 0.92 },
+    kbps: 90,
+  };
+  /** 各角色的 VM 規格：[vCPU, 記憶體 GB, 系統碟 TB]（檔案與備份的資料量另計） */
+  CAT.vmSize = { ad: [4, 16, 0.2], web: [8, 32, 0.3], db: [16, 128, 3], nms: [8, 32, 0.5], siem: [16, 64, 4], file: [8, 32, 0.2], backup: [8, 32, 0.2], pbx: [4, 16, 0.2], sbc: [4, 8, 0.1], sdwan: [4, 8, 0.1], vscan: [4, 16, 0.3], upd: [4, 16, 1.5] };
+  CAT.vmCfg = { license: 45000, osLicense: 30000, bootMin: 6, haDelay: 3, p2vFee: 50000, p2vMin: 60 };
+  /** RAID：可用比例、可容忍同時壞幾顆、說明 */
+  CAT.raid = {
+    raid5:  { name: 'RAID 5', eff: 0.9, tol: 1, desc: '容量最多，只能壞一顆。大容量硬碟重建要十幾個小時，期間再壞一顆資料就全毀。' },
+    raid6:  { name: 'RAID 6', eff: 0.8, tol: 2, desc: '可以同時壞兩顆：重建期間再壞一顆也不怕。大容量硬碟的標準選擇。' },
+    raid10: { name: 'RAID 10', eff: 0.5, tol: 1.5, desc: '鏡像 + 條帶：效能最好、重建最快，但只剩一半容量。資料庫與 VM 常用。' },
   };
 
   /* ---------- 資安與網路服務（訂閱制） ---------- */
@@ -270,6 +329,18 @@
       desc: '802.1X 認證：只有公司設備能接上網路，中毒電腦可一鍵隔離到隔離 VLAN。' },
     immutable: { name: '不可變備份', group: '備份', monthly: 40000, unlock: 5, needsRole: 'backup',
       desc: '備份資料寫入後在保存期內無法被修改或刪除，勒索軟體也加密不了。' },
+    vault:     { name: '磁帶異地保管', group: '備份', monthly: 30000, unlock: 8, needsTape: true,
+      desc: '保全公司每週來收走磁帶，存放在異地的恆溫恆濕金庫。總部就算火災、淹水，資料還在。' },
+    uem:       { name: '端點管理平台（UEM / MDM）', group: '端點管理', perUser: 60, unlock: 8,
+      desc: '集中管理一萬台電腦與手機：資產清冊、修補合規率、自動分批派送更新、強制 BitLocker 加密、遺失時遠端抹除。' },
+    m365:      { name: 'Microsoft 365（SaaS 郵件與協作）', group: '雲端', perUser: 330, unlock: 7,
+      desc: '郵件、Teams、OneDrive 都搬到雲端：不用自己維護郵件伺服器，但每個人的流量都改走網際網路，出口頻寬要跟著加大。' },
+    cloudweb:  { name: '官網上雲（IaaS + CDN）', group: '雲端', monthly: 120000, unlock: 7,
+      desc: '官網搬到公有雲，前面加 CDN：流量高峰自動擴充、DDoS 由雲端吸收，不再佔用公司的對外頻寬。官網查會員資料時，要經專線或 VPN 連回總部的資料庫。' },
+    cspm:      { name: '雲端資安態勢管理（CSPM）', group: '雲端', monthly: 25000, unlock: 7,
+      desc: '持續檢查雲端帳號的設定：公開的儲存桶、沒開 MFA 的管理員、外洩的存取金鑰、異常的費用，一有問題就告警。' },
+    cloudbk:   { name: '雲端備份（異地 + 物件鎖定）', group: '備份', perTB: 900, unlock: 8, needsRole: 'backup',
+      desc: '每晚把備份複製一份到公有雲的物件儲存，並開啟物件鎖定（Object Lock）：異地、而且勒索軟體刪不掉。依備份容量計費。' },
   };
   CAT.training = { name: '全員資安意識訓練', price: 250000, days: 30, unlock: 5,
     desc: '模擬釣魚演練 + 課程。30 天內員工點擊釣魚連結的機率大幅下降。' };

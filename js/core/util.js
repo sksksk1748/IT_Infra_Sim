@@ -145,6 +145,7 @@
       text: g('--text'), text2: g('--text-2'), text3: g('--text-3'),
       accent: g('--accent'), accent2: g('--accent-2'), ok: g('--ok'), warn: g('--warn'), bad: g('--bad'), info: g('--info'),
       floor: g('--floor'), desk: g('--desk'), room: g('--room'), core: g('--core'), wall: g('--wall'), glass: g('--glass'),
+      kitchen: g('--kitchen'), serve: g('--serve'), dine: g('--dine'), cold: g('--cold'),
       mono: g('--font-mono'), sans: g('--font-sans'),
     };
   };

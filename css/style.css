@@ -30,6 +30,10 @@
   --core: #0a1015;
   --wall: #5b7688;
   --glass: #3f8fa0;
+  --kitchen: #26343d;
+  --serve: #3a3226;
+  --dine: #1c2630;
+  --cold: #1d3a4a;
   --jack: #04080b;
   --pin: #c9a441;
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
@@ -47,7 +51,7 @@
     --accent: #0c8c81; --accent-soft: rgba(12, 140, 129, 0.12); --accent-ink: #ffffff; --accent-2: #a87400;
     --ok: #1d9650; --warn: #bf7100; --bad: #d23835; --info: #2a70c2;
     --ok-soft: rgba(29, 150, 80, 0.12); --warn-soft: rgba(191, 113, 0, 0.13); --bad-soft: rgba(210, 56, 53, 0.12); --info-soft: rgba(42, 112, 194, 0.12);
-    --floor: #f3f6f7; --desk: #dfe8ec; --room: #e8eff2; --core: #8e9ea7; --wall: #5d7280; --glass: #7db1be;
+    --floor: #f3f6f7; --desk: #dfe8ec; --room: #e8eff2; --core: #8e9ea7; --wall: #5d7280; --glass: #7db1be; --kitchen: #d3dadd; --serve: #ecdcc4; --dine: #f7f1e8; --cold: #cfe6f0;
     --jack: #1a232a; --pin: #b08a1e;
     --shadow: 0 12px 32px rgba(20, 40, 50, 0.16);
   }
@@ -60,7 +64,7 @@
   --accent: #0c8c81; --accent-soft: rgba(12, 140, 129, 0.12); --accent-ink: #ffffff; --accent-2: #a87400;
   --ok: #1d9650; --warn: #bf7100; --bad: #d23835; --info: #2a70c2;
   --ok-soft: rgba(29, 150, 80, 0.12); --warn-soft: rgba(191, 113, 0, 0.13); --bad-soft: rgba(210, 56, 53, 0.12); --info-soft: rgba(42, 112, 194, 0.12);
-  --floor: #f3f6f7; --desk: #dfe8ec; --room: #e8eff2; --core: #8e9ea7; --wall: #5d7280; --glass: #7db1be;
+  --floor: #f3f6f7; --desk: #dfe8ec; --room: #e8eff2; --core: #8e9ea7; --wall: #5d7280; --glass: #7db1be; --kitchen: #d3dadd; --serve: #ecdcc4; --dine: #f7f1e8; --cold: #cfe6f0;
   --jack: #1a232a; --pin: #b08a1e;
   --shadow: 0 12px 32px rgba(20, 40, 50, 0.16);
 }
@@ -426,7 +430,7 @@ table.t td.r, table.t th.r { text-align: right; }
 /* ---------- 防火牆 ---------- */
 .rule-tbl td.z { font-family: var(--font-mono); font-size: 12px; }
 .zone-chip { font-family: var(--font-mono); font-size: 11.5px; padding: 1px 6px; border-radius: 4px; background: var(--bg-4); border: 1px solid var(--line); white-space: nowrap; }
-.zone-INTERNET { color: #f07b5a; } .zone-LAN { color: var(--info); } .zone-GUEST { color: #c58af0; } .zone-SERVERS { color: var(--accent); } .zone-DMZ { color: var(--accent-2); } .zone-ANY { color: var(--text-2); }
+.zone-INTERNET { color: #f07b5a; } .zone-LAN { color: var(--info); } .zone-GUEST { color: #c58af0; } .zone-SERVERS { color: var(--accent); } .zone-DMZ { color: var(--accent-2); } .zone-ANY { color: var(--text-2); } .zone-WAN { color: #8f7cf0; }
 .grade { font-family: var(--font-display); font-size: 54px; font-weight: 700; line-height: 1; }
 /* 章節小測驗與情境挑戰 */
 .quiz { display: grid; gap: 10px; }
@@ -617,3 +621,6 @@ table.t td.r, table.t th.r { text-align: right; }
 @media (prefers-reduced-motion: reduce) {
   .flow, .port .led.act.blink, .port .led.act.crit, .toast { animation: none !important; }
 }
+
+/* 據點地圖：依比例縮放，不需要拖曳 */
+.wan-map svg { height: auto; aspect-ratio: 900 / 520; cursor: default; }

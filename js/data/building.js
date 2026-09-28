@@ -17,6 +17,10 @@
     creative:   { name: '行銷設計', wired: 0.55, phones: 0.8, inet: [1.8, 0.8], intra: [1.8, 1.1], color: '#e86fa8' },
     conference: { name: '會議訓練', wired: 0.1, phones: 0.9, inet: [1.4, 0.55], intra: [0.3, 0.1], guestPeak: 120, color: '#43c59e' },
     exec:       { name: '高階主管', wired: 0.3, phones: 1.0, inet: [1.5, 0.6], intra: [0.6, 0.2], color: '#f2c14e' },
+    /* 員工餐廳：編制人數是廚師、收銀與清潔人員；用餐尖峰時全公司的員工上來吃飯（diners = 尖峰同時用餐人數），
+     * 人人拿著手機滑影片 → 高密度 Wi-Fi。pos = 收銀機（有線、要能連到金流閘道） */
+    canteen:    { name: '員工餐廳', wired: 0.5, phones: 0.7, inet: [0.35, 0.1], intra: [0.3, 0.1], diners: 760, pos: 10, dine: true, color: '#e07b54' },
+    foodcourt:  { name: '美食街', wired: 0.5, phones: 0.7, inet: [0.35, 0.1], intra: [0.3, 0.1], diners: 700, pos: 16, dine: true, color: '#d9a441' },
   };
 
   /* ---------- 大樓 ---------- */
@@ -46,11 +50,14 @@
       { id: '19F', level: 19, type: 'office',     dept: '專案管理處', staff: 527 },
       { id: '20F', level: 20, type: 'exec',       dept: '行政高管', staff: 300 },
       { id: '21F', level: 21, type: 'exec',       dept: '董事會 / 總經理室', staff: 300 },
+      { id: '22F', level: 22, type: 'canteen',    dept: '員工餐廳（自助餐）', staff: 56 },
+      { id: '23F', level: 23, type: 'foodcourt',  dept: '員工餐廳（美食街）', staff: 48 },
     ],
   };
   G.BLD.byId = {};
   for (const f of G.BLD.floors) G.BLD.byId[f.id] = f;
-  G.BLD.totalStaff = G.BLD.floors.reduce((s, f) => s + f.staff, 0); /* = 10,000 */
+  G.BLD.totalStaff = G.BLD.floors.reduce((s, f) => s + f.staff, 0); /* 10,000 名員工 + 104 位餐廳人員 */
+  G.BLD.top = G.BLD.floors.reduce((m, f) => Math.max(m, f.level), 0);
   /** 樓層 IDF 到 B1 機房的主幹線長度 (m) */
   G.BLD.riserLength = (floorId) => {
     const f = G.BLD.byId[floorId];
@@ -59,9 +66,12 @@
 
   /* ---------- 平面圖產生器 ---------- */
   const W = 72, H = 36;
-  const T = { OPEN: 0, DESK: 1, MEET: 2, CORE: 3, IDF: 4, OFFICE: 5, LAB: 6, LOBBY: 7, CAFE: 8, WALL: 9, GLASS: 10, EXT: 11 };
-  const STAFF_W = { 0: 0.04, 1: 1.0, 2: 0.35, 5: 0.5, 6: 0.8, 7: 0.03, 8: 0.25 };
+  /* KITCHEN 廚房、DINE 用餐區、SERVE 餐檯 / 收銀台、COLD 冷藏冷凍庫（金屬牆，Wi-Fi 幾乎穿不透） */
+  const T = { OPEN: 0, DESK: 1, MEET: 2, CORE: 3, IDF: 4, OFFICE: 5, LAB: 6, LOBBY: 7, CAFE: 8, WALL: 9, GLASS: 10, EXT: 11, KITCHEN: 12, DINE: 13, SERVE: 14, COLD: 15 };
+  const STAFF_W = { 0: 0.04, 1: 1.0, 2: 0.35, 5: 0.5, 6: 0.8, 7: 0.03, 8: 0.25, 12: 1.0, 13: 0.01, 14: 0.9, 15: 0.05 };
   const GUEST_W = { 0: 0.1, 2: 0.5, 7: 1.0, 8: 0.7 };
+  /* 餐廳的用餐人潮：坐在用餐區、在餐檯前排隊、包廂 */
+  const DINER_W = { 0: 0.12, 2: 0.6, 13: 1.0, 14: 0.3 };
   const CORE = { x0: 30, y0: 13, x1: 41, y1: 22 };
 
   function blank() {
@@ -125,6 +135,10 @@
   function fill(L, x0, y0, x1, y1, from, to) {
     for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (get(L, x, y) === from && !inCoreMargin(x, y)) set(L, x, y, to, 0);
   }
+  /** 直接鋪設一塊區域（餐檯、收銀台）：不動外牆與核心筒 */
+  function paint(L, x0, y0, x1, y1, t) {
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const c = get(L, x, y); if (c !== T.EXT && c !== T.CORE && c !== T.IDF) set(L, x, y, t, 0); }
+  }
   function bandRooms(L, xs, y0, y1, kind, att, label, doorY, sideAtt) {
     for (let i = 0; i < xs.length - 1; i++) {
       const a = xs[i], b = xs[i + 1];
@@ -186,6 +200,39 @@
       L.rooms.push({ x0: 12, y0: 16, x1: 26, y1: 30, kind: T.LOBBY, label: '挑高大廳' });
       L.rooms.push({ x0: 32, y0: 26, x1: 40, y1: 29, kind: T.DESK, label: '接待櫃台' });
     },
+    /* 22F 員工餐廳（自助餐）：北側是中央廚房，出菜線接自助餐檯與收銀台，其餘都是用餐區 */
+    canteen(L) {
+      room(L, 0, 0, 11, 9, T.KITCHEN, 6, '洗碗區', [[6, 9]]);
+      room(L, 11, 0, 31, 9, T.KITCHEN, 6, '中央廚房', [[16, 9], [26, 9]]);
+      room(L, 31, 0, 39, 9, T.KITCHEN, 6, '備料區', [[35, 9]]);
+      room(L, 39, 0, 46, 9, T.COLD, 12, '冷凍庫', [[42, 9]]);
+      room(L, 46, 0, 56, 9, T.OFFICE, 5, '驗收 / 辦公室', [[51, 9]]);
+      bandRooms(L, [56, 64, 71], 0, 9, T.MEET, 4, '用餐包廂', 9, { bottom: 2 });
+      paint(L, 3, 11, 22, 12, T.SERVE);
+      L.rooms.push({ x0: 3, y0: 11, x1: 22, y1: 12, kind: T.SERVE, label: '自助餐檯', line: true });
+      paint(L, 24, 11, 26, 13, T.SERVE);
+      L.rooms.push({ x0: 24, y0: 11, x1: 26, y1: 13, kind: T.SERVE, label: '收銀台', pos: true });
+      room(L, 0, 27, 12, 35, T.CAFE, 3, '飲料 / 甜點吧', [[12, 30], [12, 31]]);
+      paint(L, 46, 31, 54, 33, T.SERVE);
+      L.rooms.push({ x0: 46, y0: 31, x1: 54, y1: 33, kind: T.SERVE, label: '餐具回收', ret: true });
+      fill(L, 27, 10, 70, 12, T.OPEN, T.DINE);
+      fill(L, 1, 14, 70, 34, T.OPEN, T.DINE);
+      L.rooms.push({ x0: 13, y0: 14, x1: 29, y1: 34, kind: T.DINE, label: '用餐區' });
+    },
+    /* 23F 員工餐廳（美食街）：八個攤位各有自己的小廚房與櫃台，中間是共用座位，南側是景觀吧台 */
+    foodcourt(L) {
+      const stalls = [[0, 9, '麵食館'], [9, 18, '日式定食'], [18, 27, '韓式料理'], [27, 36, '滷味小吃'], [36, 45, '西式簡餐'], [45, 54, '健康餐盒'], [54, 63, '港式燒臘'], [63, 71, '飲料 / 咖啡']];
+      for (const [a, b, label] of stalls) {
+        room(L, a, 0, b, 6, T.KITCHEN, 5, label, [[Math.floor((a + b) / 2), 6]], { bottom: 2 });
+        paint(L, a + 1, 7, b - 1, 7, T.SERVE);
+        L.rooms.push({ x0: a + 1, y0: 7, x1: b - 1, y1: 7, kind: T.SERVE, label: '', pos: true, stall: label });
+      }
+      room(L, 59, 26, 71, 35, T.MEET, 4, '用餐包廂', [[59, 30]], { left: 2 });
+      paint(L, 1, 29, 4, 33, T.SERVE);
+      L.rooms.push({ x0: 1, y0: 29, x1: 4, y1: 33, kind: T.SERVE, label: '餐具回收', ret: true });
+      fill(L, 1, 9, 70, 34, T.OPEN, T.DINE);
+      L.rooms.push({ x0: 8, y0: 30, x1: 56, y1: 34, kind: T.DINE, label: '景觀吧台座位', bar: true });
+    },
   };
 
   function finalize(L, type) {
@@ -196,11 +243,13 @@
     if (type === 'conference') sw[T.MEET] = 1.0;
     if (type === 'exec') sw[T.MEET] = 0.3;
     if (type === 'lobby') { sw[T.DESK] = 2.5; sw[T.OFFICE] = 1.0; sw[T.MEET] = 0.05; }
+    const dine = !!(G.FT[type] && G.FT[type].dine);
+    if (dine) { sw[T.MEET] = 0.02; sw[T.OPEN] = 0.02; }
     let so = 0, sg = 0;
     for (let i = 0; i < n; i++) {
       const t = L.type[i];
       L.occ[i] = sw[t] || 0;
-      L.guest[i] = (type === 'lobby' || type === 'conference') ? (GUEST_W[t] || 0) : 0;
+      L.guest[i] = dine ? (DINER_W[t] || 0) : (type === 'lobby' || type === 'conference') ? (GUEST_W[t] || 0) : 0;
       so += L.occ[i]; sg += L.guest[i];
     }
     /* 正規化為機率分佈 */
@@ -225,7 +274,7 @@
     canPlaceAp(L, x, y) {
       if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) return false;
       const t = L.type[y * W + x];
-      return t !== T.WALL && t !== T.GLASS && t !== T.CORE && t !== T.IDF && t !== T.EXT;
+      return t !== T.WALL && t !== T.GLASS && t !== T.CORE && t !== T.IDF && t !== T.EXT && t !== T.COLD;
     },
     /** AP 到 IDF 的線長估算（曼哈頓距離 + 上下天花板 4m） */
     cableToIdf(L, x, y) { return Math.abs(x - L.idf.x) + Math.abs(y - L.idf.y) + 4; },

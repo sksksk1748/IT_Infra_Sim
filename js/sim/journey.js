@@ -57,6 +57,7 @@
     const adj = new Map();
     const add = (a, b, why) => { if (!adj.has(a)) adj.set(a, []); if (!adj.has(b)) adj.set(b, []); adj.get(a).push({ to: b, why }); adj.get(b).push({ to: a, why }); };
     for (const l of Object.values(s.links)) add(l.a, l.b, { link: l });
+    for (const d of Object.values(s.devices)) if (d.host) add(d.host, d.id, { vm: true });
     for (const c of s.isp) { add('INET', 'isp:' + c.id, { isp: c }); if (c.router) add('isp:' + c.id, c.router, { isp: c }); }
     const role = dst && dst.startsWith('ROLE:') ? dst.slice(5) : null;
     const isDst = (n) => (role ? (s.devices[n] && s.devices[n].role === role) : n === dst);
@@ -160,7 +161,13 @@
         ? { title: ctx.attack ? '網際網路上的攻擊者' : '網際網路上的客戶', text: ctx.attack ? '攻擊者掃描到公司的公有 IP，嘗試用 RDP（遠端桌面）直接連進來。' : '客戶在瀏覽器輸入公司官網網址，DNS 查到公司的公有 IP，請求從網際網路送過來。' }
         : { title: '抵達網際網路', text: '封包抵達網際網路上的伺服器。回應封包沿原路回來：防火牆認得這是「已建立連線」的回應，直接放行（Stateful 狀態檢查）；路由器再把公有 IP 換回員工電腦的私有 IP。' };
     }
-    if (kind === 'server' || kind === 'wlc') {
+    if (kind === 'server' && CAT.devices[s.devices[n].model].hv) {
+      const d = s.devices[n];
+      return ctx.first
+        ? { title: `虛擬化主機 ${d.name}`, text: `封包由 VM 送出，經過主機的虛擬交換器，從 ${d.name} 的實體網卡出去。` }
+        : { title: `虛擬化主機 ${d.name}`, text: `封包到了 ${d.name} 的實體網卡，主機的虛擬交換器再把它轉給上面的 VM：${nextName}。` };
+    }
+    if (kind === 'server' || kind === 'wlc' || kind === 'storage') {
       const d = s.devices[n];
       const zone = G.Net.ruleZone(n);
       const role = d.role ? ROLE_NAME(d.role) : '伺服器';
@@ -213,7 +220,10 @@
       if (!leg.dst || !g.nodes.has(leg.src)) { const dg = diagnose(leg); res.steps.push(Object.assign({ node: leg.src, kind: leg.attack ? 'ok' : 'bad', blocked: true }, dg, leg.attack ? { title: '攻擊到不了', fix: '' } : {})); res.ok = false; break; }
       const fwNode = Array.from(g.nodes.values()).find((x) => x.kind === 'firewall');
       const via = s.fw.segmentation && fwNode && leg.zs === 'LAN' && leg.dst.startsWith('ROLE:') ? fwNode.dev.id : null;
-      const route = via ? [G.Net.paths(leg.src, via), G.Net.paths(via, leg.dst)] : [G.Net.paths(leg.src, leg.dst)];
+      /* 從 VM 出發：實體上是從主機的網卡出去 */
+      const srcDev = s.devices[leg.src];
+      const pSrc = srcDev && srcDev.host && g.nodes.has(srcDev.host) ? srcDev.host : leg.src;
+      const route = via ? [G.Net.paths(pSrc, via), G.Net.paths(via, leg.dst)] : [G.Net.paths(pSrc, leg.dst)];
       if (route.some((r) => !r)) {
         const dg = diagnose(leg);
         res.steps.push(Object.assign({ node: leg.src, kind: leg.attack ? 'ok' : 'bad', blocked: true }, dg, leg.attack ? { title: '攻擊到不了', text: '從網際網路根本沒有路徑可以到達這台伺服器。', fix: '' } : {}));
@@ -226,6 +236,7 @@
         nodes = nodes.length ? nodes.concat(best.nodes.slice(1)) : best.nodes.slice();
         edges = edges.concat(best.edges);
       }
+      if (pSrc !== leg.src) { nodes.unshift(leg.src); edges.unshift({ key: 'vm:' + leg.src }); }
       const real = nodes.filter((n) => !n.startsWith('ROLE:'));
       const dstNode = real[real.length - 1];
       const zs = leg.zs || G.Net.ruleZone(leg.src);

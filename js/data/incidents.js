@@ -20,7 +20,7 @@
     d.stage = 'fire';
     d.fireTime = s.time;
     const damaged = [];
-    const hit = (x) => { if (x && x.status === 'ok') { x.status = 'failed'; damaged.push(x.id); } };
+    const hit = (x) => { if (x && !x.host && x.status === 'ok') { x.status = 'failed'; damaged.push(x.id); } };
     hit(s.devices[d.dev]);
     if (!inc.detected) E().detect(inc, '偵煙器動作（已經起火）');
     inc.title = `機櫃 ${d.rack} 起火`;
@@ -113,12 +113,17 @@
       weight: (s) => (Object.values(s.devices).some((d) => d.rack && d.status === 'ok') ? 0.45 : 0),
       init(s, inc) {
         let d = inc.data.dev ? s.devices[inc.data.dev] : null;
+        /* 劇本：虛擬化主機故障（測試 HA） */
+        if (!d && inc.data.hvFirst) {
+          const hs = G.VM.hosts().filter((x) => x.status === 'ok' && G.VM.onHost(x.id).length);
+          if (hs.length) d = U.pick(hs);
+        }
         if (!d && inc.data.coreFirst) {
           const cores = Object.values(s.devices).filter((x) => x.rack && x.status === 'ok' && Q.isL3(x));
           if (cores.length) d = U.pick(cores);
         }
         if (!d) {
-          const cands = Object.values(s.devices).filter((x) => x.rack && x.status === 'ok' && ['router', 'firewall', 'switch', 'server'].includes(CAT.devices[x.model].cat));
+          const cands = Object.values(s.devices).filter((x) => x.rack && !x.host && x.status === 'ok' && ['router', 'firewall', 'switch', 'server'].includes(CAT.devices[x.model].cat));
           d = U.pick(cands);
         }
         if (!d || d.status !== 'ok') return false;
@@ -141,6 +146,11 @@
         const d = s.devices[inc.data.dev];
         if (!d) return [];
         const m = CAT.devices[d.model];
+        if (m.hv) {
+          const moved = G.VM.vms().filter((v) => v.haMoves);
+          return [G.VM.cluster().ha ? `虛擬化主機故障，HA 在幾分鐘內把上面的 VM 在其他主機重新開機（${moved.length} 台曾被 HA 重啟過）。` : '主機故障時沒有 HA（要兩台以上主機 + SAN 共用儲存 + 開啟 HA），上面的 VM 全部停擺。',
+            '叢集要保留一台主機的空間（N+1），HA 才有地方重啟 VM。'];
+        }
         const peers = Object.values(s.devices).filter((x) => x.id !== d.id && x.rack && CAT.devices[x.model].cat === m.cat && (m.cat !== 'server' || x.role === d.role));
         return peers.length ? [`還有其他 ${CAT.categories[m.cat].name}（${peers.map((p) => p.name).join('、')}）可以接手 —— 備援設計發揮作用。`] : [`${d.name} 沒有備援。重要設備應該成對部署（HA / 雙核心 / 兩台 AD）。`];
       },
@@ -217,7 +227,7 @@
       init(s, inc) {
         let src = inc.data.dev ? s.devices[inc.data.dev] : null;
         if (!src) {
-          const cands = Object.values(s.devices).filter((d) => d.rack && d.status === 'ok' && CAT.devices[d.model].cat !== 'bbu');
+          const cands = Object.values(s.devices).filter((d) => d.rack && !d.host && d.status === 'ok' && CAT.devices[d.model].cat !== 'bbu');
           src = U.pick(cands);
         }
         if (!src || !src.rack) return false;
@@ -276,7 +286,7 @@
       name: '機房漏水', cat: 'ops', sev: 'high', kb: 'k-ems', minCh: 3, cooldown: 4320,
       weight: (s) => (s.racks.length && Object.values(s.devices).some((d) => d.rack) ? (G.Fac.has('PREACT') ? 0.15 : 0.3) : 0),
       init(s, inc) {
-        const racks = s.racks.filter((r) => Object.values(s.devices).some((d) => d.rack === r.id));
+        const racks = s.racks.filter((r) => Object.values(s.devices).some((d) => d.rack === r.id && !d.host));
         if (!racks.length) return false;
         const srcs = ['樓上茶水間的水管破裂，水從天花板滲下來'];
         if (G.Fac.roomUnits('cooling').some((r) => r.model !== 'AC-8')) srcs.push('精密空調的冷凝水盤排水管堵塞，冷凝水溢出');
@@ -293,7 +303,7 @@
         if (d.fixed) { E().resolve(inc, d.damaged ? 'fixed' : 'contained'); return; }
         if (!d.damaged && s.time >= d.damageAt) {
           d.damaged = [];
-          const devs = Object.values(s.devices).filter((x) => x.rack === d.rack && x.status === 'ok');
+          const devs = Object.values(s.devices).filter((x) => x.rack === d.rack && !x.host && x.status === 'ok');
           devs.sort((a, b) => (a.u || 0) - (b.u || 0));
           for (const x of devs.slice(0, 1 + Math.floor(Math.random() * 3))) { x.status = 'failed'; d.damaged.push(x.id); }
           E().log(inc, `⚡ 積水碰到機櫃 ${d.rack} 底部的電源線與設備，${d.damaged.length} 台設備短路故障！`);
@@ -386,6 +396,547 @@
         return [f.cduN1 >= f.liquidHeat && f.liquidHeat > 0 ? '另一台 CDU 撐住了液冷負載（N+1）。' : '液冷只有一台 CDU（或容量不足）就是單點故障：壞了 GPU 只能降頻。',
           '漏液偵測（環控）能在冷卻液碰到電子零件前就發現。'];
       },
+    },
+
+    /* ---------- 端點與弱點（第八章） ---------- */
+    'bad-patch': {
+      name: '更新出包：電腦藍白當', cat: 'ops', sev: 'high', kb: 'k-patch', minCh: 8, random: false, detect: 'auto',
+      init(s, inc) {
+        if (!G.Ep.active()) return false;
+        const e = s.ep;
+        const frac = G.Ep.uem() && e.rings ? Math.min(e.patch, 0.05) : e.patch;
+        if (frac < 0.01) return false;
+        inc.data.frac = frac;
+        e.paused = true;
+        const n = Math.round(frac * Q.officeStaff());
+        inc.title = `本週更新出包：約 ${U.num(n)} 台電腦開機就藍白當`;
+        E().log(inc, `本週的作業系統更新和某款顯示卡驅動程式衝突，已經安裝的電腦開機就藍白當（BSOD）。目前約 ${U.num(n)} 台受影響。`);
+        E().log(inc, G.Ep.uem() && e.rings ? '分批派送發揮作用：只有 5% 的試點電腦裝了，全面派送已自動暫停。' : G.Ep.uem() ? '更新是同時派給所有電腦的：已經裝好的都中了。' : '沒有端點管理：使用者自己更新，誰裝了誰中，IT 也不知道是哪些電腦。');
+      },
+      effects(s, inc, mods) {
+        if (inc.data.fixed) return;
+        const k = 1 - inc.data.frac * 0.85;
+        for (const f of G.BLD.floors) if (!G.FT[f.type].dine && s.floors[f.id].movedIn > 0) mods.floorPenalty[f.id] = Math.min(mods.floorPenalty[f.id] || 1, k);
+      },
+      tick(s, inc) { if (inc.data.fixed) E().resolve(inc, 'fixed'); else if (s.time - inc.startedAt > 2880) E().resolve(inc, 'fail'); },
+      actions: [
+        { id: 'rollback', label: '暫停派送，遠端移除有問題的更新', time: () => (G.Ep.uem() ? 60 : 600), verdict: 'good',
+          explain: '有端點管理平台可以遠端一鍵移除（約 1 小時）；沒有的話，只能派人逐台用安全模式處理（要一整天）。',
+          run(s, inc) { inc.data.fixed = true; s.ep.patch = Math.max(0.02, s.ep.patch - inc.data.frac); E().log(inc, '有問題的更新已移除，電腦恢復正常。等原廠發布修正版再派送。'); } },
+        { id: 'desk', label: '派 IT 人員逐台到座位修復', cost: (s, inc) => Math.round(inc.data.frac * Q.officeStaff() * 800), time: 720, verdict: 'neutral',
+          explain: '可以解決，但很慢、很貴。', run(s, inc) { inc.data.fixed = true; } },
+        { id: 'user', label: '請同事自己重開機試試看', time: 5, verdict: 'bad', explain: '藍白當是更新造成的，重開幾次都一樣。' },
+      ],
+      review(s, inc) {
+        return [G.Ep.uem() && s.ep.rings ? '分批派送（先試點 5%、確認沒問題再全面）把災情控制在最小。' : '更新要分批派送：先派給一小群試點電腦，觀察一兩天沒問題再全面派送。',
+          G.Ep.uem() ? '端點管理平台可以遠端暫停與移除更新。' : '沒有端點管理平台，連哪些電腦裝了更新都不知道。'];
+      },
+    },
+
+    'laptop-lost': {
+      name: '筆電遺失', cat: 'sec', sev: 'med', kb: 'k-uem', minCh: 8, cooldown: 2880, detect: 'auto',
+      weight: (s) => (G.Ep.active() && Q.officeStaff() > 1000 ? 0.4 : 0),
+      init(s, inc) {
+        const occ = occupied(100).filter((f) => !G.FT[f.type].dine);
+        if (!occ.length) return false;
+        const f = U.pick(occ);
+        inc.data.floor = f.id; inc.data.enc = !!s.ep.bitlocker;
+        inc.title = `${f.dept}的筆電在高鐵上遺失`;
+        E().log(inc, `${f.dept}的同事把公司筆電忘在高鐵上，裡面有客戶合約、報價單，還記住了公司 VPN 的帳號。`);
+        E().log(inc, inc.data.enc ? '筆電有 BitLocker 全磁碟加密：沒有金鑰，別人拆下硬碟也讀不到資料。' : '⚠ 筆電沒有加密：拆下硬碟就能讀到所有檔案。');
+      },
+      tick(s, inc) {
+        if (inc.data.wiped || (inc.data.enc && inc.data.reset)) { E().resolve(inc, 'contained'); return; }
+        if (s.time - inc.startedAt > 720) { E().log(inc, inc.data.enc ? '筆電沒找回來，但資料有加密。' : '🚨 客戶合約出現在網路上的論壇。'); E().resolve(inc, inc.data.enc ? 'auto' : 'fail'); }
+      },
+      actions: [
+        { id: 'wipe', label: '遠端鎖定並抹除筆電（UEM）', time: 10, verdict: 'good', avail: () => G.Ep.uem(), unavail: '沒有端點管理平台（UEM）',
+          explain: '筆電一連上網路就會收到抹除指令。搭配 BitLocker，就算一直沒連網，資料也讀不出來。', run(s, inc) { inc.data.wiped = true; } },
+        { id: 'reset', label: '停用帳號、重設密碼與 VPN 憑證', time: 15, verdict: 'good', explain: '假設帳號已經外洩：讓筆電上記住的帳密、憑證都失效。', run(s, inc) { inc.data.reset = true; if (!inc.data.enc) inc.data.wiped = inc.data.wiped || false; } },
+        { id: 'police', label: '報警並聯絡高鐵失物招領', time: 30, verdict: 'neutral', explain: '該做，但不能只等失物招領。' },
+      ],
+      review(s, inc) { return [inc.data.enc ? 'BitLocker 全磁碟加密讓遺失的筆電只是一台硬體，資料沒有外洩。' : '筆電一定要全磁碟加密（BitLocker）：由端點管理平台強制開啟並保管復原金鑰。', '遺失時第一時間遠端抹除、重設帳號密碼。']; },
+    },
+
+    'kev': {
+      name: '重大漏洞公告（已遭利用）', cat: 'sec', sev: 'high', kb: 'k-vuln', minCh: 8, cooldown: 4320, detect: 'auto',
+      weight: () => (G.Vuln.active() && Q.devices('firewall').some((d) => d.rack) ? 0.35 : 0),
+      init(s, inc) {
+        const list = G.Vuln.kev('firewall');
+        if (!list.length) return false;
+        inc.data.list = list.map((x) => x.id);
+        inc.data.cve = list[0].cve;
+        inc.title = `重大漏洞公告：防火牆 SSL VPN 遠端執行程式碼（${list[0].cve}）`;
+        E().log(inc, `原廠與 TWCERT/CC 發布緊急通告：防火牆的 SSL VPN 有遠端執行程式碼漏洞（${list[0].cve}，CVSS 9.8），已被勒索集團大規模利用。`);
+        E().log(inc, `受影響：${list.map((x) => s.devices[x.dev].name).join('、')}。攻擊者通常在公告後一兩天內就開始大量掃描。`);
+      },
+      tick(s, inc) {
+        const open = inc.data.list.map((id) => s.vuln.list.find((x) => x.id === id)).filter((x) => x && !x.fixed && !x.mitig);
+        if (!open.length) { E().resolve(inc, 'contained'); return; }
+        if (s.time - inc.startedAt > 4320) E().resolve(inc, 'auto');
+      },
+      actions: [
+        { id: 'patch', label: '立即更新所有受影響防火牆的韌體', time: 30, verdict: 'good',
+          explain: '已遭利用的漏洞要立刻修補，不能等維護窗口。防火牆有 HA 的話，兩台輪流更新就不會中斷。',
+          run(s, inc) {
+            const devs = new Set(inc.data.list.map((id) => s.vuln.list.find((x) => x.id === id)).filter(Boolean).map((x) => x.dev));
+            for (const id of devs) { const r = G.Vuln.patch(id, true); E().log(inc, r.msg); }
+          } },
+        { id: 'vpnoff', label: '暫時關閉 SSL VPN（遠端員工暫時無法連線）', time: 5, verdict: 'neutral',
+          explain: '官方建議的暫時緩解措施：關掉有漏洞的功能就不會被利用，但遠端員工會暫時無法工作。',
+          run(s, inc) { for (const id of inc.data.list) { const x = s.vuln.list.find((v) => v.id === id); if (x) x.mitig = true; } s.rating = Math.max(0, s.rating - 1); } },
+        { id: 'scan', label: '用弱點掃描確認還有沒有其他受影響的設備', time: 30, verdict: 'good', avail: () => G.Vuln.scannerUp(), unavail: '沒有弱點掃描伺服器',
+          explain: '公告不一定列出你所有的設備型號與版本：掃描才知道真正受影響的範圍。', run() { G.Vuln.scan(); } },
+        { id: 'wait', label: '等下個月的定期維護窗口再更新', time: 1, verdict: 'bad', explain: '已遭大規模利用的漏洞，攻擊者不會等你一個月。' },
+      ],
+      review(s, inc) {
+        const ex = s.incidents.some((i) => i.type === 'exploit' && i.startedAt >= inc.startedAt);
+        return [ex ? '修補得不夠快：攻擊者利用漏洞入侵了。' : '在攻擊者動手之前完成了修補或緩解。', '已遭利用（KEV）的嚴重漏洞要在幾天內修補；對外的設備（防火牆、VPN、官網）最優先。'];
+      },
+    },
+
+    'exploit': {
+      name: '已知弱點遭利用入侵', cat: 'sec', sev: 'crit', kb: 'k-vuln', minCh: 8, random: false,
+      init(s, inc) {
+        const x = s.vuln.list.find((v) => v.id === inc.data.vuln);
+        const d = x && s.devices[x.dev];
+        if (!x || !d || x.fixed) return false;
+        Object.assign(inc.data, { dev: d.id, cve: x.cve, progress: 0 });
+        inc.title = `${d.name} 遭利用 ${x.cve} 入侵`;
+        E().log(inc, `攻擊者利用 ${d.name} 上沒有修補的「${x.name}」（${x.cve}，CVSS ${x.cvss}）取得了系統權限，正在植入後門、竊取管理員帳號。`);
+        if (Q.hasService('edr') && CAT.devices[d.model].cat === 'server') E().detect(inc, 'EDR 告警');
+      },
+      detectChance: () => { const p = G.Sec.posture(); return 0.001 + (p.siem ? 0.06 : 0) + (p.ips ? 0.03 : 0) + (p.nms ? 0.004 : 0); },
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.contained && d.patched && d.cleaned) { E().resolve(inc, 'contained'); return; }
+        if (d.contained) return;
+        d.progress += U.rand(0.4, 1.1) * (G.Sec.posture().segmentation ? 0.6 : 1);
+        if (d.progress >= 100) {
+          E().log(inc, '🚨 攻擊者拿到了網域管理員權限，開始在內網部署勒索軟體！');
+          E().resolve(inc, 'fail');
+          s.sched.push({ at: s.time + U.randInt(60, 240), type: 'ransomware', data: { origin: 'srv' } });
+        }
+      },
+      actions: [
+        { id: 'isolate', label: '隔離被入侵的設備、封鎖攻擊來源', time: 10, verdict: 'good', explain: '先遏制：切斷攻擊者的連線，阻止橫向移動。', run(s, inc) { inc.data.contained = true; } },
+        { id: 'patch', label: '緊急修補被利用的漏洞', time: 20, verdict: 'good', explain: '不修補的話，攻擊者換個 IP 又能再進來。', run(s, inc) { G.Vuln.patch(inc.data.dev, true); inc.data.patched = true; } },
+        { id: 'clean', label: '清查後門、重設所有管理員密碼與憑證', time: 240, verdict: 'good', avail: (s, inc) => !!inc.data.contained, unavail: '請先隔離',
+          explain: '根除：攻擊者可能已經留下後門、偷走帳號，全部都要清查、重設。', run(s, inc) { inc.data.cleaned = true; } },
+        { id: 'reboot', label: '重新開機受影響的設備', time: 10, verdict: 'bad', explain: '漏洞還在、後門還在，重開機沒有用。' },
+      ],
+      review() { return ['這是「已知」漏洞：修補早就發布了。弱點管理（定期掃描、依 CVSS 排序、在 SLA 內修補）就是要避免這種事。', '對外的設備（防火牆、VPN、官網）要最優先修補；來不及修就先用 IPS 虛擬修補或關閉功能。']; },
+    },
+
+    /* ---------- 分支據點與雲端（第七章） ---------- */
+    'wan-down': {
+      name: '據點線路中斷', cat: 'ops', sev: 'high', kb: 'k-sdwan', minCh: 7, cooldown: 2880, detect: 'auto',
+      weight: (s) => (G.Wan.openIds().some((id) => s.wan.sites[id].links.some((l) => l.status === 'active' && !l.outage)) ? 0.7 : 0),
+      init(s, inc) {
+        const c = [];
+        for (const id of G.Wan.openIds()) for (const l of s.wan.sites[id].links) if (l.status === 'active' && !l.outage && l.type !== 'lte') c.push([id, l]);
+        const pick = inc.data.site ? c.find(([id, l]) => id === inc.data.site && (!inc.data.type || l.type === inc.data.type)) : U.pick(c);
+        if (!pick) return false;
+        const [id, l] = pick;
+        l.outage = true;
+        Object.assign(inc.data, { site: id, link: l.id, until: s.time + U.randInt(150, 360) });
+        const T = CAT.wan.types[l.type];
+        inc.title = `${G.SITES[id].name} ${T.short} 中斷`;
+        E().log(inc, `${G.SITES[id].name}附近道路施工挖斷了電信業者的光纜，${T.name} ${U.speed(l.bw)} 中斷，修復時間未定。`);
+        const w = s.wan.sites[id];
+        E().log(inc, w.sdwan ? 'SD-WAN 偵測到線路中斷，流量瞬間改走其他線路。' : w.links.filter((x) => x.id !== l.id && x.status === 'active').length && w.vpn ? '備援的 VPN 要等路由收斂（約 5 分鐘）才會接手。' : '這個據點沒有其他可用的路徑：整個據點連不回總部！');
+        G.R.topoVer++;
+      },
+      tick(s, inc) {
+        const l = s.wan.sites[inc.data.site].links.find((x) => x.id === inc.data.link);
+        if (!l) { E().resolve(inc, 'auto'); return; }
+        if (s.time >= inc.data.until) { l.outage = false; G.R.topoVer++; E().resolve(inc, inc.acts.call ? 'fixed' : 'auto'); }
+      },
+      end(s, inc) { const l = s.wan.sites[inc.data.site].links.find((x) => x.id === inc.data.link); if (l) l.outage = false; G.R.topoVer++; },
+      actions: [
+        { id: 'call', label: '向電信業者報修，要求依 SLA 派員搶修', time: 10, verdict: 'good',
+          explain: '專線有 SLA（服務水準協議）：業者要在約定時間內修復，超過要賠償。主動報修、追蹤進度。',
+          run(s, inc) { inc.data.until = Math.max(s.time + 30, inc.data.until - 90); E().log(inc, '電信業者已派工程師前往搶修。'); } },
+        { id: 'lte', label: '緊急啟用 4G / 5G 行動網路備援', time: 20, verdict: 'neutral',
+          explain: '行動網路可以撐一下，但頻寬有限。平常就該準備好第二條路（不同業者的寬頻 + VPN 或 SD-WAN）。',
+          avail: (s, inc) => !s.wan.sites[inc.data.site].links.some((l) => l.type === 'lte'), unavail: '已經有 4G / 5G 備援了',
+          run(s, inc) { const w = s.wan.sites[inc.data.site]; w.links.push({ id: Q.nextId('w'), type: 'lte', bw: 100, status: 'active', readyAt: s.time, outage: false }); if (!w.sdwan) w.vpn = true; G.R.topoVer++; E().log(inc, '行動網路備援已上線（搭配 VPN 連回總部）。'); } },
+        { id: 'reboot', label: '請據點同事重開路由器', time: 10, verdict: 'bad', explain: '線路是被挖斷的，重開設備沒有用。' },
+      ],
+      review(s, inc) {
+        const w = s.wan.sites[inc.data.site];
+        return w.sdwan ? ['SD-WAN 在線路中斷的瞬間就把流量改走其他線路，使用者幾乎沒有感覺。'] : w.vpn && w.links.length > 1 ? ['有備援線路 + VPN：中斷後幾分鐘，路由收斂完就恢復了。SD-WAN 可以做到瞬間切換。'] : ['只有一條線路就是單點故障：加一條不同業者的寬頻（或 4G/5G），搭配 VPN 或 SD-WAN。'];
+      },
+    },
+
+    'cable-cut': {
+      name: '國際海纜中斷', cat: 'ops', sev: 'high', kb: 'k-mpls', minCh: 7, cooldown: 7200, detect: 'auto',
+      weight: (s) => (G.Wan.openIds().some((id) => G.SITES[id].intl) ? 0.25 : 0),
+      init(s, inc) {
+        const intl = G.Wan.openIds().filter((id) => G.SITES[id].intl);
+        if (!intl.length) return false;
+        inc.data.until = s.time + U.randInt(1440, 2880);
+        inc.data.cut = [];
+        for (const id of intl) for (const l of s.wan.sites[id].links) if (l.type === 'iplc' && l.status === 'active' && !l.outage) { l.outage = true; inc.data.cut.push([id, l.id]); }
+        inc.title = '國際海纜中斷：海外據點的網路大塞車';
+        E().log(inc, '地震造成南海的兩條國際海纜斷裂。IPLC 是點對點的單一路徑，跟著斷了；國際網際網路改道繞行，延遲與掉包暴增。修復船要一兩天才能到。');
+        G.R.topoVer++;
+      },
+      effects(s, inc, mods) { mods.cableCut = true; },
+      tick(s, inc) { if (s.time >= inc.data.until) E().resolve(inc, inc.acts.reroute || inc.acts.lte ? 'contained' : 'auto'); },
+      end(s, inc) { for (const [id, lid] of inc.data.cut || []) { const l = s.wan.sites[id].links.find((x) => x.id === lid); if (l) l.outage = false; } G.R.topoVer++; },
+      actions: [
+        { id: 'reroute', label: '請電信業者把 IPLC 改走另一條海纜（約 6 小時）', time: 360, verdict: 'good',
+          explain: '國際專線可以要求業者改走其他海纜路由（保護路由），重要的線路在簽約時就該選有保護的方案。',
+          run(s, inc) { for (const [id, lid] of inc.data.cut || []) { const l = s.wan.sites[id].links.find((x) => x.id === lid); if (l) l.outage = false; } inc.data.cut = []; G.R.topoVer++; E().log(inc, 'IPLC 已改走其他海纜，恢復連線（延遲稍微增加）。'); } },
+        { id: 'lte', label: '海外據點啟用 SD-WAN，同時使用當地寬頻與 4G / 5G', time: 60, verdict: 'good',
+          explain: 'SD-WAN 會持續量測每條路的延遲與掉包，自動把重要流量放在狀況最好的那條，還能用前向錯誤更正（FEC）補回掉包。',
+          run(s) { for (const id of G.Wan.openIds().filter((x) => G.SITES[x].intl)) s.wan.sites[id].sdwan = true; G.R.topoVer++; } },
+        { id: 'local', label: '通知越南廠改用離線作業，事後再補登', time: 10, verdict: 'neutral', explain: '讓產線能繼續運作的應急做法，但事後補登資料很費工，也容易出錯。' },
+        { id: 'wait', label: '只能等海纜修好', time: 1, verdict: 'bad', explain: '什麼都不做，海外據點要癱瘓一兩天。' },
+      ],
+      review() { return ['國際線路要有路由多樣性：不同業者、不同海纜，或專線 + SD-WAN 的網際網路備援。', 'IPLC 延遲最低，但它是單一路徑：海纜一斷就斷。']; },
+    },
+
+    'cloud-leak': {
+      name: '雲端儲存桶被設成公開', cat: 'sec', sev: 'high', kb: 'k-cloud', minCh: 7, cooldown: 5760,
+      weight: () => (['cloudweb', 'cloudbk', 'm365'].some((x) => Q.hasService(x)) ? (Q.hasService('cspm') ? 0.1 : 0.45) : 0),
+      init(s, inc) {
+        if (!['cloudweb', 'cloudbk', 'm365'].some((x) => Q.hasService(x))) return false;
+        inc.data.progress = 0;
+        inc.title = '客戶資料的雲端儲存桶被設成公開';
+        if (Q.hasService('cspm')) {
+          inc.data.blocked = true; inc.sev = 'low';
+          E().log(inc, 'CSPM 在設定變更的幾分鐘內就發現：有一個存放客戶匯出資料的儲存桶被設成「公開讀取」，已自動改回私有並通知負責的工程師。');
+          E().detect(inc, 'CSPM 自動修正');
+          return;
+        }
+        E().log(inc, '工程師為了方便分享測試資料，把存放客戶匯出檔的雲端儲存桶設成「任何人都能讀取」，事後忘了改回來。網路上的掃描器已經開始找這類公開的儲存桶。');
+      },
+      detectChance: () => (Q.roleServers('siem').some((d) => G.Net.devUp(d)) ? 0.01 : 0.002),
+      tick(s, inc) {
+        if (inc.data.blocked) { if (s.time - inc.startedAt >= 5) E().resolve(inc, 'blocked'); return; }
+        if (inc.data.closed) { E().resolve(inc, 'contained'); return; }
+        inc.data.progress += U.rand(0.1, 0.4);
+        if (inc.data.progress >= 100) { E().log(inc, '🚨 資安研究員在網路上發現了貴公司的客戶資料，媒體已經在問了。'); E().resolve(inc, 'fail'); }
+      },
+      actions: [
+        { id: 'close', label: '把儲存桶改回私有，檢查存取紀錄', time: 10, verdict: 'good',
+          explain: '先止血，再從存取紀錄確認資料有沒有被下載、被誰下載。',
+          run(s, inc) { inc.data.closed = true; E().log(inc, inc.data.progress > 30 ? '存取紀錄顯示已有不明 IP 下載過資料，需要啟動個資外洩通報。' : '存取紀錄顯示還沒有外部下載，及時止血。'); } },
+        { id: 'cspm', label: '啟用 CSPM，持續檢查雲端設定', cost: () => (Q.hasService('cspm') ? 0 : Math.round(Q.monthlyServiceCost('cspm'))), time: 30, verdict: 'good',
+          explain: '人一定會犯錯：用工具持續掃描雲端設定，一發現公開的儲存桶、沒開 MFA 的帳號就告警或自動修正。',
+          run(s) { s.services.cspm = s.services.cspm || { since: s.time }; } },
+        { id: 'report', label: '通報法務與主管機關（個資外洩）', time: 30, verdict: 'good', explain: '個資外洩有法定通報時限，要依規定處理。' },
+        { id: 'ignore', label: '只是測試資料，不用緊張', time: 1, verdict: 'bad', explain: '儲存桶裡是真實的客戶資料。公開的雲端儲存桶是最常見的個資外洩原因之一。' },
+      ],
+      review() { return Q.hasService('cspm') ? ['CSPM 持續檢查雲端設定，把公開的儲存桶擋在發生之前。'] : ['雲端的「責任共擔」：雲端業者負責機房與平台，你的設定錯誤要你自己負責。建議啟用 CSPM。']; },
+    },
+
+    'cloud-bill': {
+      name: '雲端帳單暴增', cat: 'sec', sev: 'med', kb: 'k-cloud', minCh: 7, cooldown: 5760,
+      weight: () => (Q.hasService('cloudweb') ? 0.35 : 0),
+      init(s, inc) {
+        if (!Q.hasService('cloudweb')) return false;
+        inc.data.cost = 0;
+        inc.title = '雲端帳單暴增：外洩的金鑰被拿去挖礦';
+        E().log(inc, '一位工程師把雲端的存取金鑰（Access Key）寫在程式碼裡上傳到公開的 GitHub。幾分鐘內就被攻擊者撿走，開了上百台 GPU 主機在挖加密貨幣。');
+        if (Q.hasService('cspm')) E().detect(inc, 'CSPM：異常的費用與新建立的 GPU 主機');
+      },
+      detectChance: (s) => (U.hourOf(s.time) >= 9 && U.hourOf(s.time) < 10 ? 0.05 : 0.002),
+      tick(s, inc) {
+        if (inc.data.stopped) { E().resolve(inc, 'contained'); return; }
+        const rate = 1600;
+        inc.data.cost += rate; s.money -= rate;
+        if (s.time - inc.startedAt > 1440) { E().log(inc, `帳單累計 ${U.money(inc.data.cost)}。`); E().resolve(inc, 'fail'); }
+      },
+      actions: [
+        { id: 'revoke', label: '撤銷外洩的金鑰、關閉所有不明主機', time: 20, verdict: 'good',
+          explain: '先止血：金鑰一外洩就要立刻撤銷，再清查被建立的資源。', run(s, inc) { inc.data.stopped = true; E().log(inc, `已止血，這次損失約 ${U.money(inc.data.cost)}。`); } },
+        { id: 'budget', label: '設定預算告警與費用異常偵測', cost: () => (Q.hasService('cspm') ? 0 : Math.round(Q.monthlyServiceCost('cspm'))), time: 20, verdict: 'good',
+          explain: 'FinOps：預算告警與異常偵測能在幾分鐘內發現暴衝的費用，而不是等到月底收帳單。', run(s) { s.services.cspm = s.services.cspm || { since: s.time }; } },
+        { id: 'pay', label: '應該是官網流量變大，先付錢再說', time: 1, verdict: 'bad', explain: '不明原因的費用暴衝，一定要先查清楚。' },
+      ],
+      review(s, inc) { return [`這次多付了約 ${U.money(inc.data.cost)}。`, '存取金鑰不能寫在程式碼裡；雲端帳號要開 MFA、最小權限，並設定預算告警。']; },
+    },
+
+    /* ---------- 電話語音（第七章） ---------- */
+    'call-surge': {
+      name: '客服來電暴增', cat: 'ops', sev: 'high', kb: 'k-pbx', minCh: 7, cooldown: 2880, detect: 'auto',
+      weight: (s) => (G.R.voice && G.R.voice.active && G.R.voice.pbxUp && workHours(s.time) ? 0.5 : 0),
+      init(s, inc) {
+        if (!G.Voice.active()) return false;
+        inc.data.mult = inc.data.mult || 1.9;
+        inc.data.until = s.time + U.randInt(150, 240);
+        inc.title = '產品瑕疵新聞曝光：客服來電暴增';
+        E().log(inc, '新聞報導了產品瑕疵，客服專線的來電量瞬間變成平常的兩倍，排隊的客戶越來越多。');
+        const v = G.R.voice;
+        if (v) E().log(inc, `目前外線 ${v.channels} 路；平常尖峰約 ${Math.round(v.ext)} 通同時進行。`);
+      },
+      effects(s, inc, mods) { mods.callMult = (mods.callMult || 1) * inc.data.mult; },
+      tick(s, inc) { if (s.time >= inc.data.until) E().resolve(inc, inc.acts.ivr || inc.acts.trunk ? 'contained' : 'auto'); },
+      actions: [
+        { id: 'ivr', label: '啟用 IVR 自助語音與官網公告（常見問題自助處理）', time: 20, verdict: 'good',
+          explain: '把可以自助處理的來電分流掉（查詢進度、退換貨流程），真人客服只接需要處理的電話。',
+          run(s, inc) { inc.data.mult = Math.max(1.2, inc.data.mult - 0.55); } },
+        { id: 'trunk', label: '請電信業者臨時增加 SIP 中繼路數', time: 5, verdict: 'good',
+          explain: 'SIP 中繼的路數只是設定：電信業者約 30 分鐘就能調整，不用重新拉線（這也是 SIP 比傳統 E1 / PRI 彈性的地方）。',
+          run(s) { const tiers = Object.keys(CAT.voice.trunks).map(Number); const nx = tiers.find((x) => x > s.voice.trunk); if (nx) G.Voice.orderTrunk(nx); } },
+        { id: 'callback', label: '開放「預約回電」', time: 15, verdict: 'neutral', explain: '客戶不用一直在線上排隊，但回電還是要有人打。',
+          run(s, inc) { inc.data.mult = Math.max(1.2, inc.data.mult - 0.3); } },
+        { id: 'hangup', label: '尖峰時段直接掛斷排隊的電話', time: 1, verdict: 'bad', explain: '客戶會更生氣，還會一直重撥，讓線路更塞。',
+          run(s) { s.rating = Math.max(0, s.rating - 3); } },
+      ],
+      review() {
+        const v = G.R.voice || {};
+        return [v.blocking > 0.05 ? `尖峰時外線阻塞率 ${U.pct(v.blocking)}：外線路數要用 Erlang B 依尖峰話務量規劃，並保留餘裕。` : '外線路數夠用，客戶打得進來。', 'IVR 自助語音可以把大量重複的查詢分流掉。'];
+      },
+    },
+
+    'toll-fraud': {
+      name: 'SIP 盜打國際電話', cat: 'sec', sev: 'high', kb: 'k-pbx', minCh: 7, cooldown: 4320,
+      weight: (s) => { const v = G.R.voice; return v && v.active && v.pbxUp && s.voice.trunk > 0 ? (v.exposed ? 2 : 0.15) : 0; },
+      init(s, inc) {
+        const v = G.R.voice;
+        if (!v || !v.active || !v.pbxUp || !s.voice.trunk) return false;
+        inc.data.ip = randIP();
+        inc.data.cost = 0;
+        inc.title = '電話交換機遭盜打國際電話';
+        if (!v.exposed) {
+          inc.data.blocked = true; inc.sev = 'low';
+          E().log(inc, `SBC 攔截了來自 ${inc.data.ip} 的 SIP 掃描與分機密碼暴力破解（每秒數百次 REGISTER），電話交換機沒有直接暴露在網際網路上。`);
+          E().detect(inc, 'SBC 告警');
+          return;
+        }
+        E().log(inc, `攻擊者 ${inc.data.ip} 掃描到直接對外開放的 SIP 埠，暴力破解出分機 3021 的密碼，開始大量撥打國際付費電話。`);
+      },
+      detectChance: () => (Q.roleServers('siem').some((d) => G.Net.devUp(d)) ? 0.05 : 0.004),
+      tick(s, inc) {
+        if (inc.data.blocked) { if (s.time - inc.startedAt >= 5) E().resolve(inc, 'blocked'); return; }
+        if (inc.data.stopped) { E().resolve(inc, 'contained'); return; }
+        const rate = inc.data.limited ? 300 : 2200;
+        inc.data.cost += rate;
+        s.money -= rate;
+        if (!inc.detected && inc.data.cost > 400000) E().detect(inc, '電信業者來電：你們的國際電話費在一小時內暴增');
+        if (s.time - inc.startedAt > 720) { E().log(inc, `盜打持續了 12 小時，國際電話費累計 ${U.money(inc.data.cost)}。`); E().resolve(inc, 'fail'); }
+      },
+      actions: [
+        { id: 'block', label: '在電話交換機暫停國際撥號、重設被破解的分機密碼', time: 10, verdict: 'good',
+          explain: '先止血：停掉國際外撥，並換掉被猜中的分機密碼（分機密碼也要夠複雜）。',
+          run(s, inc) { inc.data.stopped = true; E().log(inc, `已停止盜打，這段期間的國際電話費約 ${U.money(inc.data.cost)}。`); } },
+        { id: 'rule', label: '關閉 INTERNET → SERVERS 的 SIP 規則，改由 DMZ 的 SBC 對接電信業者', time: 20, verdict: 'good',
+          explain: '根本解法：電話交換機不該直接暴露在網際網路上。SBC 只接受電信業者的連線，還會擋掉掃描與暴力破解。',
+          run(s, inc) {
+            const off = [];
+            for (const r of s.fw.rules) if (r.on && r.action === 'allow' && (r.src === 'INTERNET' || r.src === 'ANY') && r.dst === 'SERVERS' && (r.svc === 'SIP' || r.svc === 'ANY')) { r.on = false; off.push(`#${s.fw.rules.indexOf(r) + 1}`); }
+            inc.data.stopped = true;
+            E().log(inc, off.length ? `已停用規則 ${off.join('、')}（記得在 DMZ 部署 SBC，外線才打得通）。` : '沒有找到可停用的規則。');
+            G.bus.emit('change', { what: 'fw' });
+          } },
+        { id: 'limit', label: '請電信業者設定國際通話的額度上限', time: 30, verdict: 'neutral', explain: '可以限制損失的金額，但盜打還在繼續。',
+          run(s, inc) { inc.data.limited = true; } },
+        { id: 'ignore', label: '應該是客服打的越洋電話，不處理', time: 1, verdict: 'bad', explain: '半夜、大量、撥往罕見國家的國際電話，是典型的盜打特徵。' },
+      ],
+      review(s, inc) {
+        return inc.data.blocked ? ['SBC 放在 DMZ 對接電信業者，電話交換機沒有暴露在網際網路上，攻擊一無所獲。']
+          : [`盜打造成約 ${U.money(inc.data.cost)} 的國際電話費。`, '電話交換機不該直接對網際網路開放 SIP：用 SBC 對接電信業者，並限制國際撥號與分機密碼強度。'];
+      },
+    },
+
+    /* ---------- 儲存與備份（第八章） ---------- */
+    'disk-fail': {
+      name: '儲存硬碟故障', cat: 'ops', sev: 'med', kb: 'k-san', minCh: 8, cooldown: 2880, detect: 'auto',
+      weight: (s) => (Object.values(s.devices).some((d) => d.rack && CAT.devices[d.model].rawTB && !CAT.devices[d.model].shelf && !d.lost) ? 0.5 : 0),
+      init(s, inc) {
+        const cands = Object.values(s.devices).filter((d) => d.rack && d.status === 'ok' && !d.lost && CAT.devices[d.model].rawTB && !CAT.devices[d.model].shelf);
+        const d = inc.data.dev ? s.devices[inc.data.dev] : U.pick(cands);
+        if (!d) return false;
+        const m = CAT.devices[d.model];
+        /* SAN 的大容量擴充櫃也算在 SAN 上：有擴充櫃時，壞的通常是那些 16 TB 硬碟 */
+        const hdd = !m.flash || (m.san && G.Stor.shelves().length > 0 && Math.random() < 0.7);
+        const raid = d.raid || 'raid6';
+        const rebuild = hdd ? U.randInt(840, 1080) : U.randInt(150, 220);
+        d.rebuildUntil = s.time + rebuild;
+        Object.assign(inc.data, { dev: d.id, raid, hdd, rebuild, replaced: false,
+          risk: inc.data.risk !== undefined ? inc.data.risk : raid === 'raid5' ? (hdd ? 0.2 : 0.04) : raid === 'raid10' ? 0.03 : 0,
+          checkAt: s.time + U.randInt(60, Math.max(90, rebuild - 30)) });
+        inc.title = `${d.name} 硬碟故障，RAID 重建中`;
+        E().log(inc, `${d.name}（${CAT.raid[raid].name}）的一顆${hdd ? ' 16 TB 大容量' : ' NVMe '}硬碟故障。備用硬碟（hot spare）自動接手，RAID 開始重建，約需 ${U.dur(rebuild)}。`);
+        E().log(inc, raid === 'raid5' ? '⚠ RAID 5 只能壞一顆：重建完成之前，再壞一顆資料就全毀了。' : raid === 'raid6' ? 'RAID 6 可以再壞一顆，資料仍然安全。' : 'RAID 10：只要不是同一組鏡像的另一顆，都還撐得住。');
+      },
+      tick(s, inc) {
+        const d = s.devices[inc.data.dev];
+        if (!d) { E().resolve(inc, 'auto'); return; }
+        if (inc.data.lost) {
+          if (inc.data.restored) E().resolve(inc, 'fixed');
+          else if (s.time - inc.data.lostAt > 2880) E().resolve(inc, 'fail');
+          return;
+        }
+        if (!inc.data.second && s.time >= inc.data.checkAt && s.time < d.rebuildUntil) {
+          inc.data.second = true;
+          if (Math.random() < inc.data.risk) {
+            inc.data.lost = true; inc.data.lostAt = s.time;
+            d.lost = true;
+            const m = CAT.devices[d.model];
+            if (!m.san) d.dataLost = true;
+            inc.sev = 'crit';
+            inc.title = `${d.name} 陣列毀損：資料遺失`;
+            const holds = G.R.stor ? (G.R.stor.pools.find((p) => p.dev === d || (m.san && p.kind === 'san')) || { items: {} }).items : {};
+            if (holds['備份資料']) { s.bkp.lastOk = Math.max(s.bkp.lastTape || 0, s.bkp.lastCloud || 0) || null; }
+            E().log(inc, `🚨 重建期間又壞了一顆硬碟！${d.name} 的陣列毀損，上面的資料（${Object.keys(holds).join('、') || '全部'}）無法讀取。`);
+            if (m.san) E().log(inc, '所有放在 SAN 上的 VM 都停擺了。');
+            G.bus.emit('change', { what: 'stor' });
+            return;
+          }
+        }
+        if (s.time >= d.rebuildUntil && (inc.data.replaced || s.time - inc.startedAt > 1440)) E().resolve(inc, inc.data.replaced ? 'fixed' : 'auto');
+      },
+      actions: [
+        { id: 'swap', label: '熱插拔更換故障硬碟（NT$1.8 萬）', cost: 18000, time: 30, verdict: 'good',
+          explain: '把壞掉的硬碟換掉，當作新的備用硬碟。儲存設備都支援熱插拔，不用停機。',
+          run(s, inc) { inc.data.replaced = true; } },
+        { id: 'verify', label: '確認最近一次備份可用', time: 10, verdict: 'good',
+          explain: 'RAID 不是備份：陣列真的毀了，只能靠備份救回來。先確認備份是好的。',
+          run(s, inc) { const h = G.Stor.rpoHours(); E().log(inc, h === Infinity ? '⚠ 沒有任何成功的備份！' : `最近一次成功備份在 ${Math.round(h)} 小時前${s.bkp.fault ? '，但最近的備份工作一直失敗' : ''}。`); } },
+        { id: 'pause', label: '暫停非必要的讀寫，讓重建快一點', time: 5, verdict: 'neutral',
+          explain: '重建時陣列很忙，減少其他讀寫可以縮短重建時間（也就縮短了危險期）。',
+          run(s, inc) { const d = s.devices[inc.data.dev]; if (d && d.rebuildUntil > s.time) { d.rebuildUntil = s.time + Math.round((d.rebuildUntil - s.time) * 0.75); E().log(inc, `重建加速：剩 ${U.dur(d.rebuildUntil - s.time)}。`); } } },
+        { id: 'restore', label: '從備份還原資料', time: (s, inc) => Math.round(90 + ((G.R.stor && G.R.stor.data.file) || 20) * 4), verdict: 'good',
+          avail: (s, inc) => !!inc.data.lost, unavail: '陣列還沒有毀損',
+          explain: '換掉故障的硬碟、重建一個新的陣列，再把資料從備份還原回來。資料量越大越久（RTO）。',
+          run(s, inc) {
+            const d = s.devices[inc.data.dev];
+            const r = G.Stor.canRestore(false);
+            if (d) { d.lost = false; d.dataLost = false; d.rebuildUntil = 0; }
+            inc.data.restored = true;
+            const h = G.Stor.rpoHours();
+            if (r.ok) E().log(inc, `✔ 資料還原完成。${h > 2 ? `最近 ${Math.round(h)} 小時新增的資料救不回來（RPO）。` : ''}`);
+            else { E().log(inc, `✖ ${r.why}：資料永久遺失，只能重新建立空的陣列。`); s.rating = Math.max(0, s.rating - 6); s.stor.extraTB = 0; }
+            G.bus.emit('change', { what: 'stor' });
+          } },
+        { id: 'reboot', label: '重新開機儲存設備', time: 15, verdict: 'bad', explain: '硬碟是真的壞了，重開機沒用，還會讓所有使用這台儲存的服務中斷。',
+          run(s, inc) { const d = s.devices[inc.data.dev]; if (d) d.bootUntil = s.time + 12; } },
+      ],
+      review(s, inc) {
+        const out = [];
+        if (inc.data.lost) out.push(`${CAT.raid[inc.data.raid].name} 在重建期間又壞了一顆硬碟，整個陣列毀損。大容量硬碟重建要十幾個小時，應該用 RAID 6。`);
+        else if (inc.data.raid === 'raid5' && inc.data.hdd) out.push('這次運氣好：RAID 5 在大容量硬碟重建的十幾個小時裡，只要再壞一顆就全毀。建議改成 RAID 6。');
+        else out.push('RAID 撐住了硬碟故障，服務沒有中斷。');
+        out.push('RAID 保護的是「硬碟故障」，不是資料本身：誤刪、勒索軟體、整台設備燒毀，都只能靠備份。');
+        if (!inc.data.replaced && !inc.data.lost) out.push('故障的硬碟沒有更換，陣列少了一顆備用硬碟。');
+        return out;
+      },
+    },
+
+    'data-spike': {
+      name: '檔案資料暴增', cat: 'ops', sev: 'med', kb: 'k-san', minCh: 8, cooldown: 4320, detect: 'auto',
+      weight: (s) => (Q.roleServers('file').some((d) => d.rack) && workHours(s.time) ? 0.4 : 0),
+      init(s, inc) {
+        if (!Q.roleServers('file').some((d) => d.rack)) return false;
+        const tb = inc.data.tb || U.randInt(35, 70);
+        inc.data.tb = tb;
+        s.stor.extraTB = (s.stor.extraTB || 0) + tb;
+        G.Stor.update();
+        inc.title = `行銷部 8K 影片專案：檔案伺服器一週內多了 ${tb} TB`;
+        E().log(inc, `行銷設計部開拍年度形象影片，8K 原始素材與剪輯檔一口氣丟上共用資料夾，檔案資料暴增 ${tb} TB。`);
+        const P = G.R.stor.pools.filter((p) => p.items['檔案資料']);
+        E().log(inc, P.map((p) => `${p.name}：${U.pct(Math.min(p.ratio, 9.99))}`).join('、'));
+      },
+      tick(s, inc) {
+        const P = (G.R.stor ? G.R.stor.pools : []).filter((p) => p.items['檔案資料']);
+        const ok = P.every((p) => p.ratio < 0.9);
+        if (ok && s.time - inc.startedAt > 30) E().resolve(inc, inc.acts.archive || inc.acts.expand ? 'fixed' : 'auto');
+        else if (s.time - inc.startedAt > 2880) E().resolve(inc, P.some((p) => p.ratio >= 1) ? 'fail' : 'auto');
+      },
+      actions: [
+        { id: 'archive', label: '把結案的專案封存到磁帶 / 冷儲存', time: 180, verdict: 'good',
+          avail: () => G.Stor.hasTape() || Q.hasService('cloudbk'), unavail: '沒有磁帶櫃或雲端儲存可以封存',
+          explain: '分層儲存：很少再打開的舊資料搬到便宜的磁帶或雲端冷儲存，把快的主儲存留給正在進行的工作。',
+          run(s) { s.stor.extraTB = Math.round((s.stor.extraTB || 0) * 0.35); G.Stor.update(); G.bus.emit('change', { what: 'stor' }); } },
+        { id: 'expand', label: '緊急擴充：SAN 加擴充櫃或再加一台檔案伺服器', time: 5, verdict: 'good',
+          explain: '容量規劃要提前做（到 80% 就該動作）；臨時擴充要等設備到貨、上架。這個行動會帶你到採購頁。',
+          run() { G.bus.emit('notice', { kind: 'info', text: '到「採購 → 系統」買 DS-24 擴充櫃（SAN），或在「伺服器」再買一台 ST-4U 設為檔案角色', goto: 'shop:sys' }); } },
+        { id: 'quota', label: '設定部門配額，要求清理重複與過期檔案', time: 120, verdict: 'neutral',
+          explain: '配額可以避免同樣的事再發生，但清出來的空間有限。',
+          run(s) { s.stor.extraTB = Math.round((s.stor.extraTB || 0) * 0.8); G.Stor.update(); } },
+        { id: 'delete', label: '直接刪掉最大的影片資料夾', time: 5, verdict: 'bad',
+          explain: '刪別人的工作檔案是災難：先溝通、封存或擴充，絕不是直接刪。',
+          run(s) { s.stor.extraTB = Math.round((s.stor.extraTB || 0) * 0.4); s.rating = Math.max(0, s.rating - 4); G.Stor.update(); } },
+      ],
+      review() {
+        const P = (G.R.stor ? G.R.stor.pools : []).filter((p) => p.items['檔案資料']);
+        return [P.some((p) => p.ratio >= 1) ? '檔案伺服器滿了，全公司存不了檔。容量到 80% 就該擴充或封存。' : '主儲存保住了。', '分層儲存（熱資料放快的、冷資料放便宜的磁帶或雲端）是控制儲存成本的關鍵。'];
+      },
+    },
+
+    'backup-fail': {
+      name: '備份工作連續失敗', cat: 'ops', sev: 'med', kb: 'k-backup', minCh: 8, cooldown: 4320,
+      weight: (s) => (G.Stor.bkpServers().length && !s.bkp.fault ? 0.45 : 0),
+      init(s, inc) {
+        if (!G.Stor.bkpServers().length || s.bkp.fault) return false;
+        s.bkp.fault = inc.data.fault || U.pick(Object.keys(G.Stor.FAULTS));
+        inc.data.fault = s.bkp.fault;
+        inc.title = '備份工作連續失敗';
+        E().log(inc, `${G.Stor.FAULTS[s.bkp.fault]}。從今晚起，每一次備份都會失敗。`);
+      },
+      detectChance: () => (Q.roleServers('siem').some((d) => G.Net.devUp(d)) ? 0.02 : G.Ops.nmsUp() ? 0.008 : 0.0004),
+      tick(s, inc) {
+        if (!s.bkp.fault) { E().resolve(inc, inc.acts.fix ? 'fixed' : 'auto'); return; }
+        if (s.bkp.drillAt && s.bkp.drillAt >= inc.startedAt && !inc.detected) E().detect(inc, '還原演練發現備份有問題');
+        if (s.time - inc.startedAt > 5760) { E().log(inc, '🚨 備份已經失敗了四天，完全沒有人發現。'); E().resolve(inc, 'fail'); }
+      },
+      end(s, inc) { if (inc.outcome === 'fail') s.bkp.fault = null; },
+      actions: [
+        { id: 'fix', label: '修正備份設定（更新帳號密碼 / 重啟代理程式 / 更新憑證）', time: 30, verdict: 'good',
+          explain: '找到失敗的原因並修正，再手動補跑一次備份。',
+          run(s) { s.bkp.fault = null; if (G.Stor.bkpServers().some((d) => G.Net.devUp(d))) s.bkp.lastOk = s.time; } },
+        { id: 'drill', label: '安排還原演練，確認修好之後真的能還原', time: 10, verdict: 'good',
+          explain: '修好之後要驗證：還原演練才能證明備份是可用的。',
+          run() { G.Stor.drill(); } },
+        { id: 'ignore', label: '只是偶發錯誤，明天會自己好', time: 1, verdict: 'bad', explain: '連續失敗就不是偶發。備份失敗沒人管，等到要還原時才發現，就太晚了。' },
+      ],
+      review(s, inc) {
+        const out = [inc.detectHow && inc.detectHow.indexOf('演練') >= 0 ? '還原演練發現了備份的問題 —— 這就是定期演練的價值。' : inc.detected ? '監控系統收到了備份失敗的告警。' : '備份失敗了好幾天都沒有人發現。'];
+        out.push('備份要「看報表」：每天確認成功，失敗要有告警（接到 NMS / SIEM）。');
+        return out;
+      },
+    },
+
+    'del-file': {
+      name: '誤刪共用資料夾', cat: 'ops', sev: 'med', kb: 'k-backup', minCh: 8, cooldown: 2880, detect: 'auto',
+      weight: (s) => (Q.roleServers('file').some((d) => d.rack) && workHours(s.time) && occupied(200).length ? 0.5 : 0),
+      init(s, inc) {
+        const occ = occupied(200).filter((f) => !G.FT[f.type].dine);
+        if (!occ.length || !Q.roleServers('file').some((d) => d.rack)) return false;
+        const f = inc.data.floor ? G.BLD.byId[inc.data.floor] : U.pick(occ);
+        inc.data.floor = f.id;
+        inc.title = `${f.id} 誤刪了整個專案資料夾`;
+        E().log(inc, `${f.dept}的同事整理電腦時，把同步中的「2026 年度專案」共用資料夾整個刪除了（約 1.2 TB），網路磁碟機上的刪除不會進資源回收筒。`);
+      },
+      effects(s, inc, mods) { if (!inc.data.restored) mods.floorPenalty[inc.data.floor] = Math.min(mods.floorPenalty[inc.data.floor] || 1, 0.82); },
+      tick(s, inc) {
+        if (inc.data.restored) { E().resolve(inc, 'fixed'); return; }
+        if (s.time - inc.startedAt > 1440) E().resolve(inc, 'fail');
+      },
+      actions: [
+        { id: 'snap', label: '從儲存快照還原（幾分鐘）', time: 10, verdict: 'good',
+          avail: (s) => !!s.stor.snap, unavail: '沒有開啟快照（系統 → 儲存）',
+          explain: '快照可以在幾分鐘內救回一小時前的版本。但快照和原始資料在同一台設備上，它不是備份。',
+          run(s, inc) { inc.data.restored = true; E().log(inc, '✔ 從一小時前的快照還原，幾乎沒有遺失。'); } },
+        { id: 'backup', label: '從備份還原', time: 120, verdict: 'good',
+          avail: () => G.Stor.bkpServers().length > 0, unavail: '沒有備份伺服器',
+          explain: '從昨晚的備份把資料夾還原回來；今天白天改過的內容會遺失（RPO）。',
+          run(s, inc) {
+            const h = G.Stor.rpoHours();
+            if (h === Infinity) { E().log(inc, '✖ 從來沒有成功的備份，資料救不回來。'); return; }
+            inc.data.restored = true;
+            E().log(inc, `✔ 從 ${Math.round(h)} 小時前的備份還原完成${h > 10 ? `，這段時間的修改遺失了` : ''}。`);
+          } },
+        { id: 'recycle', label: '請同事檢查資源回收筒', time: 10, verdict: 'neutral', explain: '從網路磁碟機刪除的檔案不會進本機的資源回收筒，通常白找。' },
+        { id: 'redo', label: '請同事自己重做', time: 5, verdict: 'bad', explain: '一整年的專案資料要重做？這正是備份存在的理由。',
+          run(s) { s.rating = Math.max(0, s.rating - 3); } },
+      ],
+      review(s) { return [s.stor.snap ? '快照讓誤刪在幾分鐘內就救回來。' : '開啟儲存快照，誤刪幾分鐘就能還原（備份要花幾小時）。', '快照不是備份：它和原始資料在同一台設備上，設備壞了、被加密了，快照也一起沒了。']; },
     },
 
     'allhands': {
@@ -497,6 +1048,13 @@
       init(s, inc) {
         const wan = Q.ispBw(true);
         if (wan <= 0) return false;
+        /* 官網在雲端：攻擊打的是雲端的 CDN，被全球的節點吸收掉 */
+        if (Q.hasService('cloudweb') && G.Campaign.websiteLive() && !inc.data.hq) {
+          inc.data.blocked = true; inc.sev = 'low';
+          inc.title = 'DDoS 攻擊官網（被雲端 CDN 吸收）';
+          E().log(inc, `官網遭受約 ${U.bw(U.rand(40000, 120000))} 的 DDoS 攻擊，全部落在雲端 CDN 的全球節點上被吸收，公司的對外線路完全不受影響。`);
+          return;
+        }
         const webs = Q.roleServers('web').filter((d) => d.rack);
         const fw = Q.devices('firewall').find((d) => d.rack);
         const rtr = Q.devices('router').find((d) => d.rack);
@@ -511,11 +1069,13 @@
         if (Q.hasService('ddos')) E().log(inc, '已簽約 ISP DDoS 清洗服務，清洗中心將在數分鐘內自動介入。');
       },
       effects(s, inc, mods, flows) {
+        if (inc.data.blocked) return;
         if (inc.data.webDown) mods.webDown = true;
         const mbps = inc.data.mitigated ? inc.data.mbps * 0.02 : inc.data.mbps;
         flows.push({ id: 'atk:' + inc.id, src: 'INET', dst: inc.data.dst, fwd: mbps, rev: mbps * 0.01, zs: 'INTERNET', zd: 'DMZ', svc: ['WEB'], volumetric: true, stopAtFw: true, incId: inc.id, label: 'DDoS 洪水流量', anomaly: true });
       },
       tick(s, inc) {
+        if (inc.data.blocked) { if (s.time - inc.startedAt >= 10) E().resolve(inc, 'blocked'); return; }
         if (!inc.data.mitigated && Q.hasService('ddos') && s.time >= inc.data.autoAt) {
           inc.data.mitigated = true; inc.data.mitAt = s.time;
           E().log(inc, 'ISP 清洗中心已介入，攻擊流量在上游被濾除。');
@@ -547,7 +1107,8 @@
         if (!fl) return false;
         const p = pos();
         const sent = 300;
-        const click = 0.06 * (p.mailsec ? 0.12 : 1) * (p.training ? 0.35 : 1) * (inc.data.boost || 1);
+        /* 電腦修補率越低，惡意巨集越容易利用漏洞執行（G.Ep.risk） */
+        const click = 0.06 * (p.mailsec ? 0.12 : 1) * (p.training ? 0.35 : 1) * (inc.data.boost || 1) * G.Ep.risk();
         let infected = bino(sent, click);
         if (p.gav) infected = bino(infected, 0.5);
         if (p.edr) infected = bino(infected, 0.15);
@@ -638,7 +1199,7 @@
         if (inc.data.blocked) { if (s.time - inc.startedAt >= 5) E().resolve(inc, 'blocked'); return; }
         const p = pos();
         if (!inc.data.contained && s.time >= inc.data.nextSpread) {
-          if (Math.random() < 0.8 * (p.segmentation ? 0.35 : 1) * (p.edr ? 0.4 : 1)) {
+          if (Math.random() < Math.min(0.95, 0.8 * (p.segmentation ? 0.35 : 1) * (p.edr ? 0.4 : 1) * Math.min(1.4, G.Ep.risk()))) {
             const cand = occupied(50).map((f) => f.id).filter((id) => !inc.data.infected.includes(id));
             if (cand.length) { const f = U.pick(cand); inc.data.infected.push(f); E().log(inc, `勒索軟體透過 SMB 擴散到 ${f}！`); }
           }
@@ -662,14 +1223,16 @@
         { id: 'unplug', label: '緊急中斷檔案伺服器的網路連線', time: 5, verdict: 'good', explain: '在被加密之前保護最重要的資料。',
           run(s, inc) { if (!inc.data.fileEncrypted) { inc.data.fileSafe = true; E().log(inc, '檔案伺服器已及時隔離，資料安全。'); } else E().log(inc, '太遲了，檔案伺服器已經被加密。'); } },
         { id: 'restore', label: '從備份還原檔案伺服器（約 6 小時）', time: 360, verdict: 'good',
-          avail: () => Q.roleServers('backup').some((d) => d.rack), unavail: '沒有備份伺服器！',
-          explain: '有可用的乾淨備份，就不需要向攻擊者低頭。不可變備份保證備份本身不會被加密。',
+          avail: () => Q.roleServers('backup').some((d) => d.rack) || !!G.S.bkp.lastTape || !!G.S.bkp.lastCloud, unavail: '沒有備份伺服器！',
+          explain: '有可用的乾淨備份，就不需要向攻擊者低頭。不可變、離線（磁帶）或異地（雲端物件鎖定）的備份，勒索軟體碰不到。',
           run(s, inc) {
-            if (Q.hasService('immutable') || Math.random() < 0.5) {
+            const r = G.Stor.canRestore(true);
+            if (r.ok) {
               inc.data.restored = true;
               for (const d of Q.roleServers('file')) d.encrypted = false;
-              E().log(inc, '✔ 備份還原成功，檔案伺服器恢復服務。');
-            } else E().log(inc, '✖ 備份也被勒索軟體加密了（沒有不可變備份），還原失敗。');
+              const h = G.Stor.rpoHours();
+              E().log(inc, `✔ ${r.how ? '從' + r.how + '還原成功' : '備份還原成功'}，檔案伺服器恢復服務。${h !== Infinity && h > 12 ? `最近 ${Math.round(h)} 小時的修改救不回來（RPO）。` : ''}`);
+            } else E().log(inc, `✖ ${r.why || '備份也被勒索軟體加密了'}，還原失敗。`);
           } },
         { id: 'rebuild', label: '重灌受感染樓層所有電腦（約 8 小時）', cost: (s, inc) => 2500 * 500 * inc.data.infected.length, time: 480, verdict: 'good',
           avail: (s, inc) => !!inc.data.contained, unavail: '請先隔離受感染樓層',

@@ -57,7 +57,7 @@
     const s = G.S;
     const pos = {};
     const zones = G.Net.zones();
-    const devs = Object.values(s.devices).filter((d) => d.rack && !CAT.infra(CAT.devices[d.model]));
+    const devs = Object.values(s.devices).filter((d) => d.rack && !d.host && !CAT.infra(CAT.devices[d.model]));
     const cat = (d) => CAT.devices[d.model].cat;
     const hasLinks = (id) => Q.linksOf(id).length > 0 || s.isp.some((c) => c.router === id);
     const byNum = (a, b) => parseInt(a.id.slice(1), 10) - parseInt(b.id.slice(1), 10);
@@ -71,7 +71,7 @@
       else if (Q.isL3(d) || ls.some((l) => ['floor', 'firewall', 'router'].includes(Q.nodeKind(Q.other(l, d.id))))) core.push(d);
       else srvSw.push(d);
     }
-    for (const d of devs.filter((x) => cat(x) === 'server' || cat(x) === 'wlc').sort(byNum)) {
+    for (const d of devs.filter((x) => cat(x) === 'server' || cat(x) === 'wlc' || cat(x) === 'storage').sort(byNum)) {
       if (!hasLinks(d.id)) { lone.push(d); continue; }
       const z = zones.get(d.id);
       if (z && z.zone === 'DMZ') dmzSrv.push(d); else srv.push(d);
@@ -85,11 +85,11 @@
     spread(fws.length, MAIN, 210).forEach((x, i) => { pos[fws[i].id] = { x, y: 318, w: 150, h: 44, kind: 'dev' }; });
     spread(core.length, MAIN, 230).forEach((x, i) => { pos[core[i].id] = { x, y: 420, w: 150, h: 44, kind: 'dev' }; });
     const floors = G.BLD.floors;
-    const perRow = 11;
+    const perRow = 12;
     floors.forEach((f, i) => {
       const row = Math.floor(i / perRow), col = i % perRow;
-      const n = row === 0 ? Math.min(perRow, floors.length) : floors.length - perRow;
-      const x = 40 + (col + (perRow - n) / 2) * 88 + 16;
+      const n = Math.min(perRow, floors.length - row * perRow);
+      const x = 40 + (col + (perRow - n) / 2) * 84 + 8;
       pos['F:' + f.id] = { x, y: 548 + row * 56, w: 66, h: 32, kind: 'floor' };
     });
     const RX = 1080;
@@ -465,7 +465,7 @@
         if (st.c === 'bad') stroke = 'var(--bad)';
         const ni = sim.nodes[d.id];
         const m = CAT.devices[d.model];
-        r.sub.textContent = standby ? `${d.model} · Standby` : ni ? `${d.model} · ${U.pct(ni.util)}` : st.c !== 'ok' ? `${d.model} · ${st.t}` : d.role ? m.name.split(' ')[0] : d.model;
+        r.sub.textContent = standby ? `${d.model} · Standby` : ni ? `${d.model} · ${U.pct(ni.util)}` : st.c !== 'ok' ? `${d.model} · ${st.t}` : m.hv ? `${d.model} · ${G.VM.onHost(d.id).length} 台 VM` : d.role ? m.name.split(' ')[0] : d.model;
         if (ni && ni.util >= 0.9) stroke = 'var(--bad)';
       }
       if (!(V.sel && V.sel.id === id)) r.body.setAttribute('stroke', stroke);

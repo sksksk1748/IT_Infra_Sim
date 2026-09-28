@@ -57,6 +57,7 @@
     G.S = state;
     G.R = { topoVer: 1 };
     G.Fac.update(0);
+    G.Stor.update();
     G.Ev.applyEffects();
     G.Net.simulate();
     G.bus.emit('boot');
@@ -76,6 +77,12 @@
     timers(s);
     G.Campaign.tickMoveIns(s);
     G.Fac.update(1);
+    G.VM.tick();
+    G.Stor.tick();
+    G.Voice.tick();
+    G.Wan.tick();
+    G.Ep.tick();
+    G.Vuln.tick();
     heatFailures(s);
     G.Ev.tick();
     if (s.scen && G.Scen) G.Scen.pre(s);
@@ -140,7 +147,7 @@
     if (!hot && !humid) return;
     const p = (hot ? (s.temp - 35) * 0.00035 : 0) + (humid ? (s.hum - 65) * 0.000012 : 0);
     for (const d of Object.values(s.devices)) {
-      if (!d.rack || d.status !== 'ok' || CAT.infra(CAT.devices[d.model])) continue;
+      if (!d.rack || d.host || d.status !== 'ok' || CAT.infra(CAT.devices[d.model])) continue;
       if (Math.random() < p) G.Ev.start('hw-fail', { dev: d.id, heat: hot, humid: !hot && humid });
     }
   }
@@ -159,14 +166,16 @@
 
   Engine.dailyCosts = () => {
     const s = G.S;
-    const isp = U.sum(s.isp, (c) => CAT.isp.plans[c.plan].monthly) / 30;
+    /* 電信費用：ISP 專線 + SIP 中繼 */
+    const isp = (U.sum(s.isp, (c) => CAT.isp.plans[c.plan].monthly) + G.Voice.monthly() + G.Wan.monthly()) / 30;
     let svc = 0;
     for (const id of Object.keys(s.services)) svc += Q.monthlyServiceCost(id) / 30;
     let hw = 0;
     for (const d of Object.values(s.devices)) hw += CAT.devices[d.model].price;
     for (const r of s.room) hw += CAT.room[r.model].price || 0;
     for (const f of Object.values(s.floors)) hw += f.idf.count * CAT.access[f.idf.model].price + U.sum(f.aps, (a) => CAT.aps[a.model].price);
-    const maint = hw * 0.08 / 365;
+    /* 虛擬化授權（每台主機）也算進維護費 */
+    const maint = hw * 0.08 / 365 + G.VM.monthlyCost() / 30;
     const kw = G.R.fac ? G.R.fac.kw : 0;
     const power = kw * 24 * CAT.power.perKWh;
     const income = Q.employees() * 14 * (0.4 + s.rating / 100);
@@ -185,7 +194,7 @@
     s.stats.income += income;
     s.stats.spent += cost;
     s.lastDaily = { t: s.time, income, isp: Math.round(c.isp), svc: Math.round(c.svc), maint: Math.round(c.maint), power: Math.round(power) };
-    G.Act.log(`每日結算：營運預算 +${U.money(income)}${c.ai > 0 ? `（含 AI 平台效益 ${U.money(c.ai)}）` : ''}；ISP ${U.money(c.isp)}、資安服務 ${U.money(c.svc)}、維護 ${U.money(c.maint)}、電費 ${U.money(power)}`, 'money');
+    G.Act.log(`每日結算：營運預算 +${U.money(income)}${c.ai > 0 ? `（含 AI 平台效益 ${U.money(c.ai)}）` : ''}；電信（ISP、WAN、SIP）${U.money(c.isp)}、訂閱服務 ${U.money(c.svc)}、維護 ${U.money(c.maint)}、電費 ${U.money(power)}`, 'money');
     for (const k in s.ruleHits) s.ruleHits[k] = Math.round(s.ruleHits[k] * 0.5);
   }
 

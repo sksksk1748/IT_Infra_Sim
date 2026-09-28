@@ -10,7 +10,9 @@
     { id: 'building', label: '大樓' },
     { id: 'floor', label: '樓層' },
     { id: 'rack', label: '機房' },
+    { id: 'sys', label: '系統' },
     { id: 'topo', label: '拓撲' },
+    { id: 'wan', label: '據點' },
     { id: 'noc', label: '監控' },
     { id: 'fw', label: '防火牆' },
     { id: 'inc', label: '事件' },
@@ -106,7 +108,7 @@
     els.themeBtn = h('button', { class: 'btn sm icon', onclick: () => UI.setTheme(U.isDark() ? 'light' : 'dark') });
     renderThemeBtn();
     const top = h('header', { class: 'topbar' },
-      h('div', { class: 'brand' }, UI.logo(30), h('div', {}, h('div', { class: 'name' }, '萬人網管'), h('div', { class: 'sub' }, 'NOVALUX HQ · 21F + B1 MDF'))),
+      h('div', { class: 'brand' }, UI.logo(30), h('div', {}, h('div', { class: 'name' }, '萬人網管'), h('div', { class: 'sub' }, 'NOVALUX HQ · 23F + B1 MDF'))),
       h('div', { class: 'clock' }, h('div', { class: 'col', style: { gap: '0' } }, els.clockDay, els.clockTime), els.speed),
       els.kpis,
       h('div', { class: 'top-actions' }, els.themeBtn, els.missionBtn, h('button', { class: 'btn sm', onclick: () => UI.menu(), 'aria-label': '選單' }, '選單')));
@@ -238,10 +240,21 @@
     const soon = G.BLD.floors.some((f) => { const fs = s.floors[f.id]; return fs.moveInAt !== null && fs.moveInAt > t && fs.moveInAt - t < 720 && !G.Net.floorUp(f.id); });
     led('building', floorsBad ? 'crit' : soon ? 'blink' : '');
     const failed = Object.values(s.devices).some((d) => d.rack && d.status !== 'ok');
-    const inv = Object.values(s.devices).filter((d) => !d.rack).length;
+    const inv = Object.values(s.devices).filter((d) => !d.rack && !d.host).length;
     led('rack', failed || s.temp >= 32 ? 'crit' : inv ? 'blink' : '', inv ? String(inv) : '');
     const cut = Object.values(s.links).some((l) => l.status !== 'up');
     led('topo', cut ? 'crit' : '');
+    /* 據點：有據點連不回總部 → 紅燈；ERP 很慢或線路還在開通 → 閃爍 */
+    const WR = G.R.wan;
+    const siteDown = WR && G.Wan.openIds().some((id) => WR.sites[id] && !WR.sites[id].up);
+    const siteSlow = WR && G.Wan.openIds().some((id) => WR.sites[id] && WR.sites[id].erpRtt > 110);
+    const soonSite = G.SITE_IDS.some((id) => { const w = s.wan.sites[id]; return w.openAt !== null && w.openAt > t && w.openAt - t < 1440 && !w.links.some((l) => l.status === 'active'); });
+    led('wan', siteDown ? 'crit' : siteSlow || soonSite ? 'blink' : '');
+    /* 系統：VM 停擺或儲存滿了 → 紅燈；備份失敗 → 閃爍 */
+    const st = G.R.stor;
+    const vmDown = G.VM.vms().some((v) => UI.devStatus(v).c === 'bad');
+    const lastJob = s.bkp.jobs[s.bkp.jobs.length - 1];
+    led('sys', vmDown || (st && st.worst >= 1) ? 'crit' : (st && st.worst >= 0.85) || (lastJob && !lastJob.ok) || (G.Views.sys && G.Views.sys.navAlert && G.Views.sys.navAlert()) ? 'blink' : '');
     const critA = s.alerts.some((a) => a.sev === 'crit' && t - a.t < 30);
     led('noc', critA ? 'crit' : '');
     if (performance.now() - lastAuditAt > 5000) { lastAuditAt = performance.now(); try { auditCrit = G.Sec.audit().findings.some((f) => f.sev === 'crit'); } catch (e) { auditCrit = false; } }
@@ -451,7 +464,7 @@
     UI.modal({
       kicker: '全劇情完成', title: '萬人企業網路，建設完成', wide: true, dismissible: false,
       body: [
-        h('p', {}, '從一間空蕩蕩的 B1 機房開始，你規劃了機櫃、路由、防火牆、21 層樓的布線與 Wi-Fi、DMZ、備援與縱深防禦，在攻擊中守住了公司，最後還建好了 AI 運算中心。'),
+        h('p', {}, '從一間空蕩蕩的 B1 機房開始，你規劃了機櫃、路由、防火牆、23 層樓的布線與 Wi-Fi、DMZ、備援與縱深防禦，在攻擊中守住了公司；建好 AI 運算中心，把四個據點、電話與雲端串起來，最後讓虛擬化、備份、修補與弱點管理都經得起稽核。'),
         h('div', { class: 'row wrap', style: { gap: '16px' } }, h('div', {}, h('div', { class: 'label' }, '最終分數'), h('div', { class: 'grade mono' }, U.num(score))), h('div', {}, h('div', { class: 'label' }, '資安健檢'), h('div', { class: 'grade' }, g))),
         statsBlock(),
         h('p', { class: 'muted' }, '你可以繼續營運這個網路（隨機事件仍會發生），或回到標題畫面挑戰沙盒模式。'),
@@ -566,7 +579,7 @@
     if (G.S) G.S.speed = 0;
     UI.hideTitle();
     const peek = G.State.peek();
-    const topics = ['Router 路由器', 'Switch 交換器', '機櫃與 U 數', '跨樓層光纖主幹', 'Wi-Fi 覆蓋與容量', '外網 / DMZ / 內網', '防火牆規則', '即時流量監控', 'DDoS', '勒索軟體', '事件應變'];
+    const topics = ['Router 路由器', 'Switch 交換器', '機櫃與 U 數', '跨樓層光纖主幹', 'Wi-Fi 覆蓋與容量', '外網 / DMZ / 內網', '防火牆規則', '即時流量監控', 'DDoS', '勒索軟體', '事件應變', 'MPLS / SD-WAN', 'IP 電話交換機', '虛擬化與 HA', '備份 3-2-1', '弱點掃描'];
     const menu = h('div', { class: 'menu' });
     if (peek) {
       const sd = peek.scen && G.Scen ? G.Scen.def(peek.scen) : null;
@@ -580,7 +593,7 @@
       else go();
     };
     menu.append(
-      h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '六章，從空機房到萬人企業與 AI 運算中心')),
+      h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '八章，從空機房到萬人企業、AI 運算中心與集團 IT')),
       h('button', { class: 'btn', onclick: () => startNew('sandbox') }, '沙盒模式', h('small', {}, '預算 1.5 億，自由建設')),
       h('button', { class: 'btn', onclick: () => UI.scenPicker() }, '情境挑戰', h('small', {}, '限時處理事件 · 評分')),
       h('button', { class: 'btn ghost', onclick: () => UI.importSave() }, '匯入存檔', h('small', {}, '')));
@@ -588,7 +601,7 @@
       h('div', { class: 'title-inner' },
         h('div', {},
           h('h1', {}, h('span', { class: 'en' }, 'INFRAOPS · IT INFRASTRUCTURE SIM'), '萬人網管'),
-          h('p', { class: 'lead' }, '一棟 21 層的新總部、一萬名員工、一間空蕩蕩的 B1 機房。從機櫃、路由器、防火牆、樓層光纖到 Wi-Fi，親手打造整間公司的網路，並在流量高峰與駭客攻擊中守住它。'),
+          h('p', { class: 'lead' }, '一棟 23 層的新總部、一萬名員工、一間空蕩蕩的 B1 機房。從機櫃、路由器、防火牆、樓層光纖到 Wi-Fi，親手打造整間公司的網路，並在流量高峰與駭客攻擊中守住它。'),
           menu,
           h('div', { class: 'row wrap theme-row' }, h('span', { class: 'small muted' }, '畫面外觀'), UI.themeSeg()),
           h('div', { class: 'topics' }, topics.map((t) => h('span', { class: 'chip' }, t)))),
@@ -598,7 +611,7 @@
   UI.hideTitle = () => { const t = document.getElementById('title'); if (t) t.remove(); };
   UI.sandboxIntro = () => UI.modal({
     kicker: '沙盒模式', title: '自由建設', dismissible: false,
-    body: [h('p', {}, '你有 1.5 億預算、所有設備都已解鎖。員工會在第 3～6 天分批進駐全部 21 層樓，官網於第 4 天上線，維運與資安事件會隨機發生。'), h('p', { class: 'muted' }, '目標：讓一萬人的網路又快又穩又安全。')],
+    body: [h('p', {}, '你有 1.5 億預算、所有設備都已解鎖。員工會在第 3～6 天分批進駐全部 21 層辦公樓層（22F、23F 員工餐廳同時開張），官網於第 4 天上線，第 5～7 天台中、高雄、越南、東京四個據點陸續開幕；週一起客服中心要有自己的電話交換機。維運與資安事件會隨機發生。'), h('p', { class: 'muted' }, '目標：讓一萬人的網路又快又穩又安全。')],
     actions: [{ label: '開始', kind: 'primary' }],
   });
 

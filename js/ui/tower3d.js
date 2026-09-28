@@ -1,11 +1,12 @@
-/* 3D 大樓剖面：21 層樓 + B1 機房、弱電豎井裡的主幹線、ISP 進線、即時流量與駭客攻擊路徑
+/* 3D 大樓剖面：23 層樓（22F、23F 員工餐廳）+ B1 機房、弱電豎井裡的主幹線、ISP 進線、即時流量與駭客攻擊路徑
  * 單位：公尺。窗戶亮燈 = 進駐人數、顏色 = 滿意度；線上的光點 = 流量（越多越滿）；紅色 = 中斷或攻擊。
  * 攻擊路徑只顯示「已偵測到」的資安事件，並沿著模擬中實際的路由（ISP → 路由器 → 防火牆 → 核心 → 樓層）移動。
  */
 (function (G) {
   'use strict';
   const U = G.U, CAT = G.CAT, Q = G.Q, M3 = G.M3;
-  const W = 46, D = 22, FH = 4.2, NF = 21, B1 = -5;
+  const W = 46, D = 22, FH = 4.2, B1 = -5;
+  const NF = G.BLD.top;
   const RX = W / 2 - 3.2, RZ = D / 2 - 3.2;
   const CLOUD = [-40, 60, 16];
   const RACKZ = -D / 2 + 2.3, RACKF = RACKZ + 1.1;
@@ -254,7 +255,7 @@
         mdfG.add(body);
       });
       for (const d of Object.values(s.devices)) {
-        if (!d.rack) continue;
+        if (!d.rack || d.host) continue;
         const i = s.racks.findIndex((r) => r.id === d.rack);
         if (i < 0) continue;
         const m = CAT.devices[d.model];
@@ -508,7 +509,10 @@
         /* 亮燈的窗 = 現在真的在座的人（上班時間多、半夜只剩客服夜班） */
         const stp = sim.floors[fl.f.id];
         const present = stp && stp.up ? stp.present : fs.movedIn * G.Net.presence(s.time, fl.f.type);
-        fl.lit = Math.round(U.clamp(present / fl.f.staff, 0, 1) * per);
+        const fty = G.FT[fl.f.type];
+        /* 餐廳：工作人員點亮一小部分，用餐人潮越多越亮 */
+        const litK = fty.dine ? (stp ? 0.25 * U.clamp((stp.crew || 0) / fl.f.staff, 0, 1) + 0.75 * U.clamp((stp.diners || 0) / fty.diners, 0, 1) : 0) : present / fl.f.staff;
+        fl.lit = Math.round(U.clamp(litK, 0, 1) * per);
         const stt = G.Views.building.floorStatus(fl.f.id);
         const unpowered = facP && facP.idfPowered && facP.idfPowered[fl.f.id] === false;
         fl.led.material.color.copy(C(unpowered ? '#20262b' : HEX[stt.c] || HEX.none));

@@ -34,6 +34,14 @@
         services: {}, trainingUntil: 0,
         power: { outageUntil: 0, outageStart: 0, upsCharge: 1 },
         temp: 22, hum: 55, coolSet: 21,
+        vm: { ha: true },
+        wan: G.Wan.newState(),
+        ep: G.Ep.newState(),
+        vuln: G.Vuln.newState(),
+        /* 電話：沙盒模式從週一上班開始要有自己的電話交換機（之前用大樓的舊總機） */
+        voice: { qos: false, trunk: 0, next: 0, nextAt: 0, graceUntil: mode === 'sandbox' ? U.at(3, 9) : 0 },
+        stor: { snap: false, extraTB: 0 },
+        bkp: { freq: 24, keep: 30, jobs: [], lastOk: null, lastTape: null, lastCloud: null, fault: null, drillAt: null, drillOk: null, drillUntil: 0 },
         incidents: [], tickets: [], alerts: [], log: [],
         hist: { t: [], wanIn: [], wanOut: [], wanCap: [], intra: [], users: [], sat: [], lat: [], loss: [], fw: [], temp: [], kw: [], web: [] },
         stats: { breaches: 0, incResolved: 0, incFailed: 0, ticketsResolved: 0, spent: 0, income: 0, mttd: [], mttr: [], ransomPaid: 0 },
@@ -65,10 +73,27 @@
     clear() { U.store.del(SAVE_KEY); },
     migrate(s) {
       if (!s || s.v !== 1) return null;
-      for (const f of G.BLD.floors) if (!s.floors[f.id]) s.floors[f.id] = newFloorState();
+      for (const f of G.BLD.floors) {
+        if (s.floors[f.id]) continue;
+        s.floors[f.id] = newFloorState();
+        /* 新版本加入的樓層（22F、23F 員工餐廳）：沙盒模式下一個工作天開張；劇情模式在第七章開張 */
+        if (s.mode === 'sandbox') s.floors[f.id].moveInAt = U.nextWeekdayAt(s.time, 9, 1);
+      }
       s.sched = s.sched || [];
       if (s.hum === undefined) s.hum = 55;
       if (!s.coolSet) s.coolSet = 21;
+      s.vm = s.vm || { ha: true };
+      s.ep = s.ep || G.Ep.newState();
+      s.vuln = s.vuln || G.Vuln.newState();
+      /* 舊存檔：加入分支據點；沙盒模式接下來幾天陸續開幕 */
+      if (!s.wan) {
+        s.wan = G.Wan.newState();
+        if (s.mode === 'sandbox') G.SITE_IDS.forEach((id, i) => { s.wan.sites[id].openAt = U.nextWeekdayAt(s.time, 9, 1 + Math.floor(i / 2)); });
+      }
+      /* 舊存檔：沙盒給兩天的時間換掉舊總機 */
+      s.voice = s.voice || { qos: false, trunk: 0, next: 0, nextAt: 0, graceUntil: s.mode === 'sandbox' ? s.time + 2880 : 0 };
+      s.stor = s.stor || { snap: false, extraTB: 0 };
+      s.bkp = s.bkp || { freq: 24, keep: 30, jobs: [], lastOk: null, lastTape: null, lastCloud: null, fault: null, drillAt: null, drillOk: null, drillUntil: 0 };
       /* 舊版的內建空調編號（rm1）可能和第一個採購的設施重複：重新編號 */
       const seen = new Set();
       for (const r of s.room) {
@@ -103,13 +128,19 @@
   Q.floorDef = (fid) => G.BLD.byId[fid];
   Q.nodeKind = (id) => {
     if (id === 'INET') return 'internet';
+    if (id === 'CLOUD') return 'cloud';
     if (id.startsWith('isp:')) return 'isp';
     if (id.startsWith('F:')) return 'floor';
+    if (id.startsWith('S:')) return 'site';
+    if (id.startsWith('WAN:')) return 'wan';
     const d = G.S.devices[id];
     return d ? CAT.devices[d.model].cat : 'unknown';
   };
   Q.nodeName = (id) => {
     if (id === 'INET') return '網際網路';
+    if (id === 'CLOUD') return '公有雲';
+    if (id === 'WAN:mpls') return 'MPLS 骨幹';
+    if (id.startsWith('S:')) { const st = G.SITES[id.slice(2)]; return st ? st.name : id; }
     if (id.startsWith('isp:')) {
       const c = G.S.isp.find((x) => 'isp:' + x.id === id);
       return c ? `${CAT.isp.providers[c.provider].name} ${c.plan}` : 'ISP';
@@ -153,8 +184,11 @@
     const f = G.BLD.byId[fid], fs = G.S.floors[fid], ft = G.FT[f.type];
     const seats = Math.ceil(f.staff * ft.wired);
     const printers = Math.ceil(f.staff / 40);
-    return { seats, printers, aps: fs.aps.length, total: seats + printers + fs.aps.length };
+    const pos = ft.pos || 0;
+    return { seats, printers, pos, aps: fs.aps.length, total: seats + printers + pos + fs.aps.length };
   };
+  /** 辦公樓層的進駐人數（不含餐廳人員） */
+  Q.officeStaff = () => U.sum(G.BLD.floors.filter((f) => !G.FT[f.type].dine), (f) => G.S.floors[f.id].movedIn);
   Q.floorPorts = (fid) => {
     const fs = G.S.floors[fid];
     return fs.idf.count * CAT.access[fs.idf.model].ports;
@@ -174,6 +208,7 @@
     const svc = CAT.services[id];
     if (!svc) return 0;
     if (svc.perUser) return svc.perUser * Math.max(500, Q.employees());
+    if (svc.perTB) return svc.perTB * Math.max(10, G.Stor ? G.Stor.backupTB() : 10);
     return svc.monthly || 0;
   };
   Q.employees = () => U.sum(Object.values(G.S.floors), (f) => f.movedIn);

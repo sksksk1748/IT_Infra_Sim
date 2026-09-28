@@ -26,7 +26,7 @@
     el.appendChild(h('div', { class: 'view-h' },
       h('div', {}, h('h2', {}, '大樓總覽'), h('div', { class: 'desc' }, use3d
         ? '3D 剖面：窗戶亮燈 = 進駐人數、顏色 = 滿意度。右前角的弱電豎井裡是各樓層連回 B1 的主幹線，光點代表流量；已偵測到的駭客攻擊會以紅色路徑顯示。點一下樓層看資訊並可進入規劃，點兩下拉近。'
-        : '新曜大樓 21 層 + B1 機房。每層樓的 IDF 透過弱電豎井裡的主幹線，連回 B1 機房的核心交換器。點選樓層進入規劃。')),
+        : `新曜大樓 ${G.BLD.floors.length} 層（22F、23F 是員工餐廳）+ B1 機房。每層樓的 IDF 透過弱電豎井裡的主幹線，連回 B1 機房的核心交換器。點選樓層進入規劃。`)),
       h('div', { class: 'row wrap' }, UI.toggle3d('bld'), V.sum)));
     V.table = h('div', { class: 'card', style: { padding: '4px 6px' } });
     if (use3d) {
@@ -62,7 +62,7 @@
     const upN = G.BLD.floors.filter((f) => G.Net.floorUp(f.id)).length;
     U.mount(V.sum,
       h('span', { class: 'chip' }, `員工 ${U.num(emp)} / ${U.num(G.BLD.totalStaff)}`),
-      h('span', { class: 'chip ' + (upN === 21 ? 'ok' : '') }, `上線樓層 ${upN} / 21`),
+      h('span', { class: 'chip ' + (upN === G.BLD.floors.length ? 'ok' : '') }, `上線樓層 ${upN} / ${G.BLD.floors.length}`),
       sim.sat !== null && sim.sat !== undefined ? h('span', { class: 'chip ' + (sim.sat >= 0.8 ? 'ok' : sim.sat >= 0.6 ? 'warn' : 'bad') }, `滿意度 ${U.pct(sim.sat)}`) : null);
     if (V.tower) U.mount(V.tower, tower());
     U.mount(V.table, table());
@@ -87,7 +87,9 @@
       const fs = s.floors[f.id], st = sim.floors[f.id];
       const up = G.Net.floorUp(f.id);
       const sat = st && st.present > 1 ? st.sat : null;
-      const lit = Math.round((fs.movedIn / f.staff) * 10);
+      const fty = G.FT[f.type];
+      /* 餐廳：開張後亮一點，用餐人潮越多越亮 */
+      const lit = fty.dine ? (fs.movedIn > 0 ? Math.round(2 + 8 * Math.min(1, (st ? st.diners || 0 : 0) / fty.diners)) : 0) : Math.round((fs.movedIn / f.staff) * 10);
       const col = fs.movedIn > 0 && !up ? 'var(--bad)' : satColor(sat === null ? (up ? 0.9 : null) : sat);
       const g = U.s('g', { class: 'fl', onclick: () => UI.go('floor:' + f.id) });
       g.appendChild(U.s('title', {}, `${f.id} ${f.dept}`));

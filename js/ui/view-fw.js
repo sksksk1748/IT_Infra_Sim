@@ -4,7 +4,7 @@
   const U = G.U, h = U.h, CAT = G.CAT, Q = G.Q, UI = G.UI;
   const V = { tab: 'rules', draft: { src: 'LAN', dst: 'INTERNET', svc: 'WEB', action: 'allow' } };
   G.Views.fw = V;
-  const TABS = [['rules', '政策規則'], ['net', '網段規劃'], ['svc', '資安服務'], ['audit', '資安健檢']];
+  const TABS = [['rules', '政策規則'], ['net', '網段規劃'], ['svc', '資安服務'], ['vuln', '弱點管理'], ['audit', '資安健檢']];
   const zc = (z) => h('span', { class: 'zone-chip zone-' + z }, z);
 
   V.mount = (el, param) => {
@@ -23,6 +23,7 @@
     if (V.tab === 'rules') rulesTab(el, audit);
     else if (V.tab === 'net') netTab(el);
     else if (V.tab === 'svc') svcTab(el);
+    else if (V.tab === 'vuln') vulnTab(el);
     else auditTab(el, audit);
   };
   V.update = () => {
@@ -54,6 +55,12 @@
       ['訪客上網', { src: 'GUEST', dst: 'INTERNET', svc: 'WEB', action: 'allow' }],
       ['訪客 DNS', { src: 'GUEST', dst: 'INTERNET', svc: 'DNS', action: 'allow' }],
       ['擋訪客進內網', { src: 'GUEST', dst: 'LAN', svc: 'ANY', action: 'deny' }],
+      ['據點連 ERP', { src: 'WAN', dst: 'SERVERS', svc: 'SQL', action: 'allow' }],
+      ['據點檔案', { src: 'WAN', dst: 'SERVERS', svc: 'SMB', action: 'allow' }],
+      ['據點登入', { src: 'WAN', dst: 'SERVERS', svc: 'LDAP', action: 'allow' }],
+      ['據點 DNS', { src: 'WAN', dst: 'SERVERS', svc: 'DNS', action: 'allow' }],
+      ['據點分機', { src: 'WAN', dst: 'SERVERS', svc: 'SIP', action: 'allow' }],
+      ['分機註冊', { src: 'LAN', dst: 'SERVERS', svc: 'SIP', action: 'allow' }],
     ];
     const form = h('div', { class: 'card col', style: { gap: '10px' } },
       h('h3', {}, '新增規則'),
@@ -151,9 +158,10 @@
     const s = G.S;
     let total = 0;
     for (const id of Object.keys(s.services)) total += Q.monthlyServiceCost(id);
-    el.appendChild(h('div', { class: 'note', style: { marginBottom: '12px' } }, `目前每月資安服務費用約 ${U.money(total)}（每日結算）。依人數計費的服務以目前進駐人數計算（最少 500 人）。啟用時先收首月費用。`));
+    el.appendChild(h('div', { class: 'note', style: { marginBottom: '12px' } }, `目前每月訂閱服務費用約 ${U.money(total)}（含資安、雲端與端點管理，每日結算）。依人數計費的服務以目前進駐人數計算（最少 500 人）。啟用時先收首月費用。`));
     const groups = {};
-    for (const [id, svc] of Object.entries(CAT.services)) (groups[svc.group] = groups[svc.group] || []).push([id, svc]);
+    /* 雲端、端點管理、異地備份在「據點」與「系統」頁管理；這裡只列資安防護 */
+    for (const [id, svc] of Object.entries(CAT.services)) if (!['雲端', '端點管理'].includes(svc.group) && !['vault', 'cloudbk'].includes(id)) (groups[svc.group] = groups[svc.group] || []).push([id, svc]);
     const grid = h('div', { class: 'shop-grid' });
     for (const [grp, items] of Object.entries(groups)) {
       for (const [id, svc] of items) {
@@ -175,6 +183,48 @@
     el.appendChild(grid);
   }
 
+  /* ---------- 弱點管理 ---------- */
+  function vulnTab(el) {
+    const s = G.S, VU = G.Vuln;
+    const scanner = Q.roleServers('vscan').filter((d) => d.rack), up = VU.scannerUp();
+    const known = VU.known().sort((a, b) => (b.kev - a.kev) || b.cvss - a.cvss);
+    const cnt = (sev) => known.filter((x) => x.sev === sev).length;
+    const overdue = known.filter((x) => VU.overdue(x)).length;
+    const exp = VU.exposedCrit().filter((x) => x.known).length;
+    const tile = (k, v, sub, cls) => h('div', { class: 'tile gauge' }, h('div', { class: 'k' }, k), h('div', { class: 'big ' + (cls || '') }, v), h('div', { class: 's small muted' }, sub || ''));
+    if (!VU.active()) el.appendChild(h('div', { class: 'note info', style: { marginBottom: '10px' } }, '第八章起，伺服器與網路設備才會陸續出現需要修補的漏洞。'));
+    el.appendChild(h('div', { class: 'tiles', style: { marginBottom: '12px' } },
+      tile('弱點掃描', up ? '運作中' : scanner.length ? '停止' : '沒有', s.vuln.scanUntil > s.time ? `掃描中（${U.dur(s.vuln.scanUntil - s.time)}）` : s.vuln.lastScan ? `上次掃描 ${U.stamp(s.vuln.lastScan)}` : '每天 03:00 自動掃描', up ? 'ok-t' : 'warn-t'),
+      tile('嚴重（CVSS ≥ 9）', String(cnt('crit')), 'SLA：7 天內修補', cnt('crit') ? 'bad-t' : 'ok-t'),
+      tile('高（7～8.9）', String(cnt('high')), 'SLA：30 天內修補', cnt('high') ? 'warn-t' : ''),
+      tile('超過 SLA', String(overdue), '修補期限已過', overdue ? 'bad-t' : ''),
+      tile('對外設備的嚴重弱點', String(exp), '防火牆、路由器、SBC、SD-WAN、DMZ 官網', exp ? 'bad-t' : 'ok-t')));
+    el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } },
+      h('button', { class: 'btn primary', disabled: !up || s.vuln.scanUntil > s.time || null, onclick: () => UI.res(VU.scan()) }, '立即掃描'),
+      h('button', { class: 'btn', disabled: !known.length || null, onclick: () => UI.res(VU.patchAllTonight()) }, '嚴重與高風險：排入今晚的維護窗口'),
+      h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-vuln') }, G.KB.byId['k-vuln'] ? G.KB.byId['k-vuln'].title : '弱點管理'),
+      h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-patch') }, G.KB.byId['k-patch'] ? G.KB.byId['k-patch'].title : '修補')));
+    if (!scanner.length) {
+      el.appendChild(h('div', { class: 'note warn', style: { marginBottom: '12px' } }, h('b', {}, '看不見的弱點最危險　'), '沒有弱點掃描，就不知道哪些設備有沒修補的已知漏洞。部署一台弱點掃描伺服器（SV-1U 設為「弱點掃描」角色，或建立 VM）。',
+        Q.unlocked(CAT.devices.VM) && G.VM.hosts().length ? h('button', { class: 'btn xs', style: { marginLeft: '6px' }, onclick: () => UI.res(G.VM.create('vscan')) }, '建立弱點掃描 VM') : null));
+    }
+    if (!known.length) { el.appendChild(h('div', { class: 'card empty' }, scanner.length ? '目前沒有已知的弱點。' : '（沒有掃描，所以什麼都看不到）')); return; }
+    const sevCls = { crit: 'bad', high: 'warn', med: 'info', low: '' };
+    const rows = known.slice(0, 60).map((x) => {
+      const d = s.devices[x.dev], days = (s.time - x.since) / 1440, dt = VU.downtime(d);
+      return h('tr', {},
+        h('td', {}, h('b', {}, d.name), VU.exposed(d) ? h('span', { class: 'chip bad', style: { marginLeft: '4px', fontSize: '10px', padding: '0 5px' } }, '對外') : null),
+        h('td', { class: 'small' }, x.name, h('div', { class: 'tiny dim mono' }, x.cve)),
+        h('td', {}, h('span', { class: 'chip ' + sevCls[x.sev] }, `${x.cvss.toFixed(1)} ${VU.SEV[x.sev]}`), x.kev ? h('span', { class: 'chip bad', style: { marginLeft: '4px' } }, '已遭利用') : null, x.mitig ? h('span', { class: 'chip', style: { marginLeft: '4px' } }, '已暫時緩解') : null),
+        h('td', { class: 'mono small ' + (VU.overdue(x) ? 'bad-t' : '') }, `${days.toFixed(1)} / ${VU.SLA[x.sev]} 天`),
+        h('td', { class: 'r' }, x.patchAt ? h('span', { class: 'chip info' }, `排定 ${U.stamp(x.patchAt)}`) : h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '4px' } },
+          h('button', { class: 'btn xs', title: dt ? `重開機會中斷約 ${dt} 分鐘` : '有備援，不會中斷', onclick: () => UI.res(VU.patch(d.id, true)) }, dt ? `立即（斷 ${dt} 分）` : '立即'),
+          h('button', { class: 'btn xs primary', onclick: () => UI.res(VU.patch(d.id, false)) }, '今晚'))));
+    });
+    el.appendChild(h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h3', {}, `已知弱點（${known.length}）`), h('span', { class: 'small muted' }, '依「已遭利用」與 CVSS 排序。VM 可先線上遷移、HA 的設備輪流修，就不會中斷。')),
+      h('div', { class: 'table-wrap' }, h('table', { class: 't' }, h('thead', {}, h('tr', {}, ['設備', '弱點', '嚴重度', '天數 / SLA', ''].map((x, i) => h('th', { class: i === 4 ? 'r' : '' }, x)))), h('tbody', {}, rows)))));
+  }
+
   /* ---------- 健檢 ---------- */
   function auditTab(el, audit) {
     const p = G.Sec.posture();
@@ -182,6 +232,7 @@
       ['防火牆', p.fw], ['IPS', p.ips], ['URL 過濾', p.url], ['閘道防毒', p.gav], ['Geo-IP', p.geo], ['DDoS 清洗', p.ddos], ['WAF', p.waf],
       ['MFA', p.mfa], ['EDR', p.edr], ['郵件安全', p.mailsec], ['NAC', p.nac], ['內部分段', p.segmentation], ['訪客隔離', p.guestIsolated],
       ['SIEM', p.siem], ['NMS', p.nms], ['備份', p.backup], ['不可變備份', p.immutable], ['資安訓練', p.training],
+      ['弱點掃描', p.vscan], ['端點管理', p.uem], ['BitLocker', p.bitlocker], ['SBC', p.sbc], ['CSPM', p.cspm],
     ];
     el.appendChild(h('div', { class: 'grid c2', style: { marginBottom: '12px' } },
       h('div', { class: 'card row', style: { gap: '18px' } },

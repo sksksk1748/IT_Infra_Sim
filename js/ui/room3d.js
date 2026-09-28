@@ -143,7 +143,7 @@
         decoG.add(tray);
       }
       for (const d of Object.values(s.devices)) {
-        if (!d.rack) continue;
+        if (!d.rack || d.host) continue;
         const ri = rackInfo.find((x) => x.id === d.rack);
         if (!ri) continue;
         const m = CAT.devices[d.model];

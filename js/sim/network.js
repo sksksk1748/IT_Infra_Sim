@@ -18,6 +18,12 @@
     if (s.time < (d.bootUntil || 0)) return false;
     const fac = G.R.fac;
     if (fac && Net.rackDown(d.rack)) return false;
+    /* VM：主機要在運作；硬碟在 SAN 上的，SAN 也要在（而且沒有滿、沒有毀損） */
+    if (d.host) {
+      const h = s.devices[d.host];
+      if (!h || h.host || !Net.devUp(h)) return false;
+      if (d.disk === 'san' && (!G.VM || !G.VM.sanUp() || (G.R.stor && G.R.stor.sanFull))) return false;
+    }
     return true;
   };
   /** 機櫃斷電：一般機櫃看機房供電與 PDU，AI 機櫃看電源櫃與 BBU */
@@ -62,7 +68,7 @@
     for (const d of Object.values(s.devices)) {
       const m = CAT.devices[d.model];
       if (CAT.infra(m) || !Net.devUp(d)) continue;
-      add(d.id, { kind: m.cat, transit: m.cat === 'router' || m.cat === 'firewall' || m.cat === 'switch', dev: d, m });
+      add(d.id, { kind: m.cat, transit: m.cat === 'router' || m.cat === 'firewall' || m.cat === 'switch', dev: d, m, hv: !!m.hv });
     }
     /* 防火牆 HA：兩台以線路互連 → 編號小的為 Active，另一台 Standby 不參與轉送 */
     const standby = new Set();
@@ -90,21 +96,35 @@
       if (!nodes.has(l.a) || !nodes.has(l.b)) continue;
       edge(l.a, l.b, l.id, l.speed * l.count, 0.05, l);
     }
+    /* VM 掛在所在主機的虛擬交換器上：主機只轉送「往自己 VM」的流量，不會替兩台交換器當橋接 */
+    for (const d of Object.values(s.devices)) {
+      if (!d.host || !nodes.has(d.id) || !nodes.has(d.host)) continue;
+      edge(d.host, d.id, 'vm:' + d.id, Infinity, 0.02);
+      const hi = nodes.get(d.host);
+      (hi.vms = hi.vms || new Set()).add(d.id);
+      if (d.role) (hi.vmRoles = hi.vmRoles || new Set()).add(d.role);
+    }
+    const out = { nodes, adj, edges, standby, hqRouter: null };
+    /* 分支據點、MPLS 骨幹、公有雲（wan.js） */
+    if (G.Wan) G.Wan.graph(out, add, edge);
     for (const role of Object.keys(CAT.roles)) {
       const srv = [];
-      for (const n of nodes.values()) if (n.kind === 'server' && n.dev.role === role && !n.dev.encrypted) srv.push(n.dev.id);
+      for (const n of nodes.values()) if (n.kind === 'server' && n.dev.role === role && !n.dev.encrypted && !n.dev.dataLost) srv.push(n.dev.id);
       if (!srv.length) continue;
       add('ROLE:' + role, { kind: 'role', transit: false, role });
       for (const id of srv) edge(id, 'ROLE:' + role, 'r:' + id, Infinity, 0);
     }
-    return { nodes, adj, edges, standby };
+    return out;
   }
   Net.buildGraph = buildGraph;
 
   function canStep(g, to, dst, role) {
     if (to === dst) return true;
     const info = g.nodes.get(to);
-    return info.transit || (!!role && info.kind === 'server' && info.dev.role === role);
+    if (info.transit || (!!role && info.kind === 'server' && info.dev.role === role)) return true;
+    /* 虛擬化主機：只有目的地是它上面的 VM（或 VM 提供的角色）才能經過 */
+    if (info.hv) return (!!info.vms && info.vms.has(dst)) || (!!role && !!info.vmRoles && info.vmRoles.has(role));
+    return false;
   }
   function distTo(g, dst) {
     let d = G.R.distCache.get(dst);
@@ -167,9 +187,13 @@
     for (const l of Object.values(s.links)) { push(l.a, l.b, l); push(l.b, l.a, l); }
     const hasFw = Q.devices('firewall').some((d) => d.rack);
     const res = new Map();
-    const eps = [];
+    const eps = [], vms = [];
     for (const f of G.BLD.floors) eps.push('F:' + f.id);
-    for (const d of Object.values(s.devices)) { const c = CAT.devices[d.model].cat; if (c === 'server' || c === 'wlc') eps.push(d.id); }
+    for (const d of Object.values(s.devices)) {
+      const m = CAT.devices[d.model], c = m.cat;
+      if (d.host) vms.push(d);
+      else if (c === 'server' || c === 'wlc' || (c === 'storage' && !m.shelf)) eps.push(d.id);
+    }
     for (const ep of eps) {
       const seen = new Set([ep]);
       const q = [ep];
@@ -194,6 +218,11 @@
       else zone = 'ISOLATED';
       res.set(ep, { zone, router, fz: Array.from(fz), linked: (adj.get(ep) || []).length > 0 });
     }
+    /* VM 的區域 = 所在主機的區域 */
+    for (const v of vms) {
+      const hz = res.get(v.host);
+      res.set(v.id, hz ? Object.assign({}, hz, { vm: true }) : { zone: 'ISOLATED', router: false, fz: [], linked: false, vm: true });
+    }
     G.R.zonesCache = res;
     G.R.zonesVer = G.R.topoVer;
     return res;
@@ -201,6 +230,7 @@
   /** 防火牆規則使用的區域名稱 */
   Net.ruleZone = (nodeId) => {
     if (nodeId === 'INET') return 'INTERNET';
+    if (nodeId === 'CLOUD' || nodeId.startsWith('S:') || nodeId.startsWith('WAN:')) return 'WAN';
     const z = Net.zones().get(nodeId);
     const isFloor = nodeId.startsWith('F:');
     if (!z) return isFloor ? 'LAN' : 'SERVERS';
@@ -217,11 +247,28 @@
   const PRES = [0.02, 0.02, 0.02, 0.02, 0.02, 0.03, 0.05, 0.15, 0.55, 0.9, 1, 1, 0.75, 0.9, 1, 1, 0.95, 0.75, 0.4, 0.2, 0.1, 0.07, 0.04, 0.03];
   const WEB = [0.25, 0.18, 0.14, 0.12, 0.12, 0.15, 0.25, 0.4, 0.55, 0.65, 0.7, 0.72, 0.75, 0.7, 0.7, 0.72, 0.75, 0.8, 0.85, 0.9, 1, 1, 0.9, 0.5];
   const GUEST = [0, 0, 0, 0, 0, 0, 0, 0.05, 0.3, 0.7, 1, 0.95, 0.7, 0.85, 1, 1, 0.85, 0.5, 0.2, 0.05, 0, 0, 0, 0];
+  /* 餐廳人員：一早就要備料，晚餐後收工 */
+  const CREW = [0, 0, 0, 0, 0, 0.05, 0.45, 0.85, 1, 1, 1, 1, 1, 1, 1, 0.85, 0.75, 0.8, 0.7, 0.35, 0.08, 0, 0, 0];
   function curve(arr, t) {
     const h = U.hourOf(t), i = Math.floor(h), fr = h - i;
     return U.lerp(arr[i], arr[(i + 1) % 24], fr);
   }
+  /** 餐廳用餐人潮（0～1）：早餐、午餐尖峰（12:15 左右）、下午茶、加班晚餐；週末不營業 */
+  Net.dinerCurve = (t) => {
+    if (U.isWeekend(t)) return 0;
+    const h = U.hourOf(t);
+    const b = (c, w, a) => a * Math.exp(-((h - c) * (h - c)) / (2 * w * w));
+    return Math.min(1, b(8.1, 0.45, 0.12) + b(12.25, 0.55, 1) + b(15.2, 0.4, 0.07) + b(18.4, 0.6, 0.26));
+  };
+  /** 某層餐廳此刻的用餐人數（要有人上班、餐廳也開張了才有人來吃） */
+  Net.diners = (fid, t) => {
+    const f = G.BLD.byId[fid], ft = G.FT[f.type], fs = G.S.floors[fid];
+    if (!ft.dine || fs.movedIn <= 0) return 0;
+    return ft.diners * Net.dinerCurve(t) * Math.min(1, Q.officeStaff() / 8000) * Math.min(1, fs.movedIn / f.staff);
+  };
   Net.presence = (t, type) => {
+    const ft0 = G.FT[type];
+    if (ft0 && ft0.dine) return curve(CREW, t) * (U.isWeekend(t) ? 0.08 : 1);
     let p = curve(PRES, t);
     const wk = U.isWeekend(t);
     if (wk) p *= 0.06;
@@ -296,6 +343,7 @@
     const required = G.Campaign.requiredRoles();
     const shareTot = U.sum(required, (r) => INTRA_SHARE[r] || 0) || 1;
     const segOn = !!(s.fw.segmentation && fwNode);
+    const saas = Q.hasService('m365') ? 1 : 0;
 
     /* 伺服器 DNS 轉送（AD → 網際網路） */
     for (const d of Q.roleServers('ad')) {
@@ -312,11 +360,13 @@
       const powered = G.Wifi.powered(f.id, up);
       const wr = G.Wifi.get(f.id, powered);
       const guests = (s.fw.guestWifi && ft.guestPeak && fs.movedIn > 0) ? ft.guestPeak * Net.guestCurve(t) * dhcpGuest : 0;
+      /* 餐廳：用餐的員工拿手機連員工 Wi-Fi（和訪客一樣分布在用餐區） */
+      const diners = ft.dine ? Net.diners(f.id, t) * dhcpWifi : 0;
       const am = CAT.access[fs.idf.model];
       const ports = up ? fs.idf.count * am.ports : 0;
       const printers = Math.ceil(fs.movedIn / 40);
       const seats = fs.movedIn * ft.wired;
-      const seatPorts = Math.max(0, ports - fs.aps.length - printers);
+      const seatPorts = Math.max(0, ports - fs.aps.length - printers - (ft.pos || 0));
       const portFrac = seats > 0 ? Math.min(1, seatPorts / seats) : 1;
       const wiredNeed = Math.ceil(seats * portFrac + printers);
       const dhcpWired = wiredNeed > 0 ? Math.min(1, wiredPool / wiredNeed) : 1;
@@ -327,12 +377,12 @@
       const dI = ft.inet[0] * mI, uI = ft.inet[1] * mI, dN = ft.intra[0] * mN, uN = ft.intra[1] * mN;
 
       const st = {
-        fid: f.id, up, present: pres, guests, wifi: wr, powered: powered.size, ports, portFrac, seats, printers,
+        fid: f.id, up, present: pres + diners, crew: pres, diners, guests, wifi: wr, powered: powered.size, ports, portFrac, seats, printers,
         dhcpWired, dhcpWifi, conn: 0, thr: 1, lat: 0, loss: 0, sat: null, demand: 0, delivered: 0, intended: 0, connU: 0, wifiShare: 0,
-        uplink: 0, apStats: {}, capRatio: 1, guestRatio: 1, adOk: false, dnsOk: false, blocked: null, flows: [],
+        uplink: 0, apStats: {}, capRatio: 1, guestRatio: 1, dinerRatio: 1, posOk: up, adOk: false, dnsOk: false, blocked: null, flows: [],
       };
       floorSt[f.id] = st;
-      if (!up || (pres < 0.5 && guests < 0.5)) continue;
+      if (!up || (pres < 0.5 && guests < 0.5 && diners < 0.5)) continue;
 
       const wiredU = pres * ft.wired * portFrac * dhcpWired;
       const wifiU = pres * (1 - ft.wired) * dhcpWifi;
@@ -341,41 +391,58 @@
       const perUser = dI + uI + dN * (required.length ? 1 : 0) + uN * (required.length ? 1 : 0);
       const staffWifiDem = wifiU * cover * perUser + phonesU * cover * 0.13;
       const guestDem = guests * gcover * 1.4;
-      let servedS = 0, servedG = 0;
+      /* 用餐時滑手機看影片：每人約 1.5 Mbps（下行 1.3、上行 0.2） */
+      const dinerDem = diners * gcover * 1.5;
+      let servedS = 0, servedG = 0, servedD = 0;
       wr.aps.forEach((ap) => {
         const w = cover > 0 ? ap.w / cover : 0;
         const gw = gcover > 0 ? ap.gw / gcover : 0;
-        const dS = staffWifiDem * w, dG = guestDem * gw;
-        const cl = (wifiU + phonesU) * cover * w + guests * gcover * gw;
+        const dS = staffWifiDem * w, dG = guestDem * gw, dD = dinerDem * gw;
+        const cl = (wifiU + phonesU) * cover * w + (guests + diners) * gcover * gw;
         const clientF = cl > ap.maxClients ? ap.maxClients / cl : 1;
         const cap = Math.min(ap.capEff * clientF, ap.backhaul);
-        const dem = dS + dG;
+        const dem = dS + dG + dD;
         const r = dem > 0 ? Math.min(1, cap / dem) : 1;
-        servedS += dS * r; servedG += dG * r;
+        servedS += dS * r; servedG += dG * r; servedD += dD * r;
         st.apStats[ap.id] = { clients: cl, load: cap > 0 ? dem / cap : 0, cap, demand: dem };
       });
-      const capRatio = staffWifiDem > 0 ? servedS / staffWifiDem : 1;
+      const staffRatio = staffWifiDem > 0 ? servedS / staffWifiDem : 1;
       const guestRatio = guestDem > 0 ? servedG / guestDem : 1;
-      st.capRatio = capRatio; st.guestRatio = guestRatio;
-      const effU = wiredU + wifiU * cover * capRatio;
-      const phonesEff = phonesU * cover * capRatio;
-      st.connU = wiredU + wifiU * cover;
-      st.conn = pres > 0 ? st.connU / pres : 1;
-      st.wifiShare = st.connU > 0 ? (wifiU * cover) / st.connU : 0;
-      st.intended = st.connU * perUser + phonesU * cover * 0.13;
+      const dinerRatio = dinerDem > 0 ? servedD / dinerDem : 1;
+      /* 餐廳的 Wi-Fi 容量看員工 + 用餐人潮的整體滿足率 */
+      const capRatio = dinerDem > 0 ? (servedS + servedD) / (staffWifiDem + dinerDem) : staffRatio;
+      st.capRatio = capRatio; st.guestRatio = guestRatio; st.dinerRatio = dinerRatio;
+      const effU = wiredU + wifiU * cover * staffRatio;
+      const phonesEff = phonesU * cover * staffRatio;
+      const dinerU = diners * gcover;
+      st.connU = wiredU + wifiU * cover + dinerU;
+      st.conn = pres + diners > 0 ? st.connU / (pres + diners) : 1;
+      st.wifiShare = st.connU > 0 ? (wifiU * cover + dinerU) / st.connU : 0;
+      st.intended = (wiredU + wifiU * cover) * perUser + phonesU * cover * 0.13 + dinerDem;
 
-      /* 內部服務流量 */
+      /* 內部服務流量（導入 Microsoft 365 後，一部分檔案改放 OneDrive / SharePoint：內部流量變少、上網流量變多） */
       for (const r of required) {
-        const share = (INTRA_SHARE[r] || 0) / shareTot;
+        const share = (INTRA_SHARE[r] || 0) / shareTot * (r === 'file' && saas ? 0.75 : 1);
         const fl = { id: nid + '>' + r, stage: 1, kind: 'intra', role: r, floor: f.id, src: nid, dst: 'ROLE:' + r,
           fwd: effU * uN * share, rev: effU * dN * share, zs: 'LAN', zd: null, svc: INTRA_SVC[r] };
         if (segOn) fl.via = fwNode.dev.id;
         flows.push(fl); st.flows.push(fl);
       }
       if (!required.includes('ad')) st.adOk = true;
-      /* 上網流量 */
+      /* 上網流量（餐廳的收銀機刷卡也走這條：連到金流閘道） */
+      const dinerEff = dinerU * dinerRatio;
       const inet = { id: nid + '>INET', stage: 2, kind: 'inet', floor: f.id, src: nid, dst: 'INET',
-        fwd: effU * uI + phonesEff * 0.03, rev: effU * dI + phonesEff * 0.1, zs: 'LAN', zd: 'INTERNET', svc: ['WEB'], needDns: true };
+        fwd: effU * (uI + 0.08 * saas) + phonesEff * 0.03 + dinerEff * 0.2 + (ft.pos ? 0.3 : 0), rev: effU * (dI + 0.25 * saas) + phonesEff * 0.1 + dinerEff * 1.3 + (ft.pos ? 0.3 : 0), zs: 'LAN', zd: 'INTERNET', svc: ['WEB'], needDns: true };
+      if (saas) st.intended += effU * 0.33;
+      /* 作業系統更新：沒有內部快取 → 每台電腦各自從網際網路下載；有快取 → 從機房的更新伺服器下載
+       * （不算進樓層的需求，但會佔頻寬、把其他流量擠慢） */
+      const pm = G.Ep.floorMbps(f.id);
+      if (pm > 0.5) {
+        const cache = G.R.ep && G.R.ep.cacheOn;
+        const pf = { id: nid + '>PATCH', stage: 3, kind: 'patch', floor: f.id, src: nid, dst: cache ? 'ROLE:upd' : 'INET', fwd: pm * 0.02, rev: pm, zs: 'LAN', zd: cache ? null : 'INTERNET', svc: ['WEB'] };
+        if (cache && segOn) pf.via = fwNode.dev.id;
+        flows.push(pf);
+      }
       flows.push(inet); st.flows.push(inet);
       if (guests > 0.5) {
         const gf = { id: nid + '>INET:g', stage: 2, kind: 'guest', floor: f.id, src: nid, dst: 'INET',
@@ -388,7 +455,14 @@
     const webDem = Net.webDemand();
     let webFlow = null;
     const webDbFlows = [];
-    if (webDem > 0) {
+    const cloudWeb = Q.hasService('cloudweb');
+    if (webDem > 0 && cloudWeb) {
+      /* 官網在公有雲：客戶流量不經過公司；查會員資料時由雲端經專線（Direct Connect）或 VPN 連回總部資料庫 */
+      webFlow = { id: 'web', stage: 3, kind: 'web', src: 'INET', dst: 'CLOUD', fwd: webDem * 0.1, rev: webDem, zs: 'INTERNET', zd: 'WAN', svc: [] };
+      flows.push(webFlow);
+      const f2 = { id: 'webdb:cloud', stage: 3, kind: 'webdb', src: 'CLOUD', dst: 'ROLE:db', vias: g.edges.has('wan:dx') ? undefined : ['INET'], fwd: webDem * 0.03, rev: webDem * 0.12, zs: 'WAN', zd: null, svc: ['SQL'] };
+      flows.push(f2); webDbFlows.push(f2);
+    } else if (webDem > 0) {
       webFlow = { id: 'web', stage: 3, kind: 'web', src: 'INET', dst: 'ROLE:web', fwd: webDem * 0.1, rev: webDem, zs: 'INTERNET', zd: null, svc: ['WEB'] };
       flows.push(webFlow);
       const webs = Q.roleServers('web').filter((d) => g.nodes.has(d.id));
@@ -397,12 +471,39 @@
         flows.push(f2); webDbFlows.push(f2);
       }
     }
-    /* 夜間備份（01:00–04:00） */
+    /* 備份：排程時間內，檔案 / 資料庫 / VM 送到備份伺服器（每 24 小時是完整備份，更頻繁的是增量） */
     const h = U.hourOf(t);
-    if (h >= 1 && h < 4) {
+    const bkScale = (0.15 + Q.employees() / 10000) * (s.bkp.freq === 24 ? 1 : 0.4);
+    if (G.Stor.jobActive(t)) {
       const files = Q.roleServers('file').filter((d) => g.nodes.has(d.id));
-      const scale = 0.15 + Q.employees() / 10000;
-      for (const fsv of files) flows.push({ id: 'bkp:' + fsv.id, stage: 3, kind: 'backup', src: fsv.id, dst: 'ROLE:backup', fwd: 2600 * scale / files.length, rev: 20, zs: Net.ruleZone(fsv.id), zd: null, svc: ['SMB'] });
+      for (const fsv of files) flows.push({ id: 'bkp:' + fsv.id, stage: 3, kind: 'backup', src: fsv.id, dst: 'ROLE:backup', fwd: 2600 * bkScale / files.length, rev: 20, zs: Net.ruleZone(fsv.id), zd: null, svc: ['SMB'] });
+      const dbs = Q.roleServers('db').filter((d) => g.nodes.has(d.id));
+      for (const d of dbs) flows.push({ id: 'bkpdb:' + d.id, stage: 3, kind: 'backup', src: d.id, dst: 'ROLE:backup', fwd: 500 * bkScale / dbs.length, rev: 10, zs: Net.ruleZone(d.id), zd: null, svc: ['SMB'] });
+      const san = G.VM.san().find((d) => g.nodes.has(d.id));
+      const nvm = G.VM.vms().length;
+      if (san && nvm) flows.push({ id: 'bkpsan', stage: 3, kind: 'backup', src: san.id, dst: 'ROLE:backup', fwd: 60 * nvm * (s.bkp.freq === 24 ? 1 : 0.4), rev: 5, zs: Net.ruleZone(san.id), zd: null, svc: ['SMB'] });
+    }
+    /* 異地：備份完成後複製到磁帶櫃（再送去保管）或雲端物件儲存 */
+    if (G.Stor.offsiteActive(t)) {
+      const bk = Q.roleServers('backup').find((d) => g.nodes.has(d.id));
+      if (bk) {
+        const tape = Object.values(s.devices).find((d) => CAT.devices[d.model].tape && g.nodes.has(d.id));
+        if (tape) flows.push({ id: 'bktape', stage: 3, kind: 'backup', src: bk.id, dst: tape.id, fwd: 1600 * bkScale, rev: 5, zs: Net.ruleZone(bk.id), zd: Net.ruleZone(tape.id), svc: ['SMB'] });
+        /* 雲端備份：有雲端專線（Direct Connect）就走專線，不佔用對外頻寬 */
+        const dx = g.edges.has('wan:dx');
+        if (Q.hasService('cloudbk')) flows.push({ id: 'bkcloud', stage: 3, kind: 'backup', src: bk.id, dst: dx ? 'CLOUD' : 'INET', fwd: 450 * bkScale, rev: 10, zs: Net.ruleZone(bk.id), zd: dx ? 'WAN' : 'INTERNET', svc: ['WEB'] });
+      }
+    }
+    /* iSCSI：放在 SAN 上的 VM，硬碟讀寫都要經過網路（上班時間最忙） */
+    const sanUpNode = G.VM.san().find((d) => g.nodes.has(d.id));
+    if (sanUpNode) {
+      const busy = 0.3 + 0.7 * Net.presence(t, 'office');
+      const IO = { db: 420, file: 320, siem: 260, backup: 60, web: 80, upd: 120 };
+      for (const v of G.VM.vms()) {
+        if (v.disk !== 'san' || !g.nodes.has(v.id) || !g.nodes.has(v.host)) continue;
+        const io = (IO[v.role] || 35) * busy;
+        flows.push({ id: 'iscsi:' + v.id, stage: 3, kind: 'storage', src: v.host, dst: sanUpNode.id, fwd: io * 0.4, rev: io, zs: Net.ruleZone(v.host), zd: Net.ruleZone(sanUpNode.id), svc: ['SMB'] });
+      }
     }
     /* AI 訓練：GX-8 之間的環狀 all-reduce（每一步都要同步參數），以及從 AI 儲存讀取訓練資料 */
     const aiSrv = Q.roleServers('ai').filter((d) => d.rack).sort((a, b) => idNum(a.id) - idNum(b.id));
@@ -420,13 +521,30 @@
       const f = { id: 'aid:' + d.id, stage: 3, kind: 'aidata', src: d.id, dst: 'ROLE:aistore', fwd: 400, rev: CAT.devices[d.model].gpu >= 8 ? 25000 : 6000, zs: Net.ruleZone(d.id), zd: null, svc: ['NFS'] };
       flows.push(f); aiData.push(f);
     }
+    /* 更新快取伺服器自己要先從網際網路下載一次（SERVERS → INTERNET：WEB） */
+    if (G.R.ep && G.R.ep.cacheOn && G.R.ep.patchMbps > 0) {
+      const up = Q.roleServers('upd').find((d) => g.nodes.has(d.id));
+      if (up) flows.push({ id: 'upd:inet', stage: 3, kind: 'patch', src: up.id, dst: 'INET', fwd: 1, rev: 60, zs: Net.ruleZone(up.id), zd: 'INTERNET', svc: ['WEB'] });
+    }
+    /* 分支據點：ERP、檔案、AD、上網，依專線 / SD-WAN 的選路 */
+    const wctx = G.Wan.flows(g, flows, t);
+    /* 語音：各樓層分機 ⇄ 電話交換機、外線經 SBC ⇄ 電信業者（開了 QoS 就優先通過） */
+    const vctx = G.Voice.flows(g, flows, floorSt, segOn ? fwNode.dev.id : null);
     /* 攻擊流量（由資安事件產生） */
     for (const af of G.R.attackFlows || []) flows.push(Object.assign({ stage: 4, kind: 'attack' }, af));
+    /* 從 VM 發出的流量，實體上是從所在主機的網卡出去 */
+    for (const fl of flows) {
+      const d = s.devices[fl.src];
+      if (d && d.host && g.nodes.has(d.host)) { fl.srcVm = fl.src; fl.src = d.host; }
+    }
 
-    /* ---- 路由、規則檢查、負載累加 ---- */
-    const load = new Map();
+    /* ---- 路由、規則檢查、負載累加 ----
+     * QoS：優先權流量（語音）另外累計，先分到頻寬、排隊也最短；其他流量分剩下的 */
+    const qos = !!s.voice.qos;
+    const load = new Map(), loadP = new Map();
     const nodeLoad = new Map();
-    const addLoad = (k, v) => { if (v > 0) load.set(k, (load.get(k) || 0) + v); };
+    let curPrio = false;
+    const addLoad = (k, v) => { if (v > 0) { const m = curPrio ? loadP : load; m.set(k, (m.get(k) || 0) + v); } };
     const addNode = (n, v) => { if (v > 0) nodeLoad.set(n, (nodeLoad.get(n) || 0) + v); };
     const hits = s.ruleHits;
     const hit = (rule, amt) => { const k = rule ? rule.id : 'default'; hits[k] = (hits[k] || 0) + amt; };
@@ -436,15 +554,21 @@
     const lanDnsDirect = hasFwInstalled ? G.Sec.allows('LAN', 'INTERNET', 'DNS') : true;
 
     flows.sort((a, b) => a.stage - b.stage);
+    /* 中繼點若是 VM，下一段從它的主機出發 */
+    const fromNode = (n) => { const d = s.devices[n]; return d && d.host && g.nodes.has(d.host) ? d.host : n; };
     for (const fl of flows) {
       if (fl.fwd + fl.rev <= 0 && fl.kind !== 'attack') { fl.delivered = 0; fl.dFwd = 0; fl.dRev = 0; continue; }
-      const legs = fl.via ? [pathsBetween(g, fl.src, fl.via), pathsBetween(g, fl.via, fl.dst)] : [pathsBetween(g, fl.src, fl.dst)];
+      /* 指定中繼點：內部分段經防火牆（via）、WAN 指定走哪條線路或隧道（vias） */
+      const hops = fl.vias || (fl.via ? [fl.via] : []);
+      const pts = [fl.src].concat(hops, [fl.dst]);
+      const legs = [];
+      for (let i = 0; i < pts.length - 1; i++) legs.push(pathsBetween(g, i === 0 ? pts[i] : fromNode(pts[i]), pts[i + 1]));
       fl.legs = legs;
       if (legs.some((l) => !l)) { fl.blocked = g.nodes.has(fl.dst) ? 'noroute' : 'nosvc'; }
       if (!fl.blocked) {
         const last = legs[legs.length - 1][0];
         if (fl.dst.startsWith('ROLE:') && last) fl.zd = Net.ruleZone(last.nodes[last.nodes.length - 2]);
-        fl.crossFw = !!fl.via || legs[0].some((p) => p.fws.length > 0);
+        fl.crossFw = !!fl.via || legs.some((l) => l.some((p) => p.fws.length > 0));
         if (fl.crossFw && fl.kind === 'attack' && fl.stopAtFw) fl.blocked = 'fw';
         if (fl.crossFw && (fl.kind !== 'attack' || fl.checkFw) && !fl.blocked) {
           for (const svc of fl.svc) {
@@ -462,12 +586,13 @@
       if (fl.kind === 'intra' && fl.role === 'ad') adOkFloor[fl.floor] = !fl.blocked;
 
       /* 負載 */
+      curPrio = qos && !!fl.prio;
       if (!fl.blocked) {
         for (const leg of legs) for (const p of leg) {
           for (const e of p.edges) { addLoad(e.fwd, fl.fwd * p.frac); addLoad(e.rev, fl.rev * p.frac); }
           for (let i = 1; i < p.nodes.length - 1; i++) addNode(p.nodes[i], (fl.fwd + fl.rev) * p.frac);
         }
-        if (fl.via) addNode(fl.via, fl.fwd + fl.rev);
+        for (const hp of hops) addNode(hp, fl.fwd + fl.rev);
       } else if (fl.volumetric && fl.legs && fl.legs[0]) {
         /* 被防火牆擋下的洪水攻擊：流量仍會塞滿防火牆之前的線路 */
         for (const p of fl.legs[0]) {
@@ -480,16 +605,18 @@
       }
     }
 
-    /* ---- 容量限縮因子 ---- */
-    const factor = new Map();
-    const util = new Map();
-    for (const [k, v] of load) {
+    /* ---- 容量限縮因子（優先權流量先分，其他流量分剩下的） ---- */
+    curPrio = false;
+    const factor = new Map(), util = new Map(), factorP = new Map(), utilP = new Map();
+    for (const k of new Set([...load.keys(), ...loadP.keys()])) {
       const ek = k.slice(0, k.lastIndexOf('>'));
       const e = g.edges.get(ek);
       if (!e) continue;
-      const u = v / e.cap;
-      util.set(k, u);
-      factor.set(k, u > 1 ? 1 / u : 1);
+      const vp = loadP.get(k) || 0, vn = load.get(k) || 0;
+      util.set(k, (vp + vn) / e.cap);
+      utilP.set(k, vp / e.cap);
+      factorP.set(k, vp > e.cap ? e.cap / vp : 1);
+      factor.set(k, vn > 0 ? Math.min(1, Math.max(0, e.cap - vp) / vn) : 1);
     }
     const nodeF = new Map();
     const nodeInfo = {};
@@ -513,29 +640,36 @@
 
     /* ---- 實際送達量與延遲 ---- */
     for (const fl of flows) {
-      fl.dFwd = 0; fl.dRev = 0; fl.rtt = 0;
+      fl.dFwd = 0; fl.dRev = 0; fl.rtt = 0; fl.q = 0;
       if (fl.blocked || !fl.legs) continue;
-      let fF = 1, fR = 1, rtt = 0;
+      const P = qos && fl.prio;
+      const fM = P ? factorP : factor, uM = P ? utilP : util;
+      let fF = 1, fR = 1, rtt = 0, qd = 0;
       for (const leg of fl.legs) {
-        let lf = 0, lr = 0, lrtt = 0;
+        let lf = 0, lr = 0, lrtt = 0, lq = 0;
         for (const p of leg) {
-          let pf = 1, pr = 1, pl = 0;
+          let pf = 1, pr = 1, pl = 0, pq = 0;
           for (const e of p.edges) {
-            pf = Math.min(pf, factor.get(e.fwd) || 1);
-            pr = Math.min(pr, factor.get(e.rev) || 1);
+            pf = Math.min(pf, fM.get(e.fwd) || 1);
+            pr = Math.min(pr, fM.get(e.rev) || 1);
             const ed = g.edges.get(e.key);
-            pl += ed.lat * 2 + qdelay(util.get(e.fwd) || 0) + qdelay(util.get(e.rev) || 0);
+            const qq = qdelay(uM.get(e.fwd) || 0) + qdelay(uM.get(e.rev) || 0);
+            pl += ed.lat * 2 + qq; pq += qq / 2;
           }
           for (let i = 1; i < p.nodes.length - 1; i++) {
             const nf = nodeF.get(p.nodes[i]);
-            if (nf !== undefined) { pf = Math.min(pf, nf); pr = Math.min(pr, nf); if (nf < 1) pl += 20; }
+            if (nf !== undefined) { pf = Math.min(pf, nf); pr = Math.min(pr, nf); if (nf < 1) { pl += P ? 2 : 20; pq += P ? 1 : 10; } }
           }
-          lf += p.frac * pf; lr += p.frac * pr; lrtt += p.frac * pl;
+          lf += p.frac * pf; lr += p.frac * pr; lrtt += p.frac * pl; lq += p.frac * pq;
         }
-        fF = Math.min(fF, lf); fR = Math.min(fR, lr); rtt += lrtt;
+        fF = Math.min(fF, lf); fR = Math.min(fR, lr); rtt += lrtt; qd += lq;
       }
-      fl.dFwd = fl.fwd * fF; fl.dRev = fl.rev * fR; fl.rtt = rtt;
+      fl.dFwd = fl.fwd * fF; fl.dRev = fl.rev * fR; fl.rtt = rtt; fl.q = qd;
     }
+    /* 語音品質與外線阻塞（給下面的滿意度用） */
+    G.Voice.measure(vctx, floorSt);
+    /* 分支據點：各應用的送達率、延遲、據點滿意度、WAN 線路使用率 */
+    const wanR = G.Wan.measure(wctx, t, (k) => (load.get(k) || 0) + (loadP.get(k) || 0), g);
 
     /* ---- 官網可用率 ---- */
     let web = { demand: webDem, delivered: 0, ratio: 1 };
@@ -575,6 +709,7 @@
       if (st.guestFlow) st.uplink += st.guestFlow.dFwd + st.guestFlow.dRev;
       const inetFl = st.flows.find((x) => x.kind === 'inet');
       st.dnsOk = inetFl ? inetFl.blocked !== 'dns' : false;
+      st.posOk = !!inetFl && !inetFl.blocked;
       st.delivered = delivered;
       st.demand = st.intended;
       const thr = st.intended > 0 ? U.clamp(delivered / st.intended, 0, 1) : 1;
@@ -584,13 +719,20 @@
       st.lat = lat;
       st.loss = offered > 0 ? U.clamp(1 - delivered / Math.max(offered, 1e-9) - (1 - st.capRatio) * st.wifiShare, 0, 1) : 0;
       let q = st.conn * (0.15 + 0.85 * Math.pow(thr, 1.3));
-      const lim = ft.voip ? 25 : 60;
+      /* 電話：第七章起由電話交換機模擬（MOS、外線阻塞）；之前用舊總機，只看延遲與掉包 */
+      const vOn = st.voiceQ !== undefined && st.voiceQ !== null;
+      const lim = ft.voip && !vOn ? 25 : 60;
       if (lat > lim) q *= Math.max(0.5, 1 - (lat - lim) / (lim * 4));
-      if (ft.voip && st.loss > 0.01) q *= Math.max(0.4, 1 - st.loss * 5);
+      if (ft.voip && !vOn && st.loss > 0.01) q *= Math.max(0.4, 1 - st.loss * 5);
       if (ft.voip) { const poe = Q.floorPoe(f.id); if (poe.phones > poe.budget) q *= 0.55; }
+      if (vOn) q *= st.voiceQ;
       if (!st.adOk) q *= 0.25;
       else q *= adCapF;
       if (!wlcManaged && fs.aps.length > 3) q *= 0.97;
+      /* 收銀機不能刷卡：大排長龍 */
+      if (ft.pos && st.diners > 30 && !st.posOk) q *= 0.5;
+      /* 檔案伺服器的空間滿了：存不了檔 */
+      if (G.R.stor && G.R.stor.fileFull && required.includes('file')) q *= 0.88;
       if (mods.floorPenalty && mods.floorPenalty[f.id]) q *= mods.floorPenalty[f.id];
       q = U.clamp(q * 0.97, 0, 1);
       const prev = G.R.satEma[f.id];
@@ -605,7 +747,8 @@
     for (const l of Object.values(s.links)) {
       const e = g.edges.get(l.id);
       const cap = l.speed * l.count;
-      const ab = load.get(l.id + '>' + l.b) || 0, ba = load.get(l.id + '>' + l.a) || 0;
+      const LD = (k) => (load.get(k) || 0) + (loadP.get(k) || 0);
+      const ab = LD(l.id + '>' + l.b), ba = LD(l.id + '>' + l.a);
       linkSt[l.id] = { ab, ba, cap, util: e ? Math.max(ab, ba) / cap : 0, up: !!e };
     }
     const ispSt = {};
@@ -613,14 +756,17 @@
     for (const c of s.isp) {
       const k = 'isp:' + c.id + '#wan';
       const e = g.edges.get(k);
-      const inn = load.get(k + '>isp:' + c.id) || 0, out = load.get(k + '>INET') || 0;
+      const inn = (load.get(k + '>isp:' + c.id) || 0) + (loadP.get(k + '>isp:' + c.id) || 0), out = (load.get(k + '>INET') || 0) + (loadP.get(k + '>INET') || 0);
       ispSt[c.id] = { in: inn, out, cap: c.bw, util: Math.max(inn, out) / c.bw, up: !!e, standby: !e && Net.ispUp(c) };
       if (e) { wanIn += Math.min(inn, c.bw); wanOut += Math.min(out, c.bw); wanCap += c.bw; }
     }
     let intra = 0;
     for (const fl of flows) if (fl.kind === 'intra' || fl.kind === 'backup' || fl.kind === 'webdb') intra += fl.dFwd + fl.dRev;
     const prevSat = G.R.sim ? G.R.sim.sat : null;
-    const sat = demTot >= 20 ? satSum / demTot : (prevSat !== null && prevSat !== undefined ? prevSat : null);
+    /* 全公司滿意度：總部各樓層 + 分支據點（依在座人數加權） */
+    let siteSat = 0, siteW = 0;
+    for (const x of Object.values(wanR.sites)) if (x.open && x.pres >= 3 && x.sat !== null && x.sat !== undefined) { siteSat += x.sat * x.pres; siteW += x.pres; }
+    const sat = demTot + siteW >= 20 ? (satSum + siteSat) / (demTot + siteW) : (prevSat !== null && prevSat !== undefined ? prevSat : null);
 
     /* ---- AI 算力利用率 = 供電 × 散熱 × 後端網路 × 儲存 ---- */
     G.R.ai = null;
@@ -645,7 +791,7 @@
       t, graph: g, flows, floors: floorSt, links: linkSt, isp: ispSt, nodes: nodeInfo,
       wan: { in: wanIn, out: wanOut, cap: wanCap }, intra, users: demTot, employees: Q.employees(),
       sat, lat: demTot > 0 ? latSum / demTot : 0, loss: demTot > 0 ? lossSum / demTot : 0,
-      web, dhcp: dhcpInfo, adResolves, lanDnsDirect, util, load, wlcManaged, ai: G.R.ai,
+      web, dhcp: dhcpInfo, adResolves, lanDnsDirect, util, load, wlcManaged, ai: G.R.ai, voice: G.R.voice, sites: wanR,
     };
     return G.R.sim;
   };

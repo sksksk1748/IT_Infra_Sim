@@ -61,6 +61,7 @@
     const FC = {};
     FC[TY.OPEN] = '#5b646c'; FC[TY.DESK] = '#4f5b66'; FC[TY.MEET] = '#61584e'; FC[TY.OFFICE] = '#5f554b'; FC[TY.LAB] = '#6d777d';
     FC[TY.LOBBY] = '#8d9296'; FC[TY.CAFE] = '#7b6a55'; FC[TY.CORE] = '#474e54'; FC[TY.IDF] = '#2b353c'; FC[TY.WALL] = '#56606a'; FC[TY.GLASS] = '#56606a'; FC[TY.EXT] = '#394148';
+    FC[TY.KITCHEN] = '#78848b'; FC[TY.SERVE] = '#6f6253'; FC[TY.DINE] = '#8b7a64'; FC[TY.COLD] = '#a9c3cd';
     const floorT = K.makeTex(W * 10, H * 10, (c) => {
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) K.D.rect(c, x * 10, y * 10, 10.3, 10.3, FC[L.type[y * W + x]] || FC[TY.OPEN]);
       c.fillStyle = 'rgba(255,255,255,0.045)';
@@ -98,11 +99,12 @@
     root.add(overlay);
 
     /* ---------- 隔間牆：依衰減分三種（玻璃 / 石膏板 / 加厚牆），連續的格子合成一道牆 ---------- */
-    const wallCls = (a) => (a <= 2 ? 0 : a >= 6 ? 2 : 1);
+    const wallCls = (a) => (a <= 2 ? 0 : a >= 10 ? 3 : a >= 6 ? 2 : 1);
     const WALLDEF = [
       { mat: K.std('#a9d6ef', { transparent: true, opacity: 0.3, roughness: 0.1, metalness: 0.2, depthWrite: false }), t: 0.08, name: '玻璃隔間', att: '約 2 dB' },
       { mat: K.std('#d9dde0', { roughness: 0.85, metalness: 0 }), t: 0.14, name: '隔間牆（石膏板）', att: '約 4～5 dB' },
-      { mat: K.std('#b3a898', { roughness: 0.9, metalness: 0 }), t: 0.22, name: '加厚牆（隔音 / 實驗室）', att: '約 6～7 dB' },
+      { mat: K.std('#b3a898', { roughness: 0.9, metalness: 0 }), t: 0.22, name: '加厚牆（隔音 / 實驗室 / 廚房）', att: '約 6～7 dB' },
+      { mat: K.std('#cdd6db', { roughness: 0.3, metalness: 0.8 }), t: 0.2, name: '冷凍庫金屬牆（不鏽鋼 + 保溫層）', att: '12 dB 以上（金屬幾乎擋住 Wi-Fi）' },
     ];
     const WB = WALLDEF.map((d, i) => batch(d.mat, { kind: 'wall', cls: i }));
     const isWall = (x, y) => { const t = at(x, y); return t === TY.WALL || t === TY.GLASS; };
@@ -345,6 +347,8 @@
     const furnG = new T.Group();
     root.add(furnG);
     for (const b of Object.values(B)) b.build(furnG);
+    /* 餐廳樓層：廚房、餐檯、收銀台、用餐座位與人潮（canteen3d.js） */
+    const dineMod = G.FT[f.type].dine && M3.canteen ? M3.canteen({ api, K, fx, L, fid, root, wx, wz, batch }) : null;
     /* 螢幕：亮 = 有人在用；紅色 = 受感染；橘色 = 網路斷線 */
     const MON = { off: C('#1a2228'), on: C('#9fd8ff'), red: C('#ff4a3d'), amber: C('#f0a63a') };
     const monitors = new T.InstancedMesh(unit, own(new T.MeshBasicMaterial({ color: 0xffffff })), Math.max(1, monPos.length));
@@ -719,8 +723,14 @@
       const present = st && st.up ? st.present : fs.movedIn * G.Net.presence(s.time, f.type);
       const p = U.clamp(present / f.staff, 0, 1);
       const gp = st && st.guests && G.FT[f.type].guestPeak ? U.clamp(st.guests / G.FT[f.type].guestPeak, 0, 1) : 0;
-      const nd = Math.round(p * deskSeats.length);
-      const no = Math.round(U.clamp(p * 0.4 + gp * 0.7, 0, 1) * otherSeats.length);
+      let nd = Math.round(p * deskSeats.length);
+      let no = Math.round(U.clamp(p * 0.4 + gp * 0.7, 0, 1) * otherSeats.length);
+      if (dineMod) {
+        /* 餐廳：廚房人員與用餐人潮由 canteen3d 負責；包廂與飲料吧的座位跟著用餐人潮 */
+        dineMod.sync(st);
+        nd = 0;
+        no = Math.round(U.clamp((st ? st.diners || 0 : 0) / G.FT[f.type].diners, 0, 1) * otherSeats.length);
+      }
       if (nd + ':' + no !== occSig) { occSig = nd + ':' + no; placePeople(nd, no); }
       /* 資安事件：受感染的電腦螢幕變紅、偽冒 AP */
       let redN = 0, alert = '', rogueNow = null;
@@ -772,6 +782,7 @@
     const TNAME = {};
     TNAME[TY.OPEN] = '走道'; TNAME[TY.DESK] = '開放式座位區'; TNAME[TY.MEET] = '會議室'; TNAME[TY.OFFICE] = '辦公室'; TNAME[TY.LAB] = '實驗室';
     TNAME[TY.LOBBY] = '大廳'; TNAME[TY.CAFE] = '茶水間'; TNAME[TY.CORE] = '核心筒'; TNAME[TY.IDF] = 'IDF 弱電室'; TNAME[TY.WALL] = '牆'; TNAME[TY.GLASS] = '玻璃隔間'; TNAME[TY.EXT] = '外牆';
+    TNAME[TY.KITCHEN] = '廚房'; TNAME[TY.DINE] = '用餐區'; TNAME[TY.SERVE] = '餐檯 / 櫃台'; TNAME[TY.COLD] = '冷凍庫';
     const roomAt = (x, y) => L.rooms.find((r) => r.kind !== TY.CORE && x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1);
     function spotTip(pt) {
       const s = G.S, fs = s.floors[fid];
@@ -813,7 +824,7 @@
     const offTheme = G.bus.on('theme', () => { dark = fx.isDark(); PAL = pal(); });
     const RIP_BASE = fx.rgb('#5fd4ff'), RED = fx.rgb('#ff4d4d');
     const ripC = new T.Color();
-    const floorLike = (k) => k === 'floor' || k === 'spot' || k === 'person' || k === 'wall' || k === 'core';
+    const floorLike = (k) => k === 'floor' || k === 'spot' || k === 'person' || k === 'wall' || k === 'core' || k === 'crew' || k === 'pos' || k === 'cold';
 
     return {
       obj: root, frame: frameBox, view: { yaw: 0.2, pitch: 0.92, fill: 0.96, balance: true },
@@ -871,6 +882,7 @@
           }
         }
         P.end();
+        if (dineMod) dineMod.tick(dt, t);
         /* 閃爍：偽冒 AP、選取外圈 */
         if (rogue.visible) rogueLed.material.emissiveIntensity = Math.sin(t * 8) > 0 ? 2.6 : 0.3;
         if (selRing.visible) selRing.scale.setScalar(1 + 0.12 * Math.sin(t * 4));
@@ -887,6 +899,10 @@
       clickable: (p) => p.kind === 'ap' || p.kind === 'idf' || p.kind === 'riser' || p.kind === 'rogue' || (tool === 'place' && floorLike(p.kind)),
       tip(p) {
         if (p.kind === 'ap' || p.kind === 'idf' || p.kind === 'riser' || p.kind === 'rogue') { const Ls = info(p); return Ls ? Ls.filter(Boolean).concat(['點一下選取・點兩下拉近']) : null; }
+        if (dineMod && (p.kind === 'pos' || p.kind === 'cold' || p.kind === 'crew')) {
+          const Ls = dineMod.tip(p);
+          if (Ls) return Ls.concat(p.pt && tool === 'place' ? spotTip(p.pt).slice(-1) : p.pt ? spotTip(p.pt).slice(1, 2) : []);
+        }
         if (p.kind === 'wall') { const d = WALLDEF[p.cls]; return [d.name, `Wi-Fi 訊號穿過時衰減${d.att}`].concat(p.pt && tool === 'place' ? spotTip(p.pt).slice(-1) : []); }
         if (p.kind === 'core') return ['核心筒（電梯 / 樓梯）', '鋼筋混凝土：訊號衰減 8～15 dB，幾乎穿不透', 'IDF 弱電室就在核心筒裡、緊鄰弱電豎井'];
         if (p.pt) return spotTip(p.pt);
@@ -917,6 +933,7 @@
       clickEmpty() { if (selAp && opts.onAp) opts.onAp(null); selAp = null; panelSel = null; sigOv = ''; renderSel(); syncSel(); },
       dispose() {
         offTheme();
+        if (dineMod) dineMod.dispose();
         for (const t of allTags) t.remove();
         for (const t of chTags) t.remove();
         for (const m of mats) m.dispose();

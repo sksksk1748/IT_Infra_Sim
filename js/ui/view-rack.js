@@ -41,7 +41,7 @@
     else if (!V.rack) left.appendChild(h('div', { class: 'empty' }, h('p', {}, '機房裡還沒有機櫃。'), h('button', { class: 'btn primary', style: { marginTop: '10px' }, onclick: () => { const r = UI.res(G.Act.buyRack()); if (r.ok) V.rack = r.id; } }, `採購 42U 機櫃（${U.money(CAT.rack.price)}）`)));
     else { V.svgWrap = h('div', {}); left.appendChild(V.svgWrap); V.drawRack(); }
     /* 倉庫 */
-    const inv = Object.values(s.devices).filter((d) => !d.rack);
+    const inv = Object.values(s.devices).filter((d) => !d.rack && !d.host);
     const invCard = h('div', { class: 'card col', style: { gap: '6px' } }, h('div', { class: 'card-h', style: { marginBottom: '2px' } }, h('h3', {}, `倉庫（未上架 ${inv.length}）`), h('button', { class: 'btn ghost xs', onclick: () => UI.go('shop') }, '去採購')));
     if (!inv.length) invCard.appendChild(h('div', { class: 'small dim' }, '買來的設備會先放在這裡，點選後再點機櫃空位安裝。'));
     for (const d of inv) {
@@ -131,7 +131,7 @@
       }
     }
     for (const d of Object.values(s.devices)) {
-      if (d.rack !== V.rack) continue;
+      if (d.rack !== V.rack || d.host) continue;
       svg.appendChild(faceplate(d));
     }
     const fr = G.R.fac && G.R.fac.racks[V.rack];
