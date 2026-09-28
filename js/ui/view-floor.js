@@ -32,9 +32,10 @@
     }
     el.appendChild(pick);
     const mi = fs.moveInAt !== null && fs.movedIn < f.staff ? (fs.moveInAt > s.time ? `預計 ${U.stamp(fs.moveInAt)} 進駐（${U.dur(fs.moveInAt - s.time)} 後）` : '進駐中') : fs.movedIn ? '已進駐' : '尚未排定進駐';
+    const use3d = UI.pref3d('floor');
     el.appendChild(h('div', { class: 'view-h' },
       h('div', {}, h('h2', {}, `${f.id} ${f.dept}`), h('div', { class: 'desc' }, `${ft.name}樓層 · 編制 ${U.num(f.staff)} 人 · 有線座位約 ${U.pct(ft.wired)} · ${mi}`)),
-      h('div', { class: 'row wrap' }, h('span', { class: 'chip' }, `主幹距離 B1 ${G.BLD.riserLength(f.id)} m`), G.BLD.riserLength(f.id) > 100 ? h('span', { class: 'chip warn' }, '超過 100m：銅纜無法使用') : null)));
+      h('div', { class: 'row wrap' }, UI.toggle3d('floor'), h('span', { class: 'chip' }, `主幹距離 B1 ${G.BLD.riserLength(f.id)} m`), G.BLD.riserLength(f.id) > 100 ? h('span', { class: 'chip warn' }, '超過 100m：銅纜無法使用') : null)));
 
     const left = h('div', { class: 'col', style: { gap: '10px' } });
     V.right = h('div', { class: 'col', style: { gap: '10px' } });
@@ -48,18 +49,38 @@
       Object.entries(CAT.aps).map(([id, m]) => h('option', { value: id, selected: id === V.apModel || null, disabled: !Q.unlocked(m) || null }, `${m.name} · ${U.money(m.price + CAT.apInstallFee)}${Q.unlocked(m) ? '' : '（第 ' + m.unlock + ' 章）'}`)));
     const layerSeg = h('div', { class: 'seg' }, [['rssi', '訊號'], ['load', 'AP 負載'], ['cci', '同頻干擾'], ['none', '平面']].map(([k, t]) =>
       h('button', { class: V.layer === k ? 'on' : '', onclick: () => { V.layer = k; UI.refresh(); } }, t)));
-    V.canvas = h('canvas', { style: { aspectRatio: '2 / 1' }, 'aria-label': `${f.id} 平面圖` });
-    V.tip = h('div', { class: 'small mono muted', style: { minHeight: '18px', marginTop: '6px' } }, V.tool === 'place' ? '點擊平面圖放置 AP（天花板安裝，不能裝在牆上或核心筒）' : '點選 AP 查看詳情，拖曳可移動位置');
-    left.appendChild(h('div', { class: 'plan-wrap' },
-      h('div', { class: 'plan-tools' }, toolSeg, modelSel, h('span', { class: 'grow' }), layerSeg),
-      V.canvas, V.tip, legend()));
-    bindCanvas();
-    requestAnimationFrame(() => V.draw());
-    if (V.ro) V.ro.disconnect();
-    V.ro = new ResizeObserver(() => V.draw());
-    V.ro.observe(V.canvas);
+    const tools = h('div', { class: 'plan-tools' }, toolSeg, modelSel, h('span', { class: 'grow' }), layerSeg);
+    if (V.ro) { V.ro.disconnect(); V.ro = null; }
+    if (use3d) {
+      V.canvas = null;
+      V.tip = null;
+      left.appendChild(h('div', { class: 'plan-wrap' }, tools, floor3d(),
+        h('div', { class: 'small muted', style: { marginTop: '6px' } }, V.tool === 'place' ? '「放置 AP」：點地板就會在正上方的天花板安裝 AP（不能裝在牆上或核心筒）。' : '點 AP 看詳情；滑過地板可以看到那個位置的訊號強度。牆越厚，訊號衰減越多。')));
+    } else {
+      V.canvas = h('canvas', { style: { aspectRatio: '2 / 1' }, 'aria-label': `${f.id} 平面圖` });
+      V.tip = h('div', { class: 'small mono muted', style: { minHeight: '18px', marginTop: '6px' } }, V.tool === 'place' ? '點擊平面圖放置 AP（天花板安裝，不能裝在牆上或核心筒）' : '點選 AP 查看詳情，拖曳可移動位置');
+      left.appendChild(h('div', { class: 'plan-wrap' }, tools, V.canvas, V.tip, legend()));
+      bindCanvas();
+      requestAnimationFrame(() => V.draw());
+      V.ro = new ResizeObserver(() => V.draw());
+      V.ro.observe(V.canvas);
+    }
     V.renderSide();
   };
+  /** 3D 樓層：同一層樓重繪時沿用同一個場景（不重建 WebGL、不重設視角） */
+  function floor3d() {
+    if (V.m3d && V.m3d.fid === V.fid && !V.m3d.el.m3dDead) { V.m3d.el.m3dStage.poke(); return V.m3d.el; }
+    const el = G.M3.floor({
+      fid: V.fid,
+      height: window.innerWidth < 760 ? '420px' : 'clamp(440px, 62vh, 640px)',
+      sel: () => ({ ap: V.selAp, tool: V.tool, layer: V.layer, apModel: V.apModel }),
+      onAp: (id) => { V.selAp = id; V.renderSide(); },
+      onPlace: (x, y) => { const r = UI.res(G.Act.placeAp(V.fid, x, y, V.apModel)); if (r.ok) V.selAp = r.id; },
+      onInc: () => UI.go('inc'),
+    });
+    V.m3d = { fid: V.fid, el };
+    return el;
+  }
   V.unmount = () => { if (V.ro) { V.ro.disconnect(); V.ro = null; } };
 
   function legend() {

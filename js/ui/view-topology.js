@@ -9,8 +9,47 @@
   const VW = 1240, VH = 780;
   const ZCOL = { outside: '#f07b5a', inside: '#5aa9f0', dmz: '#f2c14e', servers: '#2fc6b8' };
 
-  V.startConnect = (id) => { V.connecting = true; V.from = id || null; if (id) V.sel = { type: 'node', id }; };
+  V.startConnect = (id) => { V.connecting = true; V.from = id || null; if (id) V.sel = { type: 'node', id }; V.stopJourney(true); };
   V.stopConnect = () => { V.connecting = false; V.from = null; };
+
+  /* ---------- 封包旅程 ---------- */
+  const defaultFloor = () => {
+    const g = G.R.graph;
+    const up = G.BLD.floors.find((f) => f.id !== '1F' && g && g.nodes.has('F:' + f.id));
+    return up ? up.id : '2F';
+  };
+  /** 開始封包旅程（可指定情境與樓層） */
+  V.startJourney = (sc, fid) => {
+    V.stopConnect();
+    V.sel = null;
+    V.journey = { sc: sc || 'web', fid: fid || defaultFloor(), i: 0, auto: false };
+  };
+  V.stopJourney = (quiet) => {
+    if (V.jtimer) { clearInterval(V.jtimer); V.jtimer = null; }
+    if (!V.journey) return;
+    V.journey = null;
+    V.jres = null;
+    if (!quiet) UI.refresh();
+  };
+  function gotoStep(k) {
+    if (!V.journey || !V.jres) return;
+    V.journey.i = U.clamp(k, 0, V.jres.steps.length - 1);
+    paintJourney();
+    renderJourneyCard();
+  }
+  function setAuto(on) {
+    if (!V.journey) return;
+    V.journey.auto = on;
+    if (V.jtimer) { clearInterval(V.jtimer); V.jtimer = null; }
+    if (on) {
+      if (V.journey.i >= V.jres.steps.length - 1) V.journey.i = 0;
+      V.jtimer = setInterval(() => {
+        if (!V.journey || !V.jres) return;
+        if (V.journey.i >= V.jres.steps.length - 1) { setAuto(false); renderJourneyCard(); return; }
+        gotoStep(V.journey.i + 1);
+      }, 2400);
+    }
+  }
 
   /* ---------- 排版 ---------- */
   function spread(n, cx, gap) { const out = []; for (let i = 0; i < n; i++) out.push(cx + (i - (n - 1) / 2) * gap); return out; }
@@ -78,8 +117,14 @@
     if (V.sel && V.sel.type === 'node' && !nodeExists(V.sel.id)) V.sel = null;
     if (V.sel && V.sel.type === 'link' && !G.S.links[V.sel.id]) V.sel = null;
     el.appendChild(h('div', { class: 'view-h' },
-      h('div', {}, h('h2', {}, '網路拓撲'), h('div', { class: 'desc' }, '點「連線」後依序點選兩個節點即可拉線。線條顏色代表線材，流動速度代表流量，紅色代表壅塞。拖曳空白處平移、滾輪縮放。')),
+      h('div', {}, h('h2', {}, '網路拓撲'), h('div', { class: 'desc' }, V.journey
+        ? '封包旅程：跟著一個封包一站一站走，看每台設備做了什麼判斷；被擋下時會告訴你是哪一條規則、該怎麼修。點樓層可以換出發樓層。'
+        : '點「連線」後依序點選兩個節點即可拉線。線條顏色代表線材，流動速度代表流量，紅色代表壅塞。拖曳空白處平移、滾輪縮放。')),
       h('div', { class: 'row wrap' }, h('button', { class: 'btn', onclick: () => UI.openKb('k-hier') }, '分層架構'), h('button', { class: 'btn', onclick: () => UI.openKb('k-zones') }, '外網 / DMZ / 內網'))));
+    if (V.journey) {
+      V.jres = G.Journey.build(V.journey.sc, V.journey.fid);
+      V.journey.i = U.clamp(V.journey.i, 0, V.jres.steps.length - 1);
+    }
     const lay = layout();
     V.pos = lay.pos;
     if (!V.vb || V.vb.baseH !== lay.H) V.vb = { x: 0, y: 0, w: VW, h: lay.H, baseH: lay.H };
@@ -87,6 +132,7 @@
     V.hint = h('div', { class: 'topo-hint' + (V.connecting ? '' : ' hidden') }, hintText());
     const tools = h('div', { class: 'topo-tools' },
       h('button', { class: 'btn sm ' + (V.connecting ? 'primary' : ''), onclick: () => { if (V.connecting) V.stopConnect(); else V.startConnect(V.sel && V.sel.type === 'node' ? V.sel.id : null); UI.refresh(); } }, V.connecting ? '取消連線' : '連線'),
+      h('button', { class: 'btn sm ' + (V.journey ? 'primary' : ''), title: '跟著封包一站一站走，看路由與防火牆的判斷', onclick: () => { if (V.journey) V.stopJourney(); else { V.startJourney(); UI.refresh(); } } }, V.journey ? '結束封包旅程' : '封包旅程'),
       h('button', { class: 'btn sm', onclick: () => zoom(0.8) }, '＋'),
       h('button', { class: 'btn sm', onclick: () => zoom(1.25) }, '－'),
       h('button', { class: 'btn sm', onclick: () => { V.vb = { x: 0, y: 0, w: VW, h: lay.H, baseH: lay.H }; setVb(); } }, '全覽'));
@@ -96,8 +142,11 @@
     draw(lay);
     bindPanZoom();
     V.renderInsp();
+    if (V.journey && V.journey.auto && !V.jtimer) setAuto(true);
   };
-  V.unmount = () => {};
+  V.unmount = () => {
+    if (V.jtimer) { clearInterval(V.jtimer); V.jtimer = null; }
+  };
 
   function nodeExists(id) {
     if (id === 'INET' || id.startsWith('F:')) return true;
@@ -197,6 +246,102 @@
       nodeG.appendChild(mkNode(id, P));
     }
     applyLive();
+    if (V.jres) drawJourney(pos);
+  }
+
+  /* ---------- 封包旅程：路徑、站號、移動的封包 ---------- */
+  function drawJourney(pos) {
+    const jr = V.jres;
+    const g = U.s('g', { class: 'journey' });
+    V.jref = { segs: [], badges: [], packet: null };
+    let prev = null;
+    jr.steps.forEach((st, k) => {
+      if (st.leg || !st.node) return;
+      if (prev && prev !== st.node && pos[prev] && pos[st.node]) {
+        const p = pathBetween(pos[prev], pos[st.node], 0);
+        const path = U.s('path', { d: p.d, class: 'jseg', fill: 'none' });
+        g.appendChild(path);
+        V.jref.segs.push({ k, path, d: p.d });
+      }
+      prev = st.node;
+    });
+    const seen = {};
+    let num = 0;
+    jr.steps.forEach((st, k) => {
+      if (st.leg || !st.node || !pos[st.node]) return;
+      num++;
+      const P = pos[st.node];
+      const dup = seen[st.node] = (seen[st.node] || 0) + 1;
+      const b = U.s('g', { class: 'jbadge ' + st.kind, transform: `translate(${P.x - P.w / 2 - 2 + (dup - 1) * 20}, ${P.y - P.h / 2 - 2})` },
+        U.s('circle', { r: 9.5 }), U.s('text', { 'text-anchor': 'middle', 'dominant-baseline': 'central', 'font-size': 10.5, 'font-weight': 700 }, String(num)));
+      b.addEventListener('click', (e) => { e.stopPropagation(); gotoStep(k); });
+      g.appendChild(b);
+      V.jref.badges.push({ k, el: b });
+    });
+    V.jref.packet = U.s('circle', { r: 7, class: 'jpacket' });
+    g.appendChild(V.jref.packet);
+    V.svg.appendChild(g);
+    paintJourney();
+  }
+  function paintJourney() {
+    if (!V.jres || !V.jref) return;
+    const i = V.journey.i, st = V.jres.steps[i];
+    for (const s of V.jref.segs) s.path.setAttribute('class', 'jseg' + (s.k <= i ? ' done' : '') + (s.k === i ? ' on' : ''));
+    for (const b of V.jref.badges) b.el.classList.toggle('on', b.k === i);
+    const pk = V.jref.packet;
+    U.clear(pk);
+    pk.setAttribute('class', 'jpacket ' + (st ? st.kind : ''));
+    const seg = V.jref.segs.find((s) => s.k === i);
+    if (seg) {
+      pk.setAttribute('cx', 0); pk.setAttribute('cy', 0);
+      pk.appendChild(U.s('animateMotion', { dur: '1.2s', repeatCount: 'indefinite', path: seg.d }));
+    } else {
+      const P = st && st.node && V.pos[st.node];
+      if (P) { pk.setAttribute('cx', P.x); pk.setAttribute('cy', P.y); } else pk.setAttribute('cx', -99);
+    }
+  }
+  const GO_LABEL = { fw: '前往防火牆規則', rack: '前往機房', topo: '檢查拓撲', 'shop:isp': '申請 ISP 專線' };
+  function renderJourneyCard() {
+    if (!V.insp || !V.journey || !V.jres) return;
+    const J = V.journey, jr = V.jres;
+    const recompute = () => { J.i = 0; setAuto(false); UI.refresh(); };
+    const sc = G.Journey.SCENARIOS.find((x) => x.id === J.sc) || G.Journey.SCENARIOS[0];
+    const scSel = h('select', { 'aria-label': '情境', onchange: (e) => { J.sc = e.target.value; recompute(); } },
+      G.Journey.SCENARIOS.map((x) => h('option', { value: x.id, selected: x.id === J.sc || null }, x.label)));
+    const flSel = sc.floor ? h('select', { 'aria-label': '出發樓層', onchange: (e) => { J.fid = e.target.value; recompute(); } },
+      G.BLD.floors.map((f) => h('option', { value: f.id, selected: f.id === J.fid || null }, `${f.id} ${f.dept}`))) : null;
+    const last = jr.steps.length - 1;
+    const list = h('ol', { class: 'jsteps' });
+    let num = 0;
+    jr.steps.forEach((st, k) => {
+      const n = st.leg || !st.node ? '' : String(++num);
+      const go = st.go && GO_LABEL[st.go] ? h('button', { class: 'btn xs', onclick: (e) => { e.stopPropagation(); if (st.go === 'fw') G.Views.fw && (G.Views.fw.tab = 'rules'); UI.go(st.go); } }, GO_LABEL[st.go]) : null;
+      list.appendChild(h('li', { class: (st.kind || 'ok') + (k === J.i ? ' on' : '') + (st.leg ? ' leg' : ''), onclick: () => gotoStep(k) },
+        n ? h('span', { class: 'n' }, n) : null,
+        h('div', { class: 'b' },
+          h('div', { class: 't' }, st.title),
+          st.text ? h('div', { class: 'x' }, st.text) : null,
+          st.link ? h('div', { class: 'l' }, '走的線路：' + st.link) : null,
+          st.fix ? h('div', { class: 'f' }, '怎麼修：' + st.fix) : null,
+          go)));
+    });
+    const card = h('div', { class: 'card col journey-card', style: { gap: '8px' } },
+      h('div', { class: 'row between' }, h('b', {}, '封包旅程'), h('button', { class: 'btn ghost xs', 'aria-label': '結束封包旅程', onclick: () => V.stopJourney() }, '✕')),
+      h('div', { class: 'row wrap' }, scSel, flSel),
+      jr.note ? h('div', { class: 'note info small' }, jr.note) : null,
+      h('div', { class: 'chip ' + jr.summary.kind, style: { alignSelf: 'flex-start' } }, jr.summary.text),
+      h('div', { class: 'row wrap' },
+        h('button', { class: 'btn sm', disabled: J.i <= 0 || null, onclick: () => { setAuto(false); gotoStep(J.i - 1); } }, '◀ 上一站'),
+        h('button', { class: 'btn sm primary', disabled: J.i >= last || null, onclick: () => { setAuto(false); gotoStep(J.i + 1); } }, '下一站 ▶'),
+        h('button', { class: 'btn sm' + (J.auto ? ' on' : ''), onclick: () => { setAuto(!J.auto); renderJourneyCard(); } }, J.auto ? '❚❚ 暫停' : '▶ 自動播放')),
+      list);
+    U.mount(V.insp, card);
+    /* 只捲動步驟清單本身，不要把整頁捲走（窄螢幕時拓撲圖在上方） */
+    const cur = list.children[J.i];
+    if (cur && list.scrollHeight > list.clientHeight) {
+      const top = cur.offsetTop - list.offsetTop;
+      if (top < list.scrollTop || top + cur.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = Math.max(0, top - 8);
+    }
   }
 
   function mkEdge(parent, p, o) {
@@ -331,7 +476,7 @@
     if (now - (V.last || 0) < 700) return;
     V.last = now;
     applyLive();
-    if (now - (V.lastInsp || 0) > 1500 && V.insp && !V.insp.contains(document.activeElement)) { V.lastInsp = now; V.renderInsp(); }
+    if (!V.journey && now - (V.lastInsp || 0) > 1500 && V.insp && !V.insp.contains(document.activeElement)) { V.lastInsp = now; V.renderInsp(); }
   };
 
   /* ---------- 互動 ---------- */
@@ -344,6 +489,12 @@
     return true;
   }
   function nodeClick(id) {
+    if (V.journey) {
+      /* 封包旅程中：點樓層就換出發樓層 */
+      const sc = G.Journey.SCENARIOS.find((x) => x.id === V.journey.sc);
+      if (id.startsWith('F:') && sc && sc.floor) { V.journey.fid = id.slice(2); V.journey.i = 0; setAuto(false); UI.refresh(); }
+      return;
+    }
     if (V.connecting) {
       if (!V.from) {
         if (id === 'INET') { UI.toast('網際網路節點不能直接連線，請使用 ISP 線路', 'warn'); return; }
@@ -417,6 +568,7 @@
   V.renderInsp = () => {
     const s = G.S;
     if (!V.insp) return;
+    if (V.journey && V.jres) { renderJourneyCard(); return; }
     const box = V.insp;
     const sc = box.parentElement ? box.parentElement.scrollTop : 0;
     U.clear(box);
@@ -478,7 +630,8 @@
         h('div', {}, h('div', { class: 'label', style: { marginBottom: '4px' } }, '上行埠'), UI.portBars(id)),
         h('div', { class: 'row wrap' },
           h('button', { class: 'btn primary sm', onclick: () => UI.go('floor:' + fid) }, '樓層規劃'),
-          h('button', { class: 'btn sm', onclick: () => { V.startConnect(id); UI.refresh(); } }, '連線到…'))));
+          h('button', { class: 'btn sm', onclick: () => { V.startConnect(id); UI.refresh(); } }, '連線到…'),
+          h('button', { class: 'btn sm', onclick: () => { V.startJourney('web', fid); UI.refresh(); } }, '封包旅程'))));
       return;
     }
     if (s.devices[id]) box.appendChild(UI.deviceCard(id, { onConnect: (x) => { V.startConnect(x); UI.refresh(); }, onLink: (lid) => select({ type: 'link', id: lid }) }));

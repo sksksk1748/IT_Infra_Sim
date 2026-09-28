@@ -45,6 +45,7 @@
     V.m3d = G.M3.tower({
       height: window.innerWidth < 760 ? '460px' : 'clamp(480px, 72vh, 760px)',
       onFloor: (fid) => UI.go('floor:' + fid),
+      onFloor3d: (fid) => { UI.pref3d('floor', true); UI.go('floor:' + fid); },
       onRack: () => UI.go('rack'),
       onDev: (id) => { const d = G.S.devices[id], R = G.Views.rack; if (d && R) { R.sel = id; if (d.rack) R.rack = d.rack; } UI.go('rack'); },
       onTopo: () => UI.go('topo'),

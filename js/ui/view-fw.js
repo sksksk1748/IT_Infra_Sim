@@ -13,7 +13,9 @@
     const audit = G.Sec.audit();
     el.appendChild(h('div', { class: 'view-h' },
       h('div', {}, h('h2', {}, '防火牆與資安'), h('div', { class: 'desc' }, '防火牆由上而下比對規則，第一條符合的生效；都不符合就「預設拒絕」。區域：INTERNET 外網、LAN 員工、GUEST 訪客、SERVERS 內部伺服器、DMZ 對外服務。')),
-      h('div', { class: 'row' }, h('span', { class: 'chip ' + (audit.grade <= 'B' ? 'ok' : audit.grade === 'C' ? 'warn' : 'bad') }, `資安評分 ${audit.grade}（${audit.score}）`))));
+      h('div', { class: 'row wrap' },
+        h('button', { class: 'btn', title: '跟著封包走一趟，看規則怎麼判斷', onclick: () => { G.Views.topo.startJourney(); UI.go('topo'); } }, '用封包旅程測試'),
+        h('span', { class: 'chip ' + (audit.grade <= 'B' ? 'ok' : audit.grade === 'C' ? 'warn' : 'bad') }, `資安評分 ${audit.grade}（${audit.score}）`))));
     const tabs = h('div', { class: 'tabs', role: 'tablist' }, TABS.map(([k, t]) => h('button', { class: V.tab === k ? 'on' : '', onclick: () => { V.tab = k; UI.refresh(); } }, t,
       k === 'audit' && audit.findings.some((f) => f.sev === 'crit' || f.sev === 'high') ? h('span', { class: 'count' }, String(audit.findings.filter((f) => f.sev === 'crit' || f.sev === 'high').length)) : null)));
     el.appendChild(tabs);

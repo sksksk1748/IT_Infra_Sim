@@ -12,7 +12,8 @@
     if (!V.sel || !unlocked(V.sel)) V.sel = G.KB.cards.find((c) => unlocked(c.id)).id;
     s.kb.seen[V.sel] = true;
     const n = G.KB.cards.filter((c) => unlocked(c.id)).length;
-    el.appendChild(h('div', { class: 'view-h' }, h('div', {}, h('h2', {}, '知識庫'), h('div', { class: 'desc' }, `已解鎖 ${n} / ${G.KB.cards.length} 張知識卡。完成任務或遇到新事件時會解鎖更多。`))));
+    el.appendChild(h('div', { class: 'view-h' }, h('div', {}, h('h2', {}, '知識庫'), h('div', { class: 'desc' }, `已解鎖 ${n} / ${G.KB.cards.length} 張知識卡。完成任務或遇到新事件時會解鎖更多。`)),
+      UI.quizPicker ? h('button', { class: 'btn', onclick: () => UI.quizPicker() }, '章節小測驗') : null));
     const list = h('div', { class: 'kb-list card' });
     for (const cat of G.KB.cats) {
       list.appendChild(h('div', { class: 'cat' }, cat));

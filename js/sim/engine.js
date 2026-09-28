@@ -78,7 +78,9 @@
     G.Fac.update(1);
     heatFailures(s);
     G.Ev.tick();
+    if (s.scen && G.Scen) G.Scen.pre(s);
     G.Net.simulate();
+    if (s.scen && G.Scen) G.Scen.post(s);
     if (s.time % 5 === 0) G.Ops.monitor();
     rating(s);
     if (s.time % 1440 === 0) daily(s);

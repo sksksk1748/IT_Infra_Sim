@@ -13,7 +13,7 @@
   const PANES = [];
 
   /** opts: { height, onFloor(fid), onRack(), onDev(id), onTopo(), onInc() } */
-  M3.tower = (opts) => M3.stage({ height: opts.height, label: '3D 大樓剖面', fov: 32, pitchMin: -0.3, create: (api) => createTower(api, opts) });
+  M3.tower = (opts) => M3.stage({ height: opts.height, label: '3D 大樓剖面', fov: 32, pitchMin: -0.3, minFar: 2600, create: (api) => createTower(api, opts) });
 
   const yOf = (level) => (level - 1) * FH;
   const idfPt = (level) => [RX - 2.9, yOf(level) + 1.65, RZ];
@@ -165,6 +165,52 @@
     ispTag.pos.set(-W / 2 - 8, 3, D / 2 + 0.3);
     const b1Tag = api.tag('B1 主機房', 'info', 'left');
     b1Tag.pos.set(-W / 2 + 1, B1 + 4.3, D / 2);
+    /* 戶外的柴油發電機（有安裝才出現），運轉時冒排氣 */
+    const genG = new T.Group();
+    const genBody = K.box(6, 2.6, 2.4, K.std('#d4ad3f', { metalness: 0.3, roughness: 0.5 }));
+    genBody.position.y = 1.3 + 0.3;
+    const genBase = K.box(6.4, 0.3, 2.8, K.std('#2a2f33', { metalness: 0.6 }));
+    genBase.position.y = 0.15;
+    const genPipe = K.cylY(0.18, 1.6, K.std('#5a5f63', { metalness: 0.8, roughness: 0.35 }), 12);
+    genPipe.position.set(1.8, 3.4, 0.3);
+    genG.add(genBody, genBase, genPipe);
+    genG.position.set(W / 2 + 7, 0, -3);
+    genG.userData.pick = { kind: 'gen' };
+    genG.visible = false;
+    root.add(genG);
+    const GEN_TOP = [W / 2 + 7 + 1.8, 4.3, -3 + 0.3];
+    const genTag = api.tag('發電機', 'info');
+    genTag.pos.set(W / 2 + 7, 5.4, -3);
+    genTag.show = false;
+    const alertTag = api.tag('', 'bad', 'center', 4);
+    alertTag.pos.set(0, NF * FH + 6, 0);
+    alertTag.show = false;
+    const FX = fx.emitter(700, 1.1);
+    root.add(FX.obj);
+    const fxState = {};
+    const SPARK0 = fx.rgb('#fff3b0'), SPARK1 = fx.rgb('#ff5a1f'), SMK0 = fx.rgb('#7b8288'), SMK1 = fx.rgb('#2b3035'), HEAT0 = fx.rgb('#ff9a4a'), HEAT1 = fx.rgb('#ff3b30');
+    function tickFx(dt) {
+      const s = G.S, fac = G.R.fac;
+      for (const cb of cables.values()) {
+        if (cb.l.status !== 'cut') continue;
+        const k = FX.rate(fxState, 'cut' + cb.l.id, 36, dt);
+        for (let i = 0; i < k; i++) FX.emit(cb.cutPt, { v: [0, 2, 0], spread: 8, life: 0.6, g: 14, c0: SPARK0, c1: SPARK1, s0: 0.55, s1: 0.15, a: 1 });
+      }
+      for (const x of isps.values()) {
+        if (!x.c.outage) continue;
+        const k = FX.rate(fxState, 'isp' + x.c.id, 24, dt);
+        for (let i = 0; i < k; i++) FX.emit([-W / 2 - 8, 0.8, D / 2 + 0.4], { v: [0, 3, 0.5], spread: 7, life: 0.6, g: 14, c0: SPARK0, c1: SPARK1, s0: 0.55, s1: 0.15, a: 1 });
+      }
+      if (fac && fac.genRunning && genG.visible) {
+        const k = FX.rate(fxState, 'gen', 9, dt);
+        for (let i = 0; i < k; i++) FX.emit(GEN_TOP, { v: [0.8, 3.6, 0], spread: 1.2, life: 3.4, c0: SMK0, c1: SMK1, s0: 1.2, s1: 4.2, a: 0.6 });
+      }
+      if (s.temp >= 30) {
+        const k = FX.rate(fxState, 'heat', Math.min(24, (s.temp - 29) * 2.5), dt);
+        for (let i = 0; i < k; i++) FX.emit([U.rand(-W / 2 + 4, W / 2 - 4), B1 + 3.9, U.rand(-D / 2 + 2, D / 2 - 2)], { v: [0, 0.7, 0], spread: 0.4, life: 2.2, c0: HEAT0, c1: HEAT1, s0: 1.4, s1: 3, a: 0.32 });
+      }
+      FX.tick(dt);
+    }
     /* 預設取景：大樓 + 雲（不含大片地面） */
     const frameBox = new T.Mesh(new T.BoxGeometry(1, 1, 1), new T.MeshBasicMaterial({ visible: false }));
     frameBox.scale.set(W / 2 + 52, NF * FH + 18, D / 2 + 24);
@@ -252,7 +298,9 @@
         const mesh = fx.tubeAlong(pts, 0.17, lineMat(CAT.cables[l.cable].color, 1));
         mesh.userData.pick = { kind: 'link', id: l.id };
         cableG.add(mesh);
-        const cb = { l, fid: f.id, pts, path: fx.path(pts), mesh, dn: 0, up: 0, on: true };
+        /* 斷線時冒火花的位置：豎井裡、這層樓下方不遠處 */
+        const cutPt = [pts[1][0], pts[1][1] + (pts[2][1] - pts[1][1]) * Math.min(0.5, 6 / Math.max(6, pts[1][1] - pts[2][1])), pts[1][2]];
+        const cb = { l, fid: f.id, pts, path: fx.path(pts), mesh, dn: 0, up: 0, on: true, cutPt };
         cableCols(cb);
         cables.set(l.id, cb);
       });
@@ -448,13 +496,18 @@
       if (sC !== sigC || rebuilt) { sigC = sC; buildCables(); }
       const sI = s.isp.map((c) => `${c.id}:${c.router}`).join(',');
       if (sI !== sigI || rebuilt) { sigI = sI; buildIsps(); }
-      /* 樓層 */
+      /* 樓層（停電時：沒有 UPS 的 IDF 熄燈） */
+      const facP = G.R.fac;
       floors.forEach((fl, L) => {
         const fs = s.floors[fl.f.id];
         fl.col = floorHex(fl.f);
-        fl.lit = Math.round(U.clamp(fs.movedIn / fl.f.staff, 0, 1) * per);
+        /* 亮燈的窗 = 現在真的在座的人（上班時間多、半夜只剩客服夜班） */
+        const stp = sim.floors[fl.f.id];
+        const present = stp && stp.up ? stp.present : fs.movedIn * G.Net.presence(s.time, fl.f.type);
+        fl.lit = Math.round(U.clamp(present / fl.f.staff, 0, 1) * per);
         const stt = G.Views.building.floorStatus(fl.f.id);
-        fl.led.material.color.copy(C(HEX[stt.c] || HEX.none));
+        const unpowered = facP && facP.idfPowered && facP.idfPowered[fl.f.id] === false;
+        fl.led.material.color.copy(C(unpowered ? '#20262b' : HEX[stt.c] || HEX.none));
         fl.idf.visible = fs.idf.count > 0 || fs.cabling.status !== 'none';
         fl.tag.set(fl.f.id, stt.c || '');
       });
@@ -492,6 +545,17 @@
         sp.blink = blink;
       }
       b1Tag.set(`B1 主機房 · ${s.racks.length} 座機櫃 · ${s.temp.toFixed(1)}°C`, fac && !fac.mdfPowered ? 'bad' : s.temp >= 27 ? 'warn' : 'info');
+      /* 發電機與停電警示 */
+      const gen = s.room.some((r) => CAT.room[r.model].kind === 'generator' && r.status === 'ok' && s.time >= (r.readyAt || 0));
+      genG.visible = gen;
+      genTag.show = gen && !!(fac && fac.genRunning);
+      if (genTag.show) genTag.set('⚡ 發電機運轉中', 'warn');
+      let alert = '';
+      if (fac && fac.outage) {
+        alert = fac.genRunning ? '⚡ 市電中斷：發電機供電中' : fac.onBattery ? `⚡ 市電中斷：機房靠 UPS 撐住（${Math.round(s.power.upsCharge * 100)}%）` : !fac.mdfPowered ? '⚡ 大樓停電：機房也斷電了' : '⚡ 大樓停電';
+      } else if (fac && fac.overheat) alert = '🔥 機房過熱：設備緊急關機';
+      alertTag.show = !!alert;
+      if (alert) alertTag.set(alert, 'bad');
       /* 攻擊 */
       const plan = attackPlans();
       const sA = plan.plans.map((p) => p.inc.id + ':' + p.ns.join('>') + ':' + p.blocked).join('|') + '#' + plan.marks.map((m) => m.fid).join(',');
@@ -499,6 +563,7 @@
       floors.forEach((fl, L) => paintFloor(L, 1));
       win.instanceColor.needsUpdate = true;
       refreshSel();
+      syncSky();
     }
 
     /* ---------- 圖例 ---------- */
@@ -560,6 +625,10 @@
         return inc && inc.status === 'active' ? [inc.title, '沿著實際路由移動的紅點 = 攻擊流量'] : null;
       }
       if (p.kind === 'inet') return ['網際網路', '所有外部流量（包含攻擊）都從這裡進來'];
+      if (p.kind === 'gen') {
+        const fac = G.R.fac || {};
+        return ['柴油發電機（戶外）', fac.genRunning ? '運轉中：市電中斷，由發電機供電' : '待命中：市電中斷約 1 分鐘內自動啟動', 'UPS 負責撐過發電機啟動前的空檔'];
+      }
       return null;
     }
     function renderSel() {
@@ -571,6 +640,7 @@
       const acts = [];
       if (cur.kind === 'floor') {
         acts.push(btn(`進入 ${cur.id} 規劃`, () => opts.onFloor && opts.onFloor(cur.id), true));
+        if (opts.onFloor3d) acts.push(btn('走進樓層（3D）', () => opts.onFloor3d(cur.id)));
         acts.push(btn('拉近', () => { const fl = floors.find((x) => x.f.id === cur.id); if (fl) api.focus(fl.glass, 0.55); }));
       } else if (cur.kind === 'b1') acts.push(btn('進入機房', () => opts.onRack && opts.onRack(), true));
       else if (cur.kind === 'dev') acts.push(btn('到機房查看', () => opts.onDev && opts.onDev(cur.id), true));
@@ -600,6 +670,69 @@
       if (!L) { renderSel(); return; }
       if (selEls.title.textContent !== L[0]) selEls.title.textContent = L[0];
       U.mount(selEls.lines, ...L.slice(1).filter(Boolean).map((x) => U.h('div', {}, x)));
+    }
+
+    /* ---------- 日夜：天空顏色、太陽 / 月亮、星星、燈光亮度隨遊戲時間變化 ---------- */
+    const skyC = document.createElement('canvas');
+    skyC.width = 4; skyC.height = 256;
+    const skyT = new T.CanvasTexture(skyC);
+    skyT.encoding = T.sRGBEncoding;
+    const sky = new T.Mesh(new T.SphereGeometry(900, 32, 16), new T.MeshBasicMaterial({ map: skyT, side: T.BackSide, depthWrite: false }));
+    sky.raycast = () => {};
+    sky.renderOrder = -10;
+    root.add(sky);
+    const sun = new T.Mesh(new T.SphereGeometry(22, 20, 14), new T.MeshBasicMaterial({ color: C('#fff1c2') }));
+    const moon = new T.Mesh(new T.SphereGeometry(13, 20, 14), new T.MeshBasicMaterial({ color: C('#dfe7ff') }));
+    sun.raycast = moon.raycast = () => {};
+    root.add(sun, moon);
+    const STARS = fx.points(260, 2.2, { additive: true });
+    STARS.obj.renderOrder = -9;
+    root.add(STARS.obj);
+    const starDir = [];
+    for (let i = 0; i < 260; i++) {
+      const a = Math.random() * Math.PI * 2, e = Math.asin(0.12 + Math.random() * 0.86);
+      starDir.push([Math.cos(e) * Math.cos(a) * 840, Math.sin(e) * 840, Math.cos(e) * Math.sin(a) * 840, 0.4 + Math.random() * 0.6]);
+    }
+    const WHITE = [1, 1, 1];
+    const KEYS = [
+      [0, '#060a14', '#141b33'], [4.8, '#060a14', '#141b33'], [6, '#2b3a67', '#f0a66a'], [7.6, '#4f8fd6', '#bcdcf2'],
+      [16.4, '#4f8fd6', '#bcdcf2'], [18, '#39407c', '#f0895c'], [19.6, '#0b1122', '#1e2748'], [24, '#060a14', '#141b33'],
+    ];
+    const lerpHex = (a, b, t) => { const A = fx.rgb(a), B = fx.rgb(b); return `rgb(${Math.round((A[0] + (B[0] - A[0]) * t) * 255)},${Math.round((A[1] + (B[1] - A[1]) * t) * 255)},${Math.round((A[2] + (B[2] - A[2]) * t) * 255)})`; };
+    const lights = api.scene.children.filter((o) => o.isLight);
+    const lightBase = lights.map((l) => l.intensity);
+    let skyHour = -1;
+    function syncSky() {
+      const hr = U.hourOf(G.S.time);
+      if (Math.abs(hr - skyHour) < 0.1) return;
+      skyHour = hr;
+      let k = 0;
+      while (k < KEYS.length - 2 && KEYS[k + 1][0] <= hr) k++;
+      const a = KEYS[k], b = KEYS[k + 1], f = (hr - a[0]) / Math.max(0.01, b[0] - a[0]);
+      /* 鏡頭多半往下看，地平線以下（遠方霧氣）也跟著時間變色，整個背景才看得出日夜 */
+      const top = lerpHex(a[1], b[1], f), hor = lerpHex(a[2], b[2], f);
+      const g = skyC.getContext('2d');
+      const gr = g.createLinearGradient(0, 0, 0, 256);
+      gr.addColorStop(0, top);
+      gr.addColorStop(0.42, hor);
+      gr.addColorStop(0.62, hor);
+      gr.addColorStop(1, top);
+      g.fillStyle = gr; g.fillRect(0, 0, 4, 256);
+      g.fillStyle = 'rgba(8,11,15,0.45)';
+      g.fillRect(0, 150, 4, 106);
+      skyT.needsUpdate = true;
+      /* 太陽 6 點升起、18 點落下；月亮相反 */
+      const sa = (hr - 6) / 12 * Math.PI, ma = (hr - 18) / 12 * Math.PI;
+      sun.position.set(Math.cos(sa) * -620, Math.sin(sa) * 520, -420);
+      moon.position.set(Math.cos(ma) * -620, Math.sin(ma) * 480, -420);
+      sun.visible = sun.position.y > -30;
+      moon.visible = moon.position.y > -20;
+      const day = U.clamp(Math.sin(sa) * 2.2 + 0.2, 0, 1);
+      lights.forEach((l, i) => { l.intensity = lightBase[i] * (0.42 + 0.58 * day); });
+      const night = 1 - U.clamp(Math.sin(sa) * 3 + 0.6, 0, 1);
+      STARS.begin();
+      if (night > 0.02) for (const s of starDir) STARS.push(s[0], s[1], s[2], WHITE, s[3] * night, 1);
+      STARS.end();
     }
 
     const tmp = [0, 0, 0];
@@ -645,6 +778,7 @@
           }
         }
         P.end();
+        tickFx(dt);
         for (const m of marks) m.s.material.emissiveIntensity = Math.sin(t * 6) > 0 ? 2.4 : 0.3;
         for (const sp of strips) if (sp.blink) sp.st.visible = Math.sin(t * Math.PI * sp.blink) > -0.2; else if (!sp.st.visible) sp.st.visible = true;
         beacon.material.emissiveIntensity = Math.sin(t * 3) > 0.6 ? 2.4 : 0.3;
@@ -676,7 +810,7 @@
         for (const fl of floors) fl.tag.remove();
         for (const a of atks) if (a.tag) a.tag.remove();
         for (const m of marks) if (m.tag) m.tag.remove();
-        for (const t of [shaftTag, inetTag, ispTag, b1Tag]) t.remove();
+        for (const t of [shaftTag, inetTag, ispTag, b1Tag, genTag, alertTag]) t.remove();
         for (const m of Object.values(stripM)) m.dispose();
         for (const m of matCache.values()) m.dispose();
       },

@@ -224,8 +224,197 @@
       },
       cooling: () => { const f = G.R.fac; if (!f || !f.coolingOn || f.coolCap <= 0) return 0; return U.clamp(f.coolCap / Math.max(f.heat, 3), 0.25, 1); },
       warm: () => U.clamp((G.S.temp - 21) / 14, 0, 1),
+      /* 拉近看設備時，氣流淡出，不擋住面板 */
+      alpha: () => U.clamp((api.zoomRatio() - 0.18) / 0.35, 0, 1),
     });
     root.add(air.obj);
+
+    /* ---- 接線：遊戲裡真實的連線，從設備的埠拉到機櫃上方的線槽 ---- */
+    const cableG = new T.Group();
+    root.add(cableG);
+    const CP = fx.points(1200, 0.5);
+    root.add(CP.obj);
+    const TRAY_Y = R.H + 2.95;
+    const trayZ = (row) => (row === 0 ? ROW - 2 : -ROW + 2);
+    const EXIT = { riser: new T.Vector3(ROOM.x0 + 7, ROOM.h - 2, ROOM.z0 + 0.35), isp: new T.Vector3(ROOM.x0 + 0.35, R.H + 4.5, -5) };
+    const plateM = K.std('#59636b', { metalness: 0.5, roughness: 0.5 });
+    const riserPlate = K.box(3.4, 1.4, 0.3, plateM);
+    riserPlate.position.set(EXIT.riser.x, EXIT.riser.y, ROOM.z0 + 0.15);
+    const ispPlate = K.box(0.3, 1.4, 2.6, plateM);
+    ispPlate.position.set(ROOM.x0 + 0.15, EXIT.isp.y, EXIT.isp.z);
+    root.add(riserPlate, ispPlate);
+    const exitTags = { riser: api.tag('↑ 往各樓層（弱電豎井）', 'info'), isp: api.tag('ISP 專線進線', 'info') };
+    exitTags.riser.pos.set(EXIT.riser.x, EXIT.riser.y + 1.5, EXIT.riser.z + 0.4);
+    exitTags.isp.pos.set(EXIT.isp.x + 0.4, EXIT.isp.y + 1.5, EXIT.isp.z);
+    let cables = [], sigL = '';
+    let dark = fx.isDark();
+    const cabMats = new Map();
+    const cabMat = (hex, mode) => {
+      const k = hex + mode;
+      if (!cabMats.has(k)) {
+        cabMats.set(k, mode === 'ghost' ? K.std(hex, { transparent: true, opacity: 0.3, depthWrite: false })
+          : mode === 'hot' ? K.std(hex, { roughness: 0.5, emissive: C('#ff7a1a'), emissiveIntensity: 0.9 })
+            : K.std(hex, { roughness: 0.55, metalness: 0.1, emissive: C(hex), emissiveIntensity: 0.12 }));
+      }
+      return cabMats.get(k);
+    };
+    const cableCols = (cb) => { const base = fx.rgb(cb.hex); cb.c1 = dark ? fx.mix(base, [1, 1, 1], 0.55) : fx.mix(base, [0, 0, 0], 0.2); cb.c2 = dark ? base : fx.mix(base, [0, 0, 0], 0.4); };
+    const offTheme = G.bus.on('theme', () => { dark = fx.isDark(); for (const cb of cables) cableCols(cb); });
+
+    /** 設備的連接埠在哪一面、哪個位置（交換器多在前面板；伺服器的網卡在背面） */
+    const portSpot = new Map();
+    function portOf(model) {
+      if (portSpot.has(model)) return portSpot.get(model);
+      const rg = proto(model).regions || { front: [], rear: [] };
+      const isPort = (t) => /SFP|QSFP|RJ45|1G|網卡|介面|上行|埠/.test(t) && !/Console|MGMT|BMC|管理埠|HA/.test(t);
+      let r = (rg.front || []).find((n) => isPort(n.text)), face = 'front';
+      if (!r) { r = (rg.rear || []).find((n) => isPort(n.text)); face = 'rear'; }
+      const spot = r ? { x: r.p.x, y: r.p.y, z: r.p.z, face } : { x: 1.2, y: 0, z: 2, face: 'front' };
+      portSpot.set(model, spot);
+      return spot;
+    }
+    const perDev = new Map();
+    /** 設備端：埠的位置、往外拉出一點、往上到線槽高度（世界座標） */
+    function devEnd(id) {
+      const di = devInfo.get(id), d = G.S.devices[id];
+      if (!di || !d) return null;
+      const sp = portOf(d.model);
+      const k = perDev.get(id) || 0;
+      perDev.set(id, k + 1);
+      const zc = R.zRail + 0.03 - di.depth / 2;
+      const out = sp.face === 'front' ? 1 : -1;
+      di.ri.g.updateMatrixWorld(true);
+      const x = U.clamp(sp.x + ((k % 7) - 3) * 0.13, -2.05, 2.05);
+      const y = di.y + sp.y + (Math.floor(k / 7) % 2) * 0.08;
+      const L = (dz, yy) => di.ri.g.localToWorld(new T.Vector3(x, yy === undefined ? y : yy, zc + sp.z + out * dz));
+      return { a: L(0.03), b: L(0.55), up: L(0.55, TRAY_Y - 0.5), row: di.ri.p.dir > 0 ? 0 : 1, face: sp.face, ri: di.ri };
+    }
+    const V3 = (v) => [v.x, v.y, v.z];
+    function buildCables() {
+      const s = G.S;
+      for (const o of cableG.children.slice()) { cableG.remove(o); o.geometry.dispose(); }
+      cables = [];
+      perDev.clear();
+      let lane = 0, anyFloor = false, anyIsp = false;
+      const route = (E, tail, mid) => {
+        const lx = ((lane % 7) - 3) * 0.16, ly = (Math.floor(lane / 7) % 4) * 0.13;
+        lane++;
+        const pts = [V3(E.a), V3(E.b), V3(E.up), [E.up.x, TRAY_Y + ly, trayZ(E.row) + lx]];
+        for (const p of mid(lx, ly)) pts.push(p);
+        for (const p of tail) pts.push(p);
+        return pts;
+      };
+      for (const l of Object.values(s.links)) {
+        const fa = l.a.startsWith('F:'), fb = l.b.startsWith('F:');
+        let pts = null, smooth = false;
+        if (fa || fb) {
+          const E = devEnd(fa ? l.b : l.a);
+          if (!E) continue;
+          anyFloor = true;
+          pts = route(E, [], (lx, ly) => [[EXIT.riser.x + lx, TRAY_Y + ly, trayZ(E.row) + lx], [EXIT.riser.x + lx, TRAY_Y + ly, ROOM.z0 + 0.6], [EXIT.riser.x + lx, EXIT.riser.y - 0.3, ROOM.z0 + 0.6]]);
+        } else {
+          const A = devEnd(l.a), B = devEnd(l.b);
+          if (!A || !B) continue;
+          if (A.ri === B.ri && A.face === 'front' && B.face === 'front') {
+            const dz = A.b.clone().sub(A.a).normalize().multiplyScalar(0.7);
+            pts = [V3(A.a), V3(A.b), [(A.b.x + B.b.x) / 2 + 0.3, (A.b.y + B.b.y) / 2, (A.b.z + B.b.z) / 2 + dz.z], V3(B.b), V3(B.a)];
+            smooth = true;
+          } else {
+            pts = route(A, [V3(B.up), V3(B.b), V3(B.a)], (lx, ly) => (A.row !== B.row ? [[A.up.x, TRAY_Y + ly, trayZ(B.row) + lx], [B.up.x, TRAY_Y + ly, trayZ(B.row) + lx]] : [[B.up.x, TRAY_Y + ly, trayZ(A.row) + lx]]));
+          }
+        }
+        const hex = CAT.cables[l.cable].color;
+        const mesh = smooth ? K.tube(pts, 0.075, cabMat(hex, 'ok'), 40, 6) : fx.tubeAlong(pts, 0.075, cabMat(hex, 'ok'));
+        mesh.userData.pick = { kind: 'link', id: l.id };
+        cableG.add(mesh);
+        const cb = { l, hex, mesh, path: fx.path(smooth ? new T.CatmullRomCurve3(pts.map((p) => new T.Vector3(p[0], p[1], p[2]))).getPoints(30) : pts), ab: 0, ba: 0, on: false };
+        cableCols(cb);
+        cables.push(cb);
+      }
+      for (const c of s.isp) {
+        const E = c.router && devEnd(c.router);
+        if (!E) continue;
+        anyIsp = true;
+        const pts = route(E, [], (lx, ly) => [[ROOM.x0 + 2 + lx, TRAY_Y + ly, trayZ(E.row) + lx], [ROOM.x0 + 2 + lx, TRAY_Y + ly, EXIT.isp.z + lx], [ROOM.x0 + 0.6, EXIT.isp.y - 0.2, EXIT.isp.z + lx]]);
+        const mesh = fx.tubeAlong(pts, 0.085, cabMat('#f2c14e', 'ok'));
+        mesh.userData.pick = { kind: 'isp', id: c.id };
+        cableG.add(mesh);
+        const cb = { isp: c, hex: '#f2c14e', mesh, path: fx.path(pts), ab: 0, ba: 0, on: false };
+        cableCols(cb);
+        cables.push(cb);
+      }
+      exitTags.riser.show = anyFloor;
+      exitTags.isp.show = anyIsp;
+    }
+    function syncCables() {
+      const s = G.S, sim = G.R.sim || { links: {}, isp: {} };
+      const sig = sigR + '#' + Object.values(s.links).map((l) => `${l.id}:${l.a}:${l.b}:${l.cable}`).join(',') + '#' + s.isp.map((c) => c.id + ':' + c.router).join(',');
+      if (sig !== sigL) { sigL = sig; buildCables(); }
+      for (const cb of cables) {
+        if (cb.l) {
+          const l = cb.l, ls = sim.links[l.id];
+          const building = G.Net.linkBuilding(l), up = G.Net.linkUp(l);
+          cb.on = up;
+          cb.ab = ls && ls.cap ? ls.ab / ls.cap : 0;
+          cb.ba = ls && ls.cap ? ls.ba / ls.cap : 0;
+          cb.mesh.material = building ? cabMat('#8a96a0', 'ghost') : l.status !== 'up' ? cabMat('#f25f5c', 'ok') : Math.max(cb.ab, cb.ba) >= 0.9 ? cabMat(cb.hex, 'hot') : cabMat(cb.hex, 'ok');
+          /* 連到樓層的線：從機房看出去，流量往樓層 = a→b 或 b→a */
+          if (l.a.startsWith('F:')) { const t = cb.ab; cb.ab = cb.ba; cb.ba = t; }
+        } else {
+          const c = cb.isp, st = sim.isp[c.id];
+          cb.on = !!(st && st.up);
+          cb.ab = st && st.cap ? st.out / st.cap : 0;
+          cb.ba = st && st.cap ? st.in / st.cap : 0;
+          cb.mesh.material = c.outage ? cabMat('#f25f5c', 'ok') : !cb.on ? cabMat('#8a96a0', 'ghost') : cabMat(cb.hex, 'ok');
+        }
+      }
+    }
+    const tmpP = [0, 0, 0];
+    function tickCables(t) {
+      CP.begin();
+      for (const cb of cables) {
+        if (!cb.on) continue;
+        const L = cb.path.len;
+        const na = cb.ab > 0.0005 ? Math.min(6, 1 + Math.round(cb.ab * 6)) : 0;
+        const nb = cb.ba > 0.0005 ? Math.min(6, 1 + Math.round(cb.ba * 6)) : 0;
+        const va = (30 + cb.ab * 80) / L, vb = (30 + cb.ba * 80) / L;
+        for (let i = 0; i < na; i++) { cb.path.at((t * va + i / na) % 1, tmpP); CP.push(tmpP[0], tmpP[1], tmpP[2], cb.c1, 0.95, 1); }
+        for (let i = 0; i < nb; i++) { cb.path.at(1 - ((t * vb + i / nb + 0.5 / nb) % 1), tmpP); CP.push(tmpP[0], tmpP[1], tmpP[2], cb.c2, 0.8, 0.8); }
+      }
+      CP.end();
+    }
+
+    /* ---- 事件臨場感：故障設備冒煙、機房過熱的熱浪、UPS 供電中的琥珀警示光 ---- */
+    const FX = fx.emitter(520, 1.4);
+    root.add(FX.obj);
+    const fxState = {};
+    const SMOKE0 = fx.rgb('#a3abb1'), SMOKE1 = fx.rgb('#4a5258'), HEAT0 = fx.rgb('#ff9a4a'), HEAT1 = fx.rgb('#ff3b30');
+    const upsLight = new T.PointLight(0xffb13b, 0, 45);
+    root.add(upsLight);
+    const tmpV = new T.Vector3();
+    function tickFx(dt, t) {
+      const s = G.S, fac = G.R.fac;
+      for (const [id, di] of devInfo) {
+        const d = s.devices[id];
+        if (!d || d.status !== 'failed') continue;
+        const k = FX.rate(fxState, 'smk' + id, 6, dt);
+        for (let i = 0; i < k; i++) {
+          di.ri.g.localToWorld(tmpV.set(U.rand(-1.8, 1.8), di.y + di.h / 2 + 0.1, R.zRail + 0.25));
+          FX.emit([tmpV.x, tmpV.y, tmpV.z], { v: [0, 3.2, 0.5 * di.ri.p.dir], spread: 1.3, life: 2.8, c0: SMOKE0, c1: SMOKE1, s0: 0.7, s1: 2.8, a: 0.55 });
+        }
+      }
+      if (s.temp >= 30 && rackInfo.length) {
+        const k = FX.rate(fxState, 'heat', Math.min(30, (s.temp - 29) * 3), dt);
+        for (let i = 0; i < k; i++) {
+          const ri = rackInfo[Math.floor(Math.random() * rackInfo.length)];
+          FX.emit([ri.p.x + U.rand(-3, 3), R.H + 0.4, ri.p.z - ri.p.dir * U.rand(1, 6)], { v: [0, 2.2, 0], spread: 1, life: 3, c0: HEAT0, c1: HEAT1, s0: 1.2, s1: 3.4, a: 0.28 });
+        }
+      }
+      const ups = facInfo.find((fi) => CAT.room[fi.r.model].kind === 'ups' && fi.g.visible);
+      if (ups) upsLight.position.set(ups.g.position.x, 14, ups.g.position.z + 7);
+      upsLight.intensity = fac && fac.onBattery && ups ? (Math.sin(t * 4) > 0 ? 2.2 : 0.5) : 0;
+      FX.tick(dt);
+    }
 
     /* ---- 狀態同步 ---- */
     const devState = (d) => {
@@ -276,6 +465,7 @@
       const s = G.S, fac = G.R.fac;
       const sR = s.racks.map((r) => r.id).join(',') + '|' + Object.values(s.devices).filter((d) => d.rack).map((d) => `${d.id}:${d.model}:${d.rack}:${d.u}`).join(',');
       if (sR !== sigR) { sigR = sR; buildRacks(); if (!first) api.refit(); }
+      syncCables();
       const sF = s.room.map((r) => r.id + ':' + r.model).join(',');
       if (sF !== sigF) { sigF = sF; buildFacilities(); }
       for (const [id, di] of devInfo) {
@@ -321,6 +511,8 @@
       animating: () => true,
       tick(dt, t) {
         air.tick(dt);
+        tickCables(t);
+        tickFx(dt, t);
         for (const di of devInfo.values()) if (di.blink) di.led.visible = Math.sin(t * Math.PI * di.blink) > -0.2;
         else if (!di.led.visible) di.led.visible = true;
         for (const fi of facInfo) if (fi.bc.visible) fi.bc.material.emissiveIntensity = Math.sin(t * 8) > 0 ? 2.2 : 0.2;
@@ -328,7 +520,7 @@
         alarm.intensity = fac && !fac.mdfPowered ? (Math.sin(t * 5) > 0 ? 2.2 : 0.3) : 0;
         M.slot.opacity = 0.2 + 0.15 * (0.5 + 0.5 * Math.sin(t * 4));
       },
-      pickables: () => [racksG, facG, slotG],
+      pickables: () => [racksG, facG, slotG, cableG],
       focusFill: (p) => (p.kind === 'dev' ? 0.3 : p.kind === 'slot' ? 0.2 : 0.62),
       clickable: (p) => p.kind === 'dev' || p.kind === 'rack' || p.kind === 'slot',
       tip(p) {
@@ -355,6 +547,18 @@
           const d = sel.armed && s.devices[sel.armed];
           return d ? [`安裝到 ${p.rack} 第 ${p.u}U`, `${d.name}（${CAT.devices[d.model].u}U）`, '點一下上架'] : null;
         }
+        if (p.kind === 'link') {
+          const l = s.links[p.id];
+          if (!l) return null;
+          const ls = G.R.sim && G.R.sim.links[l.id];
+          const st = G.Net.linkBuilding(l) ? '施工中' : l.status !== 'up' ? '中斷！' : G.Net.linkUp(l) ? '正常' : '一端設備沒有運作';
+          const toFloor = l.a.startsWith('F:') || l.b.startsWith('F:');
+          return [`${G.Q.nodeName(l.a)} ⇄ ${G.Q.nodeName(l.b)}`, `${CAT.cables[l.cable].name} · ${U.speed(l.speed)} × ${l.count}`, `狀態：${st}${ls ? ' · 使用率 ' + U.pct(ls.util) : ''}`, toFloor ? '經線槽到弱電豎井，再往上到樓層 IDF' : '機房內跳線：走機櫃上方的線槽'];
+        }
+        if (p.kind === 'isp') {
+          const c = s.isp.find((x) => x.id === p.id);
+          return c ? [`${CAT.isp.providers[c.provider].name} ${c.plan} 專線`, `ISP 單模光纖（OS2）接到 ${s.devices[c.router] ? s.devices[c.router].name : '路由器'}`] : null;
+        }
         return null;
       },
       click(p) {
@@ -363,7 +567,11 @@
         else if (p.kind === 'slot' && opts.onSlot) opts.onSlot(p.rack, p.u);
         selSig = '';
       },
-      dispose() { for (const t of [...tags.racks, ...tags.fac, tags.alert]) t.remove(); },
+      dispose() {
+        offTheme();
+        for (const t of [...tags.racks, ...tags.fac, tags.alert, exitTags.riser, exitTags.isp]) t.remove();
+        for (const m of cabMats.values()) m.dispose();
+      },
     };
   }
 })(window.G = window.G || {});

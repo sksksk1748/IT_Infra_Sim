@@ -102,6 +102,45 @@
     };
   };
 
+  /**
+   * 粒子發射器（火花、煙、熱浪）：emit(pos, opts) 產生一顆粒子，tick(dt) 更新並繪製。
+   * opts：{ v:[vx,vy,vz], spread, life, g（重力）, c0, c1（顏色 0→1）, s0, s1（大小倍率）, a（透明度） }
+   */
+  fx.emitter = (n, size) => {
+    const P = fx.points(n, size);
+    const parts = [];
+    const c = [0, 0, 0];
+    return {
+      obj: P.obj,
+      emit(p, o) {
+        if (parts.length >= n) parts.shift();
+        const sp = o.spread || 0, v = o.v || [0, 0, 0];
+        parts.push({ x: p[0], y: p[1], z: p[2], vx: v[0] + (Math.random() - 0.5) * sp, vy: v[1] + (Math.random() - 0.5) * sp, vz: v[2] + (Math.random() - 0.5) * sp,
+          t: 0, life: (o.life || 1) * (0.7 + Math.random() * 0.6), g: o.g || 0, c0: o.c0, c1: o.c1 || o.c0, s0: o.s0 || 1, s1: o.s1 === undefined ? (o.s0 || 1) : o.s1, a: o.a === undefined ? 1 : o.a });
+      },
+      /** 依速率（每秒幾顆）持續發射：回傳本幀要發幾顆 */
+      rate(state, key, perSec, dt) {
+        state[key] = (state[key] || 0) + perSec * dt;
+        const k = Math.floor(state[key]);
+        state[key] -= k;
+        return k;
+      },
+      tick(dt) {
+        P.begin();
+        for (let i = parts.length - 1; i >= 0; i--) {
+          const q = parts[i];
+          q.t += dt / q.life;
+          if (q.t >= 1) { parts.splice(i, 1); continue; }
+          q.vy -= q.g * dt;
+          q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
+          for (let k = 0; k < 3; k++) c[k] = q.c0[k] + (q.c1[k] - q.c0[k]) * q.t;
+          P.push(q.x, q.y, q.z, c, q.a * Math.min(1, q.t / 0.08) * (1 - q.t), q.s0 + (q.s1 - q.s0) * q.t);
+        }
+        P.end();
+      },
+    };
+  };
+
   /** 折線路徑：依長度比例取點（t = 0～1） */
   fx.path = (pts) => {
     const P = pts.map((p) => (Array.isArray(p) ? p : [p.x, p.y, p.z]));
@@ -177,13 +216,14 @@
         while (parts.length > P.n) parts.shift();
         P.begin();
         const hot = fx.mix(HOT0, HOT1, U.clamp(warm, 0, 1));
+        const am = opts.alpha ? opts.alpha() : 1;
         for (let i = parts.length - 1; i >= 0; i--) {
           const q = parts[i];
           q.t += dt / q.life;
           if (q.t >= 1) { parts.splice(i, 1); continue; }
           bez(q.p, q.t, tmp);
           const a = Math.min(1, q.t / 0.15) * Math.min(1, (1 - q.t) / 0.3);
-          P.push(tmp[0], tmp[1], tmp[2], q.hot ? hot : COLD, a * (q.hot ? 0.75 : 0.85));
+          if (am > 0.02) P.push(tmp[0], tmp[1], tmp[2], q.hot ? hot : COLD, a * am * (q.hot ? 0.75 : 0.85));
         }
         P.end();
       },

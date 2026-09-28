@@ -55,7 +55,7 @@
     peek() {
       const str = U.store.get(SAVE_KEY);
       if (!str) return null;
-      try { const s = JSON.parse(str); return { mode: s.mode, time: s.time, chapter: s.chapter, money: s.money }; } catch (e) { return null; }
+      try { const s = JSON.parse(str); return { mode: s.mode, time: s.time, chapter: s.chapter, money: s.money, scen: s.scen ? s.scen.id : null }; } catch (e) { return null; }
     },
     load() {
       const str = U.store.get(SAVE_KEY);

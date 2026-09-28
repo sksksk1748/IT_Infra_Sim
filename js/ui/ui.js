@@ -260,7 +260,9 @@
     const wrap = h('div', { class: 'mission' });
     const closeBtn = h('button', { class: 'btn ghost sm close-side', onclick: () => UI.toggleSide(false) }, '關閉');
     const ch = G.Campaign.current();
-    if (ch) {
+    if (s.scen && UI.scenSide) {
+      UI.scenSide(wrap, closeBtn);
+    } else if (ch) {
       const done = ch.objectives.filter((o) => s.obj[o.id]).length;
       wrap.append(
         h('div', { class: 'row between' }, h('span', { class: 'label' }, s.won ? '劇情完成 · 自由營運中' : `劇情模式 · 第 ${s.chapter + 1} / ${G.Campaign.chapters.length} 章`), closeBtn),
@@ -315,6 +317,8 @@
 
   /* ---------- 對話框 ---------- */
   UI.modal = (opt) => {
+    /* 開始畫面時遊戲介面還沒建立：先在 body 放一個對話框容器 */
+    if (!els.modals || !els.modals.isConnected) { els.modals = h('div', {}); document.body.appendChild(els.modals); }
     const back = h('div', { class: 'modal-back' });
     const m = h('div', { class: 'modal' + (opt.wide ? ' wide' : ''), role: 'dialog', 'aria-modal': 'true' });
     const entry = { back, blocking: opt.blocking !== false, dismissible: opt.dismissible !== false, onClose: opt.onClose };
@@ -415,8 +419,11 @@
     const last = idx === G.Campaign.chapters.length - 1;
     UI.modal({
       kicker: '章節完成', title: ch.title, wide: true, dismissible: false, onClose: () => { UI._doneOpen = false; },
-      body: [...ch.outro.map((p) => h('p', {}, p)), statsBlock()],
-      actions: [{ label: last ? '查看結局' : '前往下一章', kind: 'primary', onClick: () => { G.Campaign.nextChapter(s); UI.renderSide(); } }],
+      body: [...ch.outro.map((p) => h('p', {}, p)), statsBlock(),
+        h('div', { class: 'note info' }, h('b', {}, '章節小測驗　'), '用 5 題檢查這一章的觀念，答錯會附上解說與知識卡。')],
+      actions: [
+        { label: '做本章小測驗', kind: 'ghost', close: false, onClick: () => { UI.quiz(idx); return false; } },
+        { label: last ? '查看結局' : '前往下一章', kind: 'primary', onClick: () => { G.Campaign.nextChapter(s); UI.renderSide(); } }],
     });
   };
   function statsBlock() {
@@ -555,7 +562,8 @@
     const topics = ['Router 路由器', 'Switch 交換器', '機櫃與 U 數', '跨樓層光纖主幹', 'Wi-Fi 覆蓋與容量', '外網 / DMZ / 內網', '防火牆規則', '即時流量監控', 'DDoS', '勒索軟體', '事件應變'];
     const menu = h('div', { class: 'menu' });
     if (peek) {
-      const where = peek.mode === 'sandbox' ? '沙盒模式' : `第 ${peek.chapter + 1} 章`;
+      const sd = peek.scen && G.Scen ? G.Scen.def(peek.scen) : null;
+      const where = sd ? `情境挑戰：${sd.title}` : peek.mode === 'sandbox' ? '沙盒模式' : `第 ${peek.chapter + 1} 章`;
       menu.appendChild(h('button', { class: 'btn primary', onclick: () => { const st = G.State.load(); if (!st) { UI.toast('存檔讀取失敗', 'bad'); return; } G.Engine.boot(st); UI.hideTitle(); UI.build(); if (st.gameOver) UI.gameOver(st.gameOver); } },
         '繼續遊戲', h('small', {}, `${where} · ${U.dayLabel(peek.time)} ${U.clock(peek.time)}`)));
     }
@@ -567,6 +575,7 @@
     menu.append(
       h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '五章，從空機房到萬人企業')),
       h('button', { class: 'btn', onclick: () => startNew('sandbox') }, '沙盒模式', h('small', {}, '預算 1.5 億，自由建設')),
+      h('button', { class: 'btn', onclick: () => UI.scenPicker() }, '情境挑戰', h('small', {}, '限時處理事件 · 評分')),
       h('button', { class: 'btn ghost', onclick: () => UI.importSave() }, '匯入存檔', h('small', {}, '')));
     const scr = h('div', { class: 'title-screen', id: 'title' },
       h('div', { class: 'title-inner' },

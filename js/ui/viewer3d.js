@@ -78,11 +78,11 @@
       for (const m of mats) { if (m.map && !m.map.m3dShared) m.map.dispose(); m.dispose(); }
     });
   }
-  function camAt(cam, center, dist, yaw, pitch) {
+  function camAt(cam, center, dist, yaw, pitch, minFar) {
     const cp = Math.cos(pitch);
     cam.position.set(center.x + dist * cp * Math.sin(yaw), center.y + dist * Math.sin(pitch), center.z + dist * cp * Math.cos(yaw));
     cam.near = Math.max(0.001, dist / 200);
-    cam.far = dist * 20;
+    cam.far = Math.max(dist * 20, minFar || 0);
     cam.updateProjectionMatrix();
     cam.lookAt(center);
     cam.updateMatrixWorld();
@@ -104,6 +104,26 @@
       dist *= m / fill;
     }
     return dist;
+  }
+  /** 透視投影下近大遠小：把取景中心往畫面空的那一側挪，讓外框上下左右留白一致，再重新計算距離 */
+  function balanceFit(cam, f, yaw, pitch, fill) {
+    const T = M3.T();
+    const c = f.center.clone();
+    let d = fitDist(cam, f, yaw, pitch, fill);
+    const b = f.bbox, pts = [];
+    for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) pts.push(new T.Vector3(x, y, z));
+    const up = new T.Vector3(), rt = new T.Vector3(), tmp = new T.Vector3();
+    for (let it = 0; it < 3; it++) {
+      camAt(cam, c, d, yaw, pitch);
+      let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+      for (const p of pts) { tmp.copy(p).project(cam); x0 = Math.min(x0, tmp.x); x1 = Math.max(x1, tmp.x); y0 = Math.min(y0, tmp.y); y1 = Math.max(y1, tmp.y); }
+      const th = Math.tan(cam.fov * Math.PI / 360) * d;
+      up.setFromMatrixColumn(cam.matrixWorld, 1);
+      rt.setFromMatrixColumn(cam.matrixWorld, 0);
+      c.addScaledVector(up, ((y0 + y1) / 2) * th).addScaledVector(rt, ((x0 + x1) / 2) * th * cam.aspect);
+      d = fitDist(cam, { bbox: b, center: c, radius: f.radius }, yaw, pitch, fill);
+    }
+    return { center: c, dist: d };
   }
   function framing(obj) {
     const T = M3.T();
@@ -420,6 +440,8 @@
     api.home = home;
     /** 場景範圍改變時重新計算預設取景（使用者沒移動過鏡頭就直接套用） */
     api.refit = () => resize();
+    /** 目前鏡頭距離 / 預設距離（1 = 全景，越小代表拉得越近） */
+    api.zoomRatio = () => (v.homeV && v.dist ? v.dist / v.homeV.dist : 1);
     /** 把鏡頭飛到某個物件（保持目前角度） */
     api.focus = (obj, fill) => {
       if (!v.camera) return;
@@ -469,11 +491,12 @@
       if (v.sc) {
         const f = framing(v.sc.frame || v.sc.obj);
         const vw = v.sc.view || {};
-        const d = fitDist(v.camera, f, vw.yaw, vw.pitch, vw.fill || 0.8);
-        v.homeV = { center: f.center.clone(), dist: d, yaw: vw.yaw, pitch: vw.pitch };
+        const fit = vw.balance ? balanceFit(v.camera, f, vw.yaw, vw.pitch, vw.fill || 0.8) : { center: f.center, dist: fitDist(v.camera, f, vw.yaw, vw.pitch, vw.fill || 0.8) };
+        const d = fit.dist;
+        v.homeV = { center: fit.center.clone(), dist: d, yaw: vw.yaw, pitch: vw.pitch };
         v.minD = d * 0.06; v.maxD = d * 2.2;
         v.bounds = f;
-        if (v.atHome && !v.fly) { v.center = f.center.clone(); v.dist = d; v.yaw = vw.yaw; v.pitch = vw.pitch; }
+        if (v.atHome && !v.fly) { v.center = fit.center.clone(); v.dist = d; v.yaw = vw.yaw; v.pitch = vw.pitch; }
       }
       v.needs = true;
     }
@@ -501,7 +524,7 @@
         if (f.t >= 1) v.fly = null;
       }
       if (v.sc.tick) v.sc.tick(dt, now / 1000);
-      camAt(v.camera, v.center, v.dist, v.yaw, v.pitch);
+      camAt(v.camera, v.center, v.dist, v.yaw, v.pitch, opts.minFar);
       v.renderer.render(v.scene, v.camera);
       placeTags();
       v.needs = false;
@@ -530,7 +553,9 @@
         let o = hit.object;
         while (o && !(o.userData && o.userData.pick)) o = o.parent;
         if (o) {
-          const data = hit.instanceId !== undefined ? Object.assign({ inst: hit.instanceId }, o.userData.pick) : o.userData.pick;
+          let data = hit.instanceId !== undefined ? Object.assign({ inst: hit.instanceId }, o.userData.pick) : o.userData.pick;
+          /* pickPoint：場景需要知道點在哪裡（例如樓層地板上的哪一格） */
+          if (o.userData.pickPoint) data = Object.assign({ pt: [hit.point.x, hit.point.y, hit.point.z] }, data);
           const focus = v.sc.focusObj ? v.sc.focusObj(data) : null;
           return { data, obj: focus || o, point: hit.point, fill: v.sc.focusFill ? v.sc.focusFill(data) : 0.55 };
         }
