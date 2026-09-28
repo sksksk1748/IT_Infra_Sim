@@ -23,6 +23,17 @@
       }
     }
     const card = G.KB.byId[V.sel];
-    el.appendChild(h('div', { class: 'kb-layout' }, list, h('div', { class: 'card' }, h('div', { class: 'label', style: { marginBottom: '6px' } }, card.cat), h('h3', { style: { fontSize: '22px', fontFamily: 'var(--font-display)', marginBottom: '4px' } }, card.title), UI.kbBody(card))));
+    const models = G.M3 ? G.M3.forKb(card.id) : [];
+    let viewer = null;
+    if (models.length) {
+      // 背景事件也會觸發重繪：同一張卡沿用原本的 3D 檢視器，不重建 WebGL、不重設視角與分頁
+      if (V.m3d && V.m3d.id === card.id && !V.m3d.el.m3dDead) viewer = V.m3d.el;
+      else { viewer = G.M3.viewer(models, { height: window.innerWidth < 760 ? 280 : 340 }); V.m3d = { id: card.id, el: viewer }; }
+    }
+    el.appendChild(h('div', { class: 'kb-layout' }, list, h('div', { class: 'card' },
+      h('div', { class: 'label', style: { marginBottom: '6px' } }, card.cat),
+      h('h3', { style: { fontSize: '22px', fontFamily: 'var(--font-display)', marginBottom: '10px' } }, card.title),
+      viewer ? h('div', { class: 'kb-3d' }, viewer) : null,
+      UI.kbBody(card))));
   };
 })(window.G = window.G || {});

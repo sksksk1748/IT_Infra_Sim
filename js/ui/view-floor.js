@@ -290,7 +290,7 @@
       h('div', { class: 'card-h', style: { marginBottom: '0' } }, h('h3', {}, '② IDF 接入交換器'), h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-poe') }, 'PoE 是什麼？')),
       h('select', { id: 'acc-model', onchange: (e) => { stg.model = e.target.value; V.renderSide(); } },
         Object.entries(CAT.access).map(([id, m]) => h('option', { value: id, selected: id === stg.model || null, disabled: !Q.unlocked(m) || null }, `${m.name} · ${U.money(m.price)}${Q.unlocked(m) ? '' : '（第 ' + m.unlock + ' 章）'}`))),
-      h('div', { class: 'small muted' }, am.desc),
+      h('div', { class: 'row between small muted', style: { alignItems: 'flex-start' } }, h('span', {}, am.desc), G.M3 ? h('button', { class: 'btn xs', onclick: () => G.M3.open([stg.model], am.name) }, '3D 外觀') : null),
       h('div', { class: 'row between' },
         h('div', { class: 'stepper' },
           h('button', { onclick: () => { stg.count = Math.max(0, stg.count - 1); V.renderSide(); }, 'aria-label': '減少' }, '−'),
@@ -364,7 +364,9 @@
             h('span', { class: 'k' }, '連線裝置'), h('span', { class: 'v mono' }, live(() => { const x = st(); const a = x && x.apStats[ap.id]; return a ? Math.round(a.clients) + ' 台' : '—'; })),
             h('span', { class: 'k' }, '負載'), h('span', { class: 'v mono' }, live(() => { const x = st(); const a = x && x.apStats[ap.id]; return a ? U.pct(a.load) : '—'; })),
             h('span', { class: 'k' }, '線長到 IDF'), h('span', { class: 'v mono' }, `${G.Layout.cableToIdf(L, ap.x, ap.y)} m`)),
-          h('button', { class: 'btn danger sm', onclick: () => { UI.res(G.Act.removeAp(V.fid, ap.id)); V.selAp = null; } }, `拆除（回收 ${U.money(m.price * 0.3)}）`)));
+          h('div', { class: 'row wrap' },
+            G.M3 ? h('button', { class: 'btn sm', onclick: () => G.M3.open([ap.model], m.name) }, '3D 外觀') : null,
+            h('button', { class: 'btn danger sm', onclick: () => { UI.res(G.Act.removeAp(V.fid, ap.id)); V.selAp = null; } }, `拆除（回收 ${U.money(m.price * 0.3)}）`))));
       }
     }
   };

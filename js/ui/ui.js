@@ -315,7 +315,8 @@
     const s = G.S;
     if (s.kb.unlocked[id] === undefined) G.Ev.unlockKb(id);
     s.kb.seen[id] = true;
-    UI.modal({ kicker: '知識庫 · ' + c.cat, title: c.title, body: UI.kbBody(c), blocking: true, actions: [{ label: '在知識庫中查看', kind: 'ghost', onClick: () => UI.go('kb:' + id) }, { label: '了解', kind: 'primary' }] });
+    const models = G.M3 ? G.M3.forKb(id) : [];
+    UI.modal({ kicker: '知識庫 · ' + c.cat, title: c.title, wide: models.length > 0, body: [models.length ? G.M3.viewer(models, { height: 260 }) : null, UI.kbBody(c)], blocking: true, actions: [{ label: '在知識庫中查看', kind: 'ghost', onClick: () => UI.go('kb:' + id) }, { label: '了解', kind: 'primary' }] });
   };
 
   /* ---------- 章節、勝利、失敗 ---------- */

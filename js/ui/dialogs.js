@@ -214,6 +214,7 @@
     const acts = h('div', { class: 'row wrap' });
     if (d.rack && m.cat !== 'ups' && opts.onConnect) acts.appendChild(h('button', { class: 'btn primary sm', onclick: () => opts.onConnect(id) }, '連線到…'));
     if (!d.rack) acts.appendChild(h('button', { class: 'btn primary sm', onclick: () => UI.res(G.Act.autoInstall(id)) }, '自動上架'));
+    if (G.M3 && G.M3.has(d.model)) acts.appendChild(h('button', { class: 'btn sm', onclick: () => G.M3.open([d.model], m.name) }, '3D 外觀'));
     if (d.status === 'failed') acts.appendChild(h('button', { class: 'btn warn sm', onclick: () => UI.res(G.Act.rma(id)) }, `RMA 送修（${U.money(m.price * 0.15)}）`));
     acts.appendChild(h('button', { class: 'btn sm', onclick: () => {
       const inp = h('input', { type: 'text', id: 'rename-' + id, value: d.name, maxlength: 16 });

@@ -1,41 +1,45 @@
-/* 採購：網路設備、伺服器、無線、機房設施、ISP 專線 */
+/* 採購：網路設備、伺服器、無線、機房設施、線材與光模組、ISP 專線（每項都附 3D 模型） */
 (function (G) {
   'use strict';
   const U = G.U, h = U.h, CAT = G.CAT, Q = G.Q, UI = G.UI;
   const V = { tab: 'net', provider: 'A' };
   G.Views.shop = V;
-  const TABS = [['net', '網路設備'], ['srv', '伺服器'], ['wifi', '無線網路'], ['facility', '機房設施'], ['isp', 'ISP 專線']];
+  const TABS = [['net', '網路設備'], ['srv', '伺服器'], ['wifi', '無線網路'], ['facility', '機房設施'], ['cable', '線材與光模組'], ['isp', 'ISP 專線']];
+  const thumb = (id, title) => (G.M3 && G.M3.has(id) ? G.M3.thumbButton(id, title) : null);
 
   V.mount = (el, param) => {
     if (param && TABS.some((t) => t[0] === param)) V.tab = param;
     V.el = el;
     const inv = Object.values(G.S.devices).filter((d) => !d.rack).length;
     el.appendChild(h('div', { class: 'view-h' },
-      h('div', {}, h('h2', {}, '採購'), h('div', { class: 'desc' }, '機房設備買來後會先放在倉庫，要到「機房」安裝上架才能通電。樓層的接入交換器與 AP 在「樓層」頁面直接配置。')),
+      h('div', {}, h('h2', {}, '採購'), h('div', { class: 'desc' }, '點圖片可以 360° 旋轉查看設備的 3D 模型與零件說明。機房設備買來後先放在倉庫，要到「機房」上架才能通電；樓層的接入交換器與 AP 在「樓層」頁面配置。')),
       h('div', { class: 'row wrap' }, h('span', { class: 'chip' }, `預算 ${U.money(G.S.money)}`), inv ? h('button', { class: 'btn primary sm', onclick: () => UI.go('rack') }, `倉庫有 ${inv} 台未上架 →`) : null)));
     el.appendChild(h('div', { class: 'tabs' }, TABS.map(([k, t]) => h('button', { class: V.tab === k ? 'on' : '', onclick: () => { V.tab = k; UI.refresh(); } }, t))));
     const grid = h('div', { class: 'shop-grid' });
+    const kbRow = (ids) => el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } }, ids.map((k) => h('button', { class: 'btn ghost xs', onclick: () => UI.openKb(k) }, G.KB.byId[k].title))));
     if (V.tab === 'net') {
-      el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } }, ['k-router', 'k-firewall', 'k-switch', 'k-optics'].map((k) => h('button', { class: 'btn ghost xs', onclick: () => UI.openKb(k) }, G.KB.byId[k].title))));
+      kbRow(['k-router', 'k-firewall', 'k-switch', 'k-optics']);
       for (const [id, m] of Object.entries(CAT.devices)) if (['router', 'firewall', 'switch'].includes(m.cat)) grid.appendChild(devCard(id, m));
     } else if (V.tab === 'srv') {
       el.appendChild(h('div', { class: 'card', style: { marginBottom: '12px' } }, h('h3', { style: { marginBottom: '8px' } }, '伺服器角色'),
         h('div', { class: 'grid c3' }, Object.entries(CAT.roles).map(([k, r]) => h('div', { class: 'small' }, h('b', {}, `${r.short}　${r.name}`), h('div', { class: 'muted' }, r.desc))))));
       for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'server') grid.appendChild(devCard(id, m));
     } else if (V.tab === 'wifi') {
+      kbRow(['k-wifi', 'k-wlc', 'k-poe']);
       for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'wlc') grid.appendChild(devCard(id, m));
       grid.appendChild(h('div', { class: 'card col', style: { gap: '8px' } }, h('b', {}, 'AP 與接入交換器'), h('p', { class: 'small muted' }, 'AP 要裝在樓層的天花板上，接入交換器裝在各樓層的 IDF。請到「樓層」頁面直接配置，平面圖會即時顯示訊號覆蓋。'), h('button', { class: 'btn primary sm', style: { alignSelf: 'flex-start' }, onclick: () => UI.go('floor') }, '前往樓層規劃')));
-      for (const [id, m] of Object.entries(CAT.aps)) grid.appendChild(infoCard(m.name, m.desc, [['容量', U.bw(m.cap)], ['建議連線數', m.maxClients + ' 台'], ['PoE', m.poe + ' W'], ['頻段', m.band === 'ext' ? '5 GHz + 6 GHz' : '5 GHz']], m.price + CAT.apInstallFee, m));
-      for (const [id, m] of Object.entries(CAT.access)) grid.appendChild(infoCard(m.name, m.desc, [['接入埠', `${m.ports} × ${U.speed(m.portSpeed)}`], ['PoE 預算', m.poe + ' W'], ['上行', `${m.uplinks} × ${U.speed(m.uplinkMax)}`]], m.price, m));
+      for (const [id, m] of Object.entries(CAT.aps)) grid.appendChild(infoCard(id, m.name, m.desc, [['容量', U.bw(m.cap)], ['建議連線數', m.maxClients + ' 台'], ['PoE', m.poe + ' W'], ['頻段', m.band === 'ext' ? '5 GHz + 6 GHz' : '5 GHz']], m.price + CAT.apInstallFee, m));
+      for (const [id, m] of Object.entries(CAT.access)) grid.appendChild(infoCard(id, m.name, m.desc, [['接入埠', `${m.ports} × ${U.speed(m.portSpeed)}`], ['PoE 預算', m.poe + ' W'], ['上行', `${m.uplinks} × ${U.speed(m.uplinkMax)}`]], m.price, m));
     } else if (V.tab === 'facility') {
-      el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } }, ['k-rack', 'k-power', 'k-cooling', 'k-ha'].map((k) => h('button', { class: 'btn ghost xs', onclick: () => UI.openKb(k) }, G.KB.byId[k].title))));
+      kbRow(['k-rack', 'k-power', 'k-cooling', 'k-ha']);
       const rk = CAT.rack;
-      grid.appendChild(h('div', { class: 'card prod' }, h('span', { class: 'label' }, '機櫃'), h('b', {}, '標準 42U 機櫃（含雙 PDU）'), h('p', { class: 'small muted' }, `19 吋標準機櫃，${rk.units}U，PDU 電力上限 ${rk.powerLimit / 1000} kW。機房最多 ${rk.maxRacks} 座。`),
+      grid.appendChild(h('div', { class: 'card prod' }, thumb('rack42', '42U 標準機櫃'), h('span', { class: 'label' }, '機櫃'), h('b', {}, '標準 42U 機櫃（含雙 PDU）'), h('p', { class: 'small muted' }, `19 吋標準機櫃，${rk.units}U，PDU 電力上限 ${rk.powerLimit / 1000} kW。機房最多 ${rk.maxRacks} 座。`),
         h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(rk.price)), h('span', { class: 'small muted' }, `已有 ${G.S.racks.length} 座`)),
         h('button', { class: 'btn primary sm', onclick: () => UI.res(G.Act.buyRack()) }, '購買')));
       for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'ups') grid.appendChild(devCard(id, m));
       for (const [id, m] of Object.entries(CAT.room)) if (m.buyable !== false) grid.appendChild(roomCard(id, m));
-    } else ispTab(el, grid);
+    } else if (V.tab === 'cable') cableTab(el, grid, kbRow);
+    else ispTab(el, grid);
     el.appendChild(grid);
   };
 
@@ -63,14 +67,16 @@
     const locked = !Q.unlocked(m);
     const owned = Object.values(G.S.devices).filter((d) => d.model === id);
     return h('div', { class: 'card prod' + (locked ? ' locked-item' : '') },
+      thumb(id, m.name),
       h('div', { class: 'row between' }, h('span', { class: 'label' }, CAT.categories[m.cat].name), locked ? h('span', { class: 'chip' }, `第 ${m.unlock} 章解鎖`) : owned.length ? h('span', { class: 'chip accent' }, `擁有 ${owned.length}`) : null),
       h('b', {}, m.name), h('p', { class: 'small muted' }, m.desc), specGrid(specs(m)),
       h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(m.price)),
         h('button', { class: 'btn primary sm', disabled: locked || null, onclick: () => UI.res(G.Act.buyDevice(id, 1)) }, '購買')));
   }
-  function infoCard(name, desc, rows, price, m) {
+  function infoCard(id, name, desc, rows, price, m) {
     const locked = !Q.unlocked(m);
     return h('div', { class: 'card prod' + (locked ? ' locked-item' : '') },
+      thumb(id, name),
       h('div', { class: 'row between' }, h('span', { class: 'label' }, '樓層設備'), locked ? h('span', { class: 'chip' }, `第 ${m.unlock} 章解鎖`) : null),
       h('b', {}, name), h('p', { class: 'small muted' }, desc), specGrid(rows), h('span', { class: 'price' }, U.money(price)));
   }
@@ -80,9 +86,33 @@
     const rows = m.kind === 'cooling' ? [['冷卻能力', `${m.coolKW} kW`], ['耗電', `${m.powerKW} kW`]] : m.kind === 'ups' ? [['容量', `${m.capW / 1000} kW`], ['滿載續航', `${m.runtime} 分鐘`]] : [['啟動時間', '約 1 分鐘'], ['供電', '含空調、樓層 IDF']];
     rows.push(['安裝工期', U.dur(m.buildMin || 0)]);
     return h('div', { class: 'card prod' + (locked ? ' locked-item' : '') },
+      thumb(id, m.name),
       h('div', { class: 'row between' }, h('span', { class: 'label' }, { cooling: '冷卻', ups: '電力', generator: '電力' }[m.kind]), locked ? h('span', { class: 'chip' }, `第 ${m.unlock} 章解鎖`) : have ? h('span', { class: 'chip accent' }, `已有 ${have}`) : null),
       h('b', {}, m.name), h('p', { class: 'small muted' }, m.desc), specGrid(rows),
       h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(m.price)), h('button', { class: 'btn primary sm', disabled: locked || null, onclick: () => UI.res(G.Act.buyRoom(id)) }, '購買')));
+  }
+
+  /* 線材與光模組：拉線時自動計價，這裡說明規格與外觀 */
+  function cableTab(el, grid, kbRow) {
+    el.appendChild(h('div', { class: 'note', style: { marginBottom: '10px' } }, '線材與光模組不用另外購買：在「拓撲」或「樓層」拉線時，會依長度、速率與條數自動計價。這裡可以看清楚它們長什麼樣子、能跑多遠。'));
+    kbRow(['k-cable', 'k-optics', 'k-mdf']);
+    for (const [id, c] of Object.entries(CAT.cables)) {
+      const dist = CAT.speeds.filter((sp) => c.max[sp]).map((sp) => [U.speed(sp), c.max[sp] >= 10000 ? '10 km' : c.max[sp] + ' m']);
+      grid.appendChild(h('div', { class: 'card prod' }, thumb(id, c.name), h('span', { class: 'label' }, c.medium === 'copper' ? '銅纜' : '光纖'),
+        h('b', {}, c.name), h('p', { class: 'small muted' }, c.desc), specGrid([['線材', `NT$${c.perM} / 公尺`], ['端接施工', `NT$${U.num(c.termCost)} / 條`]].concat(dist.map(([sp, d]) => [sp + ' 最遠', d])))));
+    }
+    const optics = [
+      ['sfp-sr', 'SFP+ 10GBASE-SR', '多模光纖（OM4）用的 10G 模組。', CAT.optics.mmf[10000], '850nm · LC · 400m'],
+      ['sfp-lr', 'SFP+ 10GBASE-LR', '單模光纖（OS2）用的 10G 模組。', CAT.optics.smf[10000], '1310nm · LC · 10km'],
+      ['qsfp-sr4', 'QSFP28 100GBASE-SR4', '多模 100G，使用 MPO 12 芯接頭。', CAT.optics.mmf[100000], '850nm · MPO · 100m'],
+      ['qsfp-lr4', 'QSFP28 100GBASE-LR4', '單模 100G，高樓層主幹常用。', CAT.optics.smf[100000], '1310nm · LC · 10km'],
+    ];
+    for (const [id, name, desc, price, spec] of optics) {
+      grid.appendChild(h('div', { class: 'card prod' }, thumb(id, name), h('span', { class: 'label' }, '光模組'), h('b', {}, name), h('p', { class: 'small muted' }, desc),
+        specGrid([['規格', spec], ['單價', U.money(price) + ' / 顆'], ['一條連線', '兩端各一顆']])));
+    }
+    grid.appendChild(h('div', { class: 'card prod' }, thumb('patch24', '24 埠配線架'), h('span', { class: 'label' }, '結構化布線'), h('b', {}, '配線架（Patch Panel）'),
+      h('p', { class: 'small muted' }, '水平布線工程的每一條網路線，都終結在 IDF 配線架的背面；前面再用短跳線接到接入交換器。費用包含在「水平布線」工程內。')));
   }
 
   function ispTab(el, grid) {
@@ -90,6 +120,8 @@
     el.appendChild(h('div', { class: 'note', style: { marginBottom: '12px' } }, '企業專線需要前置作業時間才會開通，請提早申請。開通後在「拓撲」把 ISP 節點接到路由器。想要備援，請申請不同業者的線路（路由器需支援 BGP 才能同時使用多條）。', h('button', { class: 'btn ghost xs', style: { marginLeft: '6px' }, onclick: () => UI.openKb('k-isp') }, 'ISP 與專線')));
     const prov = h('div', { class: 'seg', style: { marginBottom: '12px' } }, Object.entries(CAT.isp.providers).map(([k, p]) => h('button', { class: V.provider === k ? 'on' : '', onclick: () => { V.provider = k; UI.refresh(); } }, p.name)));
     el.appendChild(h('div', { class: 'row wrap' }, h('span', { class: 'label' }, '業者'), prov));
+    grid.appendChild(h('div', { class: 'card prod' }, thumb('ont', 'ISP 光纖終端設備'), h('span', { class: 'label' }, '開通時由 ISP 安裝'), h('b', {}, 'ISP 光纖終端設備（CPE）'),
+      h('p', { class: 'small muted' }, 'ISP 把單模光纖拉進 B1 機房，接在這台終端設備上，再用 SFP+ 或 RJ45 交接給你的邊界路由器。設備費用含在專線月租內。')));
     for (const [id, p] of Object.entries(CAT.isp.plans)) {
       const locked = !Q.unlocked(p);
       grid.appendChild(h('div', { class: 'card prod' + (locked ? ' locked-item' : '') },
