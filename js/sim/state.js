@@ -39,6 +39,8 @@
         ep: G.Ep.newState(),
         vuln: G.Vuln.newState(),
         access: G.Acc.newState(),
+        /* 實體接線：光模組、懸空的線、自我迴圈（phys.js） */
+        phys: { xcvr: {}, loose: [], self: [], seq: 1 },
         /* 電話：沙盒模式從週一上班開始要有自己的電話交換機（之前用大樓的舊總機） */
         voice: { qos: false, trunk: 0, next: 0, nextAt: 0, graceUntil: mode === 'sandbox' ? U.at(3, 9) : 0 },
         stor: { snap: false, extraTB: 0 },
@@ -89,6 +91,8 @@
       s.ep = s.ep || G.Ep.newState();
       s.vuln = s.vuln || G.Vuln.newState();
       s.access = s.access || G.Acc.newState();
+      /* 沙盒模式全部知識卡都開放：新版本加入的卡片也要解鎖 */
+      if (s.mode === 'sandbox') for (const c of G.KB.cards) if (s.kb.unlocked[c.id] === undefined) s.kb.unlocked[c.id] = s.time;
       /* 舊存檔：加入分支據點；沙盒模式接下來幾天陸續開幕 */
       if (!s.wan) {
         s.wan = G.Wan.newState();
@@ -174,6 +178,12 @@
       const m = CAT.devices[d.model];
       out.rj45.total = m.ports.rj45; out.sfp.total = m.ports.sfp; out.qsfp.total = m.ports.qsfp;
       out.sfp.max = m.sfpMax || 0; out.qsfp.max = m.qsfpMax || 0;
+    }
+    /* 實際插著線的埠（跳線、懸空的線、自我迴圈、ISP 交接） */
+    if (G.Phys && G.S.phys) {
+      const u = G.Phys.used(nodeId);
+      out.rj45.used = u.rj45; out.sfp.used = u.sfp; out.qsfp.used = u.qsfp;
+      return out;
     }
     for (const l of Object.values(G.S.links)) {
       if (l.a === nodeId) out[l.aPort].used += l.count;

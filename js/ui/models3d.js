@@ -475,9 +475,25 @@
       });
       y += rh;
     }
+    /* 每個連接埠的中心位置（mm）：和面板畫法相同的排列（直的一欄兩個埠：上面是奇數號、下面是偶數號） */
+    const slots = { rj45: [], sfp: [], qsfp: [] };
+    for (const lay of layouts) {
+      const s = lay.s;
+      if (s.t !== 'ports' || !slots[s.kind]) continue;
+      const L = portGeom(s);
+      const y0 = lay.y + (lay.h - L.h) / 2 + (s.numbers ? 1.2 : 0);
+      for (let c = 0; c < L.cols; c++) {
+        const gx = lay.x + (c * (L.pw + L.px) + Math.floor(c / L.group) * 3.5) * L.k;
+        for (let r = 0; r < L.rows; r++) {
+          const idx = c * L.rows + r;
+          if (idx >= s.count) continue;
+          slots[s.kind].push({ x: gx + L.pw * L.k / 2, y: y0 + r * (L.ph + L.py) * L.k + L.ph * L.k / 2 });
+        }
+      }
+    }
     const bg = spec.bg || sp.bezel || '#1d2227';
     return {
-      regions,
+      regions, slots,
       draw(g) {
         D.rect(g, 0, 0, W, H, bg);
         const gr = g.createLinearGradient(0, 0, 0, H);
@@ -550,6 +566,8 @@
     g.add(box(W / 100, Hm / 100, Dm / 100, std(sp.body || '#2c3238', { metalness: 0.55, roughness: 0.42 })));
     const notes = [];
     const regions = { front: [], rear: [] };
+    /* 連接埠在 3D 裡的位置（依種類、編號）：3D 機房的跳線會接到實際的那一個埠 */
+    const slots = { front: { rj45: [], sfp: [], qsfp: [] }, rear: { rj45: [], sfp: [], qsfp: [] } };
     const panel = (spec, rear) => {
       if (!spec) return;
       const P = compose(spec, W, Hm, sp);
@@ -557,6 +575,12 @@
       const m = plane(W / 100, Hm / 100, texMat(t, { metalness: 0.25, roughness: 0.58 }));
       if (rear) { m.rotation.y = Math.PI; m.position.z = -Dm / 200 - 0.002; } else m.position.z = Dm / 200 + 0.002;
       g.add(m);
+      for (const k of ['rj45', 'sfp', 'qsfp']) {
+        for (const p of P.slots[k]) {
+          const x = (p.x - W / 2) / 100, y = (Hm / 2 - p.y) / 100;
+          slots[rear ? 'rear' : 'front'][k].push(new T.Vector3(rear ? -x : x, y, (rear ? -1 : 1) * (Dm / 200 + 0.003)));
+        }
+      }
       for (const r of P.regions) {
         const x = (r.x - W / 2) / 100, y = (Hm / 2 - r.y) / 100;
         const n = note([rear ? -x : x, y, (rear ? -1 : 1) * (Dm / 200 + 0.003)], [0, 0, rear ? -1 : 1], r.label);
@@ -604,7 +628,7 @@
       st.position.set(W / 200 - 0.55, Hm / 200 + 0.002, -Dm / 200 + 0.4);
       g.add(st);
     }
-    return { obj: g, notes, regions, dims: [W, Hm, Dm], view: sp.view };
+    return { obj: g, notes, regions, slots, dims: [W, Hm, Dm], view: sp.view };
   }
 
   /* ---------- 設備規格（面板配置與零件說明） ---------- */
@@ -1310,6 +1334,9 @@
     'k-cooling': ['anim-aisle', 'CRAC-25', 'CRAC-60'],
     'k-ha': ['anim-ha', 'ha-pair'],
     'k-lacp': ['om4', 'sfp-sr'],
+    'k-patch': ['sfp-sr', 'sfp-lr', 'qsfp-sr4', 'om4', 'os2'],
+    'k-stp': ['CX-6400', 'AX-48P'],
+    'k-cutover': ['CX-9600', 'CX-6400'],
     'k-dhcpdns': ['SV-1U'],
     'k-nms': ['SV-1U'],
     'k-siem': ['SV-2U'],

@@ -325,6 +325,149 @@
       done: () => (G.Acc.GROUPS.find((x) => x.id === g) || { best: [] }).best.includes(G.S.access.list[g]) }))];
   H['c8-audit'] = () => [look('到「防火牆 → 資安健檢」逐項處理：備份、修補、弱點、門禁、雲端 MFA……', 'fw:audit', () => false)];
 
+  /* ---------- 第九章：割接之夜（機房 → 實體接線） ---------- */
+  const PU = () => G.PatchUI;
+  const pn = (n, p) => G.Phys.name(n, p);
+  /** 先切到「機房 → 實體接線」、選對機櫃，再標出那個埠（last = 埠詳情裡要按的按鈕） */
+  /* 機櫃分頁在兩種模式都有：還在「機櫃」模式時，先標「實體接線」切換鈕 */
+  const needPatch = () => G.Views.rack.mode !== 'patch';
+  const toPatch = ['nav:rack', { k: 'mode:patch', t: '切到「實體接線」' }];
+  const portPath = (n, p, ...last) => {
+    if (needPatch()) return toPatch;
+    const d = S().devices[n];
+    const out = ['nav:rack', 'mode:patch'];
+    if (d && d.rack) out.push('racktab:' + d.rack);
+    out.push({ k: `port:${n}:${p}`, t: `點 ${Q.nodeName(n)} 的 ${pn(n, p)}` });
+    /* 埠詳情裡的按鈕是共用的：選到的是這個埠，才標按鈕 */
+    const sel = PU().sel;
+    return sel && sel.n === n && sel.p === p ? out.concat(last.filter(Boolean)) : out;
+  };
+  const devPath = (n, key) => { if (needPatch()) return toPatch; const d = S().devices[n]; return ['nav:rack', 'mode:patch', d && d.rack ? 'racktab:' + d.rack : null, key].filter(Boolean); };
+  const openPort = (n, p) => () => { const V = G.Views.rack, d = S().devices[n]; V.mode = 'patch'; if (d && d.rack) V.rack = d.rack; if (p) PU().sel = { n, p }; G.UI.go('rack'); };
+  /** 對話框開著時先標對話框裡的按鈕 */
+  const dlg = () => (document.querySelector('[data-hint="confirm-ok"]') ? ['confirm-ok'] : document.querySelector('[data-hint="pp-plug-ok"]') ? ['pp-plug-ok'] : document.querySelector('[data-hint="pp-dlg-ok"]') ? ['pp-dlg-ok'] : null);
+  /** 接一條新線：選起點 →「從這裡接一條新線」→ 點終點 → 對話框按「接上」 */
+  const patchStep = (A, getB, text, done, lacp) => ({ text, short: '接一條新線', go: openPort(A.n, A.p),
+    path: () => {
+      const box = document.querySelector('[data-hint="pp-dlg-lacp"]');
+      if (lacp && box && !box.checked && !box.disabled) return [{ k: 'pp-dlg-lacp', t: '勾選「設定 LACP」' }];
+      const d = dlg();
+      if (d) return d.map((k) => ({ k, t: '按「接上」' }));
+      const B = getB();
+      const f = PU().from;
+      if (f && f.n === A.n && f.p === A.p && B) return portPath(B.n, B.p);
+      if (f) return [{ k: 'pp-cancel', t: '先按「取消」放掉目前的起點' }];
+      return portPath(A.n, A.p, { k: 'pp-from', t: '按「從這裡接一條新線」' });
+    }, done });
+  H['c9-mop'] = () => [{ text: '到「機房」切換到「實體接線」，在「割接計畫」卡片按「打開 MOP」', short: '打開 MOP', go: 'rack:patch', path: ['nav:rack', 'mode:patch', 'cut-mop'], done: () => !!S().cut && S().cut.mopRead }];
+  H['c9-prep'] = () => {
+    const c = S().cut;
+    if (!c) return [];
+    const n = S().devices[c.neu];
+    const self = G.Phys.st().self.find((x) => x.node === c.neu);
+    const lx = G.Phys.st().loose.find((x) => x.node === c.neu && x.tag === 'burnin');
+    return [
+      { text: `在新核心 ${n.name} 的面板右上角把 STP 切到「開」（原廠出貨預設關閉）`, short: '按「STP 開」', go: openPort(c.neu), path: devPath(c.neu, 'pp-stp-on:' + c.neu), done: () => n.stp !== false },
+      self ? { text: `點 ${n.name} 上標著紅色「!」的燒機測試線（${pn(c.neu, self.ap)} ⇄ ${pn(c.neu, self.bp)}），按「拔掉這一端」`, short: '拔掉這一端', go: openPort(c.neu, self.ap), path: portPath(c.neu, self.ap, 'pp-unplug'), done: () => !G.Phys.st().self.some((x) => x.node === c.neu) } : null,
+      lx || self ? { text: '測試線的另一端還插著：點那個埠，按「整條收掉」', short: '整條收掉', go: openPort(c.neu, lx ? lx.pid : self.bp), path: portPath(c.neu, lx ? lx.pid : self.bp, 'pp-remove'), done: () => G.Cut.prepOk() } : null,
+    ];
+  };
+  H['c9-label'] = () => {
+    const c = S().cut;
+    if (!c) return [];
+    return [{ text: `在舊核心 ${Q.nodeName(c.old)} 的面板右上角按「全部循線貼標籤」（窗口前做不花時間；窗口內每條要 6 分鐘）`, short: '全部循線貼標籤', go: openPort(c.old), path: devPath(c.old, 'pp-tagall:' + c.old), done: () => G.Cut.labelsOk() }];
+  };
+  H['c9-mods'] = () => {
+    const c = S().cut;
+    if (!c) return [];
+    const rows = G.Cut.rows();
+    const i = rows.findIndex((x) => !G.Cut.modOk(x));
+    if (i < 0) return [];
+    const r = rows[i];
+    return [{ text: `MOP 第 ${i + 1} 條：點新核心的 ${pn(c.neu, r.newPid)}，插上 ${CAT.xcvr[r.mod].name}（和對端 ${Q.nodeName(r.far)} 同一種）`, short: `插上 ${CAT.xcvr[r.mod].name}`,
+      go: openPort(c.neu, r.newPid), path: portPath(c.neu, r.newPid, { k: 'pp-mod-ok', t: `按「插上模組」（${CAT.xcvr[r.mod].name}）` }), done: () => G.Cut.modOk(r) }];
+  };
+  H['c9-lag'] = () => {
+    const c = S().cut;
+    if (!c || !c.peer || !S().devices[c.peer]) return [];
+    const L = Q.linkBetween(c.neu, c.peer)[0];
+    const ms = L ? L.members : [];
+    const peerFree = () => { const p = G.Phys.free(c.peer, 'qsfp', 1)[0]; return p ? { n: c.peer, p } : null; };
+    const out = [];
+    const bad = ms.find((m) => G.Phys.mState(L, m).code === 'pol');
+    if (bad) {
+      const [n, p] = L.a === c.neu ? [L.a, bad.ap] : [L.b, bad.bp];
+      out.push({ text: '新跳線不通：兩端都收不到光（極性接反）。點新核心這一端，按「翻轉極性」', short: '按「翻轉極性」', go: openPort(n, p), path: portPath(n, p, 'pp-flip'), done: () => G.Phys.mState(L, bad).code !== 'pol' });
+      return out;
+    }
+    for (const q of ['q31', 'q32']) {
+      if (G.Phys.at(c.neu, q)) continue;
+      const second = ms.length >= 1;
+      out.push(patchStep({ n: c.neu, p: q }, peerFree, `新核心 ${pn(c.neu, q)} ⇄ ${Q.nodeName(c.peer)} 的空 QSFP 埠：接一條 100G${second ? '，勾選「設定 LACP」' : ''}`, () => !!G.Phys.at(c.neu, q), second));
+      return out;
+    }
+    if (L && !L.lacp) out.push({ text: '兩條互連還沒有 LACP：點其中一條，按「設定 LACP」', short: '按「設定 LACP」', go: openPort(c.neu, 'q31'), path: portPath(c.neu, L.a === c.neu ? ms[0].ap : ms[0].bp, 'pp-lacp'), done: () => !!L.lacp });
+    return out;
+  };
+  H['c9-window'] = () => [{ text: '準備好了：在「割接計畫」卡片按「快轉到維護窗口」（凌晨 02:00 一到會自動暫停）', short: '快轉到維護窗口', go: 'rack:patch',
+    path: () => (S().skipUntil ? [] : ['nav:rack', 'mode:patch', 'cut-skip']), wait: false, done: () => !!S().cut && S().time >= S().cut.win.start }];
+  H['c9-move'] = () => {
+    const c = S().cut;
+    if (!c) return [];
+    const r = G.CutUI.next();
+    if (!r) return [];
+    const i = c.rows.indexOf(r) + 1;
+    const st = G.Cut.rowState(r);
+    const far = `${Q.nodeName(r.far)} ${pn(r.far, r.farPid)}`;
+    if (st.st === 'todo') return [{ text: `MOP 第 ${i} 條（${far}）：點舊核心的 ${pn(c.old, r.oldPid)}，按「拔掉這一端」`, short: '拔掉這一端', go: openPort(c.old, r.oldPid), path: portPath(c.old, r.oldPid, 'pp-unplug'), done: () => G.Cut.rowState(r).st !== 'todo' }];
+    /* 新核心上的模組不對（或被拔掉了）：先換好模組，再插線 */
+    const modFix = () => ({ text: `新核心 ${pn(c.neu, r.newPid)} 的模組不對（要 ${CAT.xcvr[r.mod].name}）：先換上正確的模組`, short: `插上 ${CAT.xcvr[r.mod].name}`, go: openPort(c.neu, r.newPid),
+      path: portPath(c.neu, r.newPid, { k: 'pp-mod-ok', t: `按「插上模組」（${CAT.xcvr[r.mod].name}）` }), done: () => G.Phys.mod(c.neu, r.newPid) === r.mod });
+    if ((st.st === 'moving' || st.st === 'gone') && r.mod && !G.Phys.at(c.neu, r.newPid) && G.Phys.mod(c.neu, r.newPid) !== r.mod && !dlg()) return [modFix()];
+    if (st.st === 'moving') {
+      const x = G.Phys.st().loose.find((y) => y.node === r.far && y.pid === r.farPid);
+      if (x && PU().hold !== x.id && !dlg()) return [{ text: `拿起 ${far} 那條線懸空的一端`, short: '按「拿起」', go: 'rack:patch', path: ['nav:rack', 'mode:patch', 'pp-take:' + x.id], done: () => PU().hold === (x && x.id) || G.Cut.rowState(r).st !== 'moving' }];
+      return [{ text: `把手上的線插到新核心的 ${pn(c.neu, r.newPid)}${r.short ? `（原本的跳線太短，會請你換一條 ${r.short} m 的新跳線）` : ''}`, short: '插到這個埠', go: openPort(c.neu, r.newPid),
+        path: () => dlg() || portPath(c.neu, r.newPid), done: () => G.Cut.rowState(r).st !== 'moving' }];
+    }
+    if (st.st === 'gone') return [patchStep({ n: r.far, p: r.farPid }, () => ({ n: c.neu, p: r.newPid }), `${far} 沒有接線了：從這個埠接一條新跳線到新核心的 ${pn(c.neu, r.newPid)}`, () => G.Cut.rowState(r).st !== 'gone')];
+    if (st.st === 'bad') {
+      const o = G.Phys.at(r.far, r.farPid);
+      const ms = o && o.t === 'm' ? G.Phys.mState(o.l, o.m) : null;
+      const np = o && o.t === 'm' ? (o.end === 'a' ? o.m.bp : o.m.ap) : r.newPid;
+      const again = () => G.Cut.rowState(r).st !== 'bad';
+      if (ms && ms.code === 'pol') return [{ text: '插上去了，但兩端都收不到光（極性接反）：按「翻轉極性」', short: '按「翻轉極性」', go: openPort(c.neu, np), path: portPath(c.neu, np, 'pp-flip'), done: again }];
+      /* 兩條線接同一台、沒有 LACP：只用一條（另一條待命或被 STP 擋下） */
+      if (ms && (ms.code === 'stby' || ms.code === 'blk')) return [{ text: `${Q.nodeName(r.far)} 和新核心之間有兩條線、但沒有設定 LACP：按「設定 LACP」讓兩條一起轉送`, short: '按「設定 LACP」', go: openPort(c.neu, np), path: portPath(c.neu, np, 'pp-lacp'), done: again }];
+      if (ms && np === r.newPid && (ms.code === 'vlan' || ms.code === 'shut')) {
+        const rn = G.Phys.ROLES[r.role].name;
+        return [{ text: `${pn(c.neu, np)} 的埠設定被改掉了：把「埠的設定」改回「${rn}」`, short: `改成「${rn}」`, go: openPort(c.neu, np), path: portPath(c.neu, np, 'pp-role'), done: again }];
+      }
+      if (ms && np === r.newPid && r.mod && G.Phys.mod(c.neu, np) !== r.mod) return [{ text: `${far} 還不通：${st.text}。新核心這一頭的模組不對：先拔線，換上 ${CAT.xcvr[r.mod].name}`, short: '拔掉這一端', go: openPort(c.neu, np), path: portPath(c.neu, np, 'pp-unplug'), done: again }];
+      return [{ text: `${far} 還不通：${st.text}。拔掉，改插到 MOP 指定的 ${pn(c.neu, r.newPid)}`, short: '拔掉重插', go: openPort(c.neu, np), path: portPath(c.neu, np, 'pp-unplug'), done: again }];
+    }
+    if (st.st === 'other' && st.l) {
+      const o = G.Phys.at(r.far, r.farPid);
+      const [n, p] = o.end === 'a' ? [o.l.b, o.m.bp] : [o.l.a, o.m.ap];
+      return [{ text: `${far} 接錯地方了（${st.text}）：拔掉重插`, short: '拔掉這一端', go: openPort(n, p), path: portPath(n, p, 'pp-unplug'), done: () => G.Cut.rowState(r).st !== 'other' }];
+    }
+    return [];
+  };
+  H['c9-verify'] = () => [look('到「監控」確認每層樓都上線、沒有中斷的服務，觀察 30 分鐘（可以開 5× 讓時間走）', 'noc', () => false)];
+  H['c9-remove'] = () => {
+    const c = S().cut;
+    if (!c) return [];
+    const old = S().devices[c.old];
+    if (!old) return [];
+    const pid = G.Phys.ports(c.old).find((p) => G.Phys.at(c.old, p));
+    if (pid) return [{ text: `拔掉舊核心 ${pn(c.old, pid)} 上剩下的線（${G.Phys.farText(c.old, pid)}）`, short: '拔掉這一端', go: openPort(c.old, pid), path: portPath(c.old, pid, 'pp-unplug'), done: () => !G.Phys.at(c.old, pid) }];
+    const lx = G.Phys.st().loose.find((x) => x.fromNode === c.old);
+    if (lx) return [{ text: '另一端還插在別台設備上：點那個埠，按「整條收掉」', short: '整條收掉', go: openPort(lx.node, lx.pid), path: portPath(lx.node, lx.pid, 'pp-remove'), done: () => !G.Phys.st().loose.includes(lx) }];
+    if (old.rack) return [{ text: `切回「機櫃」檢視，點舊核心 ${old.name}，按「下架」`, short: '按「下架」', go: () => { const V = G.Views.rack; V.mode = 'rack'; V.sel = c.old; V.rack = old.rack; G.UI.go('rack'); },
+      path: () => (G.Views.rack.mode !== 'rack' ? ['nav:rack', { k: 'mode:rack', t: '切回「機櫃」' }] : ['nav:rack', 'racktab:' + old.rack, 'dev:' + c.old, 'uninstall:' + c.old]), done: () => !old.rack }];
+    return [];
+  };
+
   /* ---------- 沙盒：依序檢查基本建設，再來是快要進駐的樓層，最後是緊急報修 ---------- */
   H.__sandbox = (s) => {
     const out = [];

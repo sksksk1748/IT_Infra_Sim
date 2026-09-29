@@ -108,6 +108,53 @@
       },
     },
 
+    /* 由實體接線觸發（phys.js）：迴圈上的交換器都沒開 STP */
+    'storm': {
+      name: '廣播風暴', cat: 'ops', sev: 'crit', kb: 'k-stp', minCh: 1, random: false, detect: 'auto',
+      init(s, inc) {
+        const R = G.R.l2;
+        if (!R || R.stormNodes.size <= 1) return false;
+        inc.data.nodes = Array.from(R.stormNodes);
+        const lp = R.loops.find((x) => x.kind === 'storm');
+        inc.data.where = lp ? (lp.self ? `${Q.nodeName(lp.self.node)} 的 ${G.Phys.name(lp.self.node, lp.self.ap)} ⇄ ${G.Phys.name(lp.self.node, lp.self.bp)}（同一台設備的兩個埠互接）` : `${Q.nodeName(lp.a)} ⇄ ${Q.nodeName(lp.b)} 之間多出來的一條線`) : '不明';
+        const floors = inc.data.nodes.filter((n) => n.startsWith('F:')).length;
+        inc.title = `廣播風暴：${inc.data.nodes.length} 台交換器${floors ? `（含 ${floors} 層樓）` : ''}癱瘓`;
+        E().log(inc, `NMS 告警：核心交換器每秒收到上百萬個廣播封包，CPU 100%，${floors ? `${floors} 層樓` : '機房裡的設備'}全部連線逾時。`);
+        E().log(inc, `迴圈位置：${inc.data.where}。迴圈上的交換器都沒有開 STP，同一個廣播封包在迴圈裡無限循環、越轉越多。`);
+      },
+      tick(s, inc) { if (!G.R.l2 || G.R.l2.stormNodes.size <= 1) E().resolve(inc, 'fixed'); },
+      actions: [
+        { id: 'stp', label: '在迴圈上的交換器啟用 STP（生成樹）', time: 3, verdict: 'good',
+          explain: 'STP 會找出迴圈、把多出來的路徑擋下（Blocking），廣播就不會無限循環。所有交換器都應該開著 STP（RSTP / MSTP），接入埠再加上 BPDU Guard。',
+          run(s, inc) {
+            for (const id of inc.data.nodes) { const d = s.devices[id]; if (d && Q.nodeKind(id) === 'switch' && d.stp === false) d.stp = true; }
+            G.Phys.touch(); G.Phys.refresh();
+          } },
+        { id: 'pull', label: '依告警找出造成迴圈的那條線，拔掉', time: 8, verdict: 'good',
+          explain: '風暴當下最快的止血方法：找到最後接上去、造成迴圈的那條線，拔掉。事後再把 STP 開起來、查清楚為什麼會接錯。',
+          run(s) {
+            const R = G.Phys.refresh();
+            for (const lp of R.loops.filter((x) => x.kind === 'storm')) {
+              if (lp.self) { G.Phys.st().self = G.Phys.st().self.filter((x) => x !== lp.self); continue; }
+              const l = lp.l;
+              if (!l || !s.links[l.id]) continue;
+              l.members = l.members.filter((m) => m !== lp.m);
+              if (!l.members.length) delete s.links[l.id]; else G.Phys.sync(l);
+            }
+            G.Phys.touch(); G.Phys.refresh();
+            G.bus.emit('change', { what: 'links' });
+          } },
+        { id: 'reboot', label: '重開核心交換器', time: 10, verdict: 'bad',
+          explain: '迴圈還在：開機完成的瞬間，風暴馬上再起；重開機的那幾分鐘，全公司更是完全斷線。',
+          run(s) { for (const d of Q.devices('switch')) if (d.rack && Q.isL3(d)) d.bootUntil = s.time + 8; } },
+        { id: 'isp', label: '打電話請 ISP 檢查外部線路', time: 15, verdict: 'bad', explain: '問題在內部的 L2 迴圈，跟 ISP 一點關係都沒有。' },
+      ],
+      review(s, inc) {
+        return ['廣播風暴幾乎都是「接出迴圈」＋「沒開 STP」：新交換器的出廠設定、有人把兩個埠接在一起、多拉一條備援線卻沒設 LACP……',
+          '預防：所有交換器開 STP、接入埠開 BPDU Guard 與風暴控制（storm-control）、上線前先檢查新設備的設定。'];
+      },
+    },
+
     'hw-fail': {
       name: '設備硬體故障', cat: 'ops', sev: 'high', kb: 'k-ha', minCh: 3, cooldown: 2880, detect: 'auto',
       weight: (s) => (Object.values(s.devices).some((d) => d.rack && d.status === 'ok') ? 0.45 : 0),

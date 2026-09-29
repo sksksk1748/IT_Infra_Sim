@@ -56,6 +56,8 @@
   Engine.boot = (state) => {
     G.S = state;
     G.R = { topoVer: 1 };
+    /* 舊存檔：替每條線路補上實體跳線（埠、光模組）；並算好 STP */
+    G.Phys.ensure();
     G.Fac.update(0);
     G.Stor.update();
     G.Ev.applyEffects();
@@ -71,7 +73,19 @@
     G.bus.emit('newgame');
   };
 
+  /** 一次推進好幾分鐘（割接窗口內的實體動作要花時間） */
+  Engine.advance = (n) => {
+    if (Engine.inStep || Engine.advancing) return;
+    Engine.advancing = true;
+    try { for (let i = 0; i < n && G.S && !G.S.gameOver; i++) Engine.step(); } finally { Engine.advancing = false; }
+    G.bus.emit('tick');
+  };
+
   Engine.step = () => {
+    Engine.inStep = true;
+    try { stepOnce(); } finally { Engine.inStep = false; }
+  };
+  function stepOnce() {
     const s = G.S;
     s.time += 1;
     timers(s);
@@ -89,6 +103,9 @@
     if (s.scen && G.Scen) G.Scen.pre(s);
     G.Net.simulate();
     if (s.scen && G.Scen) G.Scen.post(s);
+    /* 廣播風暴告警、割接（第九章）的計時與評分 */
+    G.Phys.watch(s);
+    G.Cut.tick(s);
     if (s.time % 5 === 0) G.Ops.monitor();
     rating(s);
     if (s.time % 1440 === 0) daily(s);
@@ -97,7 +114,7 @@
     if (s.skipUntil && s.time >= s.skipUntil) { s.speed = s.speedBeforeSkip || 5; s.skipUntil = null; G.bus.emit('speed'); }
     if (s.time % 60 === 0) G.State.save(s);
     checkGameOver(s);
-  };
+  }
 
   function timers(s) {
     for (const c of s.isp) {

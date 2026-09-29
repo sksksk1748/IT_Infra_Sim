@@ -30,7 +30,13 @@
     const ch = G.Campaign.current();
     if (ch && !s.won) {
       o = ch.objectives.find((x) => !s.obj[x.id] && !G.Campaign.ready(x));
-      if (!o) return null;
+      /* 條件都達成了、但遊戲暫停中（任務要等時間走一分鐘才會結算）：提示按 ▶ */
+      if (!o) {
+        if (s.speed === 0 && !s.flags['done-' + ch.id] && ch.objectives.some((x) => !s.obj[x.id])) {
+          return { o: { id: '__resume', text: '任務都達成了', hint: '' }, step: { text: '任務條件都達成了：按 ▶（1×）讓時間前進，本章就會完成', short: '按 1× 繼續', path: ['speed:1'], done: () => G.S.speed > 0 }, idx: 0, total: 1 };
+        }
+        return null;
+      }
       try { steps = G.HINTS[o.id] ? G.HINTS[o.id](s) : []; } catch (e) { console.error(e); steps = []; }
     } else if (s.mode === 'sandbox' && G.HINTS.__sandbox) {
       try { steps = G.HINTS.__sandbox(s) || []; } catch (e) { console.error(e); steps = []; }
@@ -64,6 +70,7 @@
     if (p && ['shop', 'fw', 'sys'].includes(v)) out.push(`tab:${v}:${p}`);
     if (p && v === 'floor') out.push('floor:' + p);
     if (p && v === 'wan') out.push('wan-site:' + p);
+    if (p && v === 'rack') out.push('mode:' + p);
     return out;
   };
 

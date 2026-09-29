@@ -216,8 +216,9 @@
     const m = CAT.devices[d.model];
     if (d.host) return G.VM.remove(id);
     if (m.hv && G.VM.onHost(id).length) return err(`${d.name} 上還有 ${G.VM.onHost(id).length} 台 VM：先遷移或刪除`);
-    for (const l of Q.linksOf(id)) delete s.links[l.id];
-    for (const c of s.isp) if (c.router === id) { c.router = null; c.port = null; }
+    for (const l of Q.linksOf(id)) { G.Phys.release(l); delete s.links[l.id]; }
+    for (const c of s.isp) if (c.router === id) { c.router = null; c.port = null; c.pid = null; }
+    G.Phys.dropNode(id);
     delete s.devices[id];
     Act.refund(m.price * 0.4, `出售二手 ${m.name}`);
     topo();
@@ -362,6 +363,8 @@
     if (!Act.spend(pv.cost, `佈線 ${pv.na} ⇄ ${pv.nb}`)) return need(pv.cost);
     const id = Q.nextId('L');
     s.links[id] = { id, a, b, cable, speed, count: pv.count, len: pv.len, aPort: pv.aPort, bPort: pv.bPort, zone: pv.zone, status: 'up', readyAt: s.time + pv.buildMin, cost: pv.cost };
+    /* 實體跳線：自動配埠、插光模組（快速連線 = 請廠商照規格接好） */
+    G.Phys.autoWire(s.links[id]);
     topo();
     changed('links');
     return ok(pv.buildMin ? `垂直主幹施工中，約 ${U.dur(pv.buildMin)} 後完成` : `${pv.na} ⇄ ${pv.nb} 連線完成`, { id });
@@ -375,6 +378,7 @@
     const cost = specSame ? 0 : Math.max(0, pv.cost - Math.round((l.cost || 0) * 0.4));
     if (cost && !Act.spend(cost, `變更線路 ${pv.na} ⇄ ${pv.nb}`)) return need(cost);
     Object.assign(l, { cable, speed, count: pv.count, aPort: pv.aPort, bPort: pv.bPort, zone: pv.zone });
+    if (!specSame) G.Phys.rewire(l);
     if (!specSame) { l.cost = pv.cost; l.readyAt = s.time + pv.buildMin; }
     topo();
     changed('links');
@@ -383,6 +387,7 @@
   Act.deleteLink = (id) => {
     const l = G.S.links[id];
     if (!l) return err('找不到線路');
+    G.Phys.release(l);
     delete G.S.links[id];
     topo();
     changed('links');
@@ -424,7 +429,8 @@
     if (c.bw <= 1000 && P.rj45.total - P.rj45.used > 0) cls = 'rj45';
     else if (P.sfp.max >= Math.min(c.bw <= 1000 ? 1000 : 10000, 10000) && P.sfp.total - P.sfp.used > 0) cls = 'sfp';
     if (!cls) return err(`${d.name} 沒有可用的 WAN 埠`);
-    c.router = routerId; c.port = cls;
+    c.router = routerId; c.port = cls; c.pid = null;
+    G.Phys.ispPort(c);
     topo();
     if (!silent) changed('isp');
     return ok(`${CAT.isp.providers[c.provider].name} ${c.plan} 已接到 ${d.name}`);
@@ -432,7 +438,7 @@
   Act.disconnectIsp = (id) => {
     const c = G.S.isp.find((x) => x.id === id);
     if (!c) return err('找不到線路');
-    c.router = null; c.port = null;
+    c.router = null; c.port = null; c.pid = null; G.Phys.touch();
     topo();
     changed('isp');
     return ok('已從路由器拔除');
@@ -487,6 +493,8 @@
     if (cost < 0) Act.refund(-cost, `${fid} 回收交換器`);
     const wasZero = fs.idf.count === 0;
     fs.idf.model = model; fs.idf.count = count;
+    /* 接入交換器變少：上行跳線搬到還在的埠 */
+    G.Phys.normalize('F:' + fid);
     if (wasZero && count > 0) fs.idf.bootUntil = s.time + 4;
     G.Wifi.invalidate(fid);
     topo();

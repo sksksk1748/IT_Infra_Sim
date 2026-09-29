@@ -134,12 +134,12 @@
 
   /* 線材與光模組：拉線時自動計價，這裡說明規格與外觀 */
   function cableTab(el, grid, kbRow) {
-    el.appendChild(h('div', { class: 'note', style: { marginBottom: '10px' } }, '線材與光模組不用另外購買：在「拓撲」或「樓層」拉線時，會依長度、速率與條數自動計價。這裡可以看清楚它們長什麼樣子、能跑多遠。'));
+    el.appendChild(h('div', { class: 'note', style: { marginBottom: '10px' } }, '線材與光模組不用另外購買：在「拓撲」或「樓層」拉線時，會依長度、速率與條數自動計價；在「機房 → 實體接線」自己接線時，可以自己挑光模組與跳線。這裡可以看清楚它們長什麼樣子、能跑多遠。'));
     kbRow(['k-cable', 'k-optics', 'k-mdf']);
     for (const [id, c] of Object.entries(CAT.cables)) {
       const dist = CAT.speeds.filter((sp) => c.max[sp]).map((sp) => [U.speed(sp), c.max[sp] >= 10000 ? '10 km' : c.max[sp] + ' m']);
-      grid.appendChild(h('div', { class: 'card prod' }, thumb(id, c.name), h('span', { class: 'label' }, c.medium === 'copper' ? '銅纜' : '光纖'),
-        h('b', {}, c.name), h('p', { class: 'small muted' }, c.desc), specGrid([['線材', `NT$${c.perM} / 公尺`], ['端接施工', `NT$${U.num(c.termCost)} / 條`]].concat(dist.map(([sp, d]) => [sp + ' 最遠', d])))));
+      grid.appendChild(h('div', { class: 'card prod' }, thumb(id, c.name), h('span', { class: 'label' }, c.medium === 'copper' ? '銅纜' : c.medium === 'dac' ? '直連銅纜' : '光纖'),
+        h('b', {}, c.name), h('p', { class: 'small muted' }, c.desc), specGrid((c.medium === 'dac' ? [['價格', 'NT$1,200～12,000 / 條（依速率，兩端含模組）']] : [['線材', `NT$${c.perM} / 公尺`], ['端接施工', `NT$${U.num(c.termCost)} / 條`]]).concat(dist.map(([sp, d]) => [sp + ' 最遠', d])))));
     }
     const optics = [
       ['sfp-sr', 'SFP+ 10GBASE-SR', '多模光纖（OM4）用的 10G 模組。', CAT.optics.mmf[10000], '850nm · LC · 400m'],

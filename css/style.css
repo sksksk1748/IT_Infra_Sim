@@ -657,3 +657,46 @@ g.hint-glow .body { stroke: #f5c518 !important; stroke-width: 3 !important; }
 .hint-bubble.above::before { top: auto; bottom: -6px; }
 .hint-card { margin-top: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid #f5c518; background: rgba(245, 197, 24, 0.1); display: flex; flex-direction: column; gap: 4px; }
 @media (prefers-reduced-motion: reduce) { .hint-glow, g.hint-glow { animation: none; } }
+
+/* ---------- 實體接線工作台（機房 → 實體接線） ---------- */
+.pp-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: 14px; align-items: start; }
+@media (max-width: 1180px) { .pp-layout { grid-template-columns: minmax(0, 1fr); } }
+.pp-scroll { overflow-x: auto; background: #1a1f24; border: 1px solid #2c353c; border-radius: 6px; padding: 6px 4px 2px; }
+.pp-face { display: block; height: auto; max-width: 100%; }
+.pp-port { cursor: pointer; outline: none; }
+.pp-port:hover .pp-cage { stroke: var(--accent); }
+.pp-port:focus-visible .pp-cage { stroke: var(--accent); stroke-width: 1.6; }
+.pp-cage { fill: #0f1519; stroke: #3b4a55; stroke-width: 0.8; }
+.pp-cage.rj45 { fill: #0a0e11; }
+.pp-rj { fill: none; stroke: #3d4a53; stroke-width: 1; }
+.pp-num { font-size: 5.5px; fill: #6b808b; text-anchor: middle; dominant-baseline: middle; font-family: var(--font-mono); pointer-events: none; }
+.pp-led { fill: #2b343b; stroke: rgba(0, 0, 0, 0.45); stroke-width: 0.4; }
+.pp-led.on { fill: #3fe07a; }
+.pp-led.blk { fill: #ffb020; }
+.pp-led.err { fill: #ff5a4f; }
+.pp-led.storm { fill: #3fe07a; animation: ppStorm 0.16s steps(2) infinite; }
+.pp-led.vlan { stroke: #ffb020; stroke-width: 1.2; }
+@keyframes ppStorm { 50% { fill: #ffb020; } }
+.pp-ring { fill: none; stroke: var(--accent); stroke-width: 1.6; pointer-events: none; }
+.pp-port.from .pp-ring { stroke-dasharray: 3 2; }
+.pp-port.target .pp-cage { stroke: #5fe0d3; stroke-dasharray: 2 1.5; }
+.pp-cord { stroke: rgba(0, 0, 0, 0.35); stroke-width: 0.4; }
+.pp-dangle { fill: none; stroke-width: 2.4; stroke-linecap: round; }
+.pp-q { font-size: 8px; font-weight: 800; fill: #ffb020; font-family: var(--font-mono); pointer-events: none; }
+.pp-q.warn { fill: #ff5a4f; }
+g.hint-glow .pp-cage { stroke: #f5c518 !important; stroke-width: 2.2 !important; }
+.pp-sh { font-family: var(--font-mono); font-size: 11.5px; line-height: 1.5; background: #070b0e; color: #b6f3c6; padding: 8px 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-word; margin: 0; }
+.pp-dev.hl { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); }
+.pp-hold { border-color: var(--accent); background: var(--accent-soft); }
+.pp-cut { border-color: color-mix(in srgb, var(--accent-2) 55%, var(--line)); }
+.pp-banner { background: var(--warn-soft); border: 1px solid var(--warn); color: var(--text); padding: 8px 12px; border-radius: var(--radius); font-weight: 600; margin-bottom: 10px; font-size: 13px; }
+.pp-banner.over { background: var(--bad-soft); border-color: var(--bad); }
+.pp-odf { padding: 3px 0; border-bottom: 1px dashed var(--line); }
+.pp-odf:last-child { border-bottom: none; }
+.pp-odfcard summary, .pp-legend summary { cursor: pointer; }
+.pp-mop td, .pp-mop th { padding: 4px 6px; white-space: nowrap; font-size: 12px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 3px; }
+.seg button.on.bad { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+.pp-grade { width: 64px; height: 64px; border-radius: 14px; display: grid; place-items: center; font: 800 36px var(--font-display); border: 2px solid currentColor; flex: none; }
+.pp-grade.ok { color: var(--ok); } .pp-grade.info { color: var(--info); } .pp-grade.warn { color: var(--warn); } .pp-grade.bad { color: var(--bad); }
+@media (prefers-reduced-motion: reduce) { .pp-led.storm { animation: none; fill: #ffb020; } }

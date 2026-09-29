@@ -89,6 +89,7 @@
         (a.startsWith('F:') || b.startsWith('F:')) ? h('span', { class: 'chip info' }, `垂直主幹：經弱電豎井到 B1（施工 ${U.dur(CAT.riserBuildMin)}）`) : h('span', { class: 'chip' }, '機房內跳線')));
       const cab = h('div', { class: 'grid c2' });
       for (const [id, c] of Object.entries(CAT.cables)) {
+        if (c.pick === false) continue;
         const maxD = c.max[spec.speed];
         const ok = maxD && len <= maxD;
         cab.appendChild(h('button', { class: 'btn' + (spec.cable === id ? ' on' : ''), style: { justifyContent: 'flex-start', textAlign: 'left', whiteSpace: 'normal' }, onclick: () => { spec.cable = id; render(); } },
@@ -184,7 +185,8 @@
       h('span', { class: 'k' }, '類別'), h('span', { class: 'v' }, CAT.categories[m.cat].name + (m.layer ? `（L${m.layer}）` : '')),
       h('span', { class: 'k' }, '位置'), h('span', { class: 'v mono' }, d.rack ? `${d.rack} · U${d.u}${m.u > 1 ? '–' + (d.u + m.u - 1) : ''}` : '倉庫（未上架）'),
       h('span', { class: 'k' }, CAT.infra(m) ? '供電' : '耗電'), h('span', { class: 'v mono' }, m.cat === 'ups' ? `${(m.capW / 1000).toFixed(0)} kW` : m.cat === 'power' ? `${(m.psuN * m.psuW / 1000).toFixed(0)} kW（${m.psuN} × ${m.psuW / 1000} kW PSU）` : m.cat === 'bbu' ? `備援 ${(m.bbuW / 1000).toFixed(0)} kW` : m.watts >= 1000 ? `${(m.watts / 1000).toFixed(1)} kW` : `${m.watts} W`),
-      z ? h('span', { class: 'k' }, '安全區域') : null, z ? h('span', { class: 'v' }, zoneText(z.zone)) : null));
+      z ? h('span', { class: 'k' }, '安全區域') : null, z ? h('span', { class: 'v' }, zoneText(z.zone)) : null,
+      m.cat === 'switch' ? h('span', { class: 'k' }, '生成樹 STP') : null, m.cat === 'switch' ? h('span', { class: 'v ' + (d.stp === false ? 'warn-t' : '') }, d.stp === false ? '關閉（接出迴圈會引發廣播風暴）' : '開啟（RSTP）') : null));
     /* AI：GPU 伺服器、電源櫃、BBU */
     const fac = G.R.fac;
     if (m.gpu) {
@@ -272,14 +274,20 @@
       for (const l of links) {
         const ls = sim.links && sim.links[l.id];
         const other = Q.other(l, id);
+        /* 實體層：有幾條跳線沒在轉送（STP 阻擋、模組不對、極性接反……） */
+        const idle = (l.members || []).filter((m) => !G.Phys.mState(l, m).fwd).length;
         list.appendChild(h('div', { class: 'row between small', style: { cursor: opts.onLink ? 'pointer' : 'default' }, onclick: opts.onLink ? () => opts.onLink(l.id) : null },
-          h('span', {}, '→ ', Q.nodeName(other), l.zone && Q.nodeKind(id) === 'firewall' ? h('span', { class: 'chip', style: { marginLeft: '4px' } }, ZONE_NAMES[l.zone]) : null),
-          h('span', { class: 'mono ' + (l.status !== 'up' ? 'bad-t' : ls ? U.utilClass(ls.util) + '-t' : '') }, `${UI.linkLabel(l)}${l.status !== 'up' ? ' 中斷' : ls ? ' ' + U.pct(ls.util) : ''}`)));
+          h('span', {}, '→ ', Q.nodeName(other), l.zone && Q.nodeKind(id) === 'firewall' ? h('span', { class: 'chip', style: { marginLeft: '4px' } }, ZONE_NAMES[l.zone]) : null,
+            l.lacp && l.members && l.members.length > 1 ? h('span', { class: 'chip', style: { marginLeft: '4px' } }, 'LACP') : null),
+          h('span', { class: 'mono ' + (l.status !== 'up' || (idle && idle === (l.members || []).length) ? 'bad-t' : idle ? 'warn-t' : ls ? U.utilClass(ls.util) + '-t' : '') },
+            `${UI.linkLabel(l)}${l.status !== 'up' ? ' 中斷' : idle === (l.members || []).length && idle ? ' 不通' : ls ? ' ' + U.pct(ls.util) : ''}${idle && idle < l.members.length ? `（${idle} 條沒轉送）` : ''}`)));
       }
       card.appendChild(h('div', {}, h('div', { class: 'label', style: { marginBottom: '4px' } }, '連線'), list));
     }
     const acts = h('div', { class: 'row wrap' });
     if (d.rack && !CAT.infra(m) && opts.onConnect) acts.appendChild(h('button', { class: 'btn primary sm', onclick: () => opts.onConnect(id) }, '連線到…'));
+    /* 看實際的埠：插了哪些模組、跳線、燈號 */
+    if (d.rack && !CAT.infra(m)) acts.appendChild(h('button', { class: 'btn sm', 'data-hint': 'patch-dev:' + id, onclick: () => { const V = G.Views.rack; V.mode = 'patch'; V.rack = d.rack; if (G.PatchUI) G.PatchUI.sel = null; UI.go('rack'); } }, '實體接線'));
     if (!d.rack) acts.appendChild(h('button', { class: 'btn primary sm', onclick: () => UI.res(G.Act.autoInstall(id)) }, '自動上架'));
     if (G.M3 && G.M3.has(d.model)) acts.appendChild(h('button', { class: 'btn sm', onclick: () => G.M3.open([d.model], m.name) }, '3D 外觀'));
     if (d.status === 'failed') acts.appendChild(h('button', { class: 'btn warn sm', onclick: () => UI.res(G.Act.rma(id)) }, `RMA 送修（${U.money(m.price * 0.15)}）`));
@@ -287,7 +295,7 @@
       const inp = h('input', { type: 'text', id: 'rename-' + id, value: d.name, maxlength: 16 });
       UI.modal({ title: '重新命名', body: [inp], blocking: true, actions: [{ label: '取消', kind: 'ghost' }, { label: '確定', kind: 'primary', onClick: () => UI.res(G.Act.renameDevice(id, inp.value)) }] });
     } }, '改名'));
-    if (d.rack) acts.appendChild(h('button', { class: 'btn sm', onclick: () => UI.res(G.Act.uninstallDevice(id)) }, '下架'));
+    if (d.rack) acts.appendChild(h('button', { class: 'btn sm', 'data-hint': 'uninstall:' + id, onclick: () => UI.res(G.Act.uninstallDevice(id)) }, '下架'));
     acts.appendChild(h('button', { class: 'btn danger sm', 'data-hint': 'sell:' + d.id, onclick: () => UI.confirm('出售設備', `出售 ${d.name}？會拆除它的所有連線，回收 ${U.money(m.price * 0.4)}。`, '出售', () => UI.res(G.Act.sellDevice(id)), 'danger') }, '出售'));
     card.appendChild(acts);
     return card;

@@ -50,13 +50,15 @@
     if (id.startsWith('F:')) return Net.floorUp(id.slice(2));
     return Net.devUp(G.S.devices[id]);
   };
-  Net.linkUp = (l) => l.status === 'up' && !Net.linkBuilding(l) && Net.nodeUp(l.a) && Net.nodeUp(l.b);
+  Net.linkUp = (l) => l.status === 'up' && !Net.linkBuilding(l) && Net.nodeUp(l.a) && Net.nodeUp(l.b) && G.Phys.cap(l) > 0;
 
   const idNum = (id) => parseInt(String(id).replace(/\D/g, ''), 10) || 0;
 
   /* ---------- 路由圖 ---------- */
   function buildGraph() {
     const s = G.S;
+    /* 實體層：STP 阻擋、廣播風暴（phys.js） */
+    G.R.l2 = G.Phys.l2();
     const nodes = new Map(), adj = new Map(), edges = new Map();
     const add = (id, info) => { nodes.set(id, info); adj.set(id, []); };
     const edge = (a, b, key, cap, lat, link) => {
@@ -94,7 +96,10 @@
     for (const l of Object.values(s.links)) {
       if (l.status !== 'up' || Net.linkBuilding(l)) continue;
       if (!nodes.has(l.a) || !nodes.has(l.b)) continue;
-      edge(l.a, l.b, l.id, l.speed * l.count, 0.05, l);
+      /* 容量 = 正常轉送的實體跳線速率總和（模組不對、極性接反、STP 擋下的都不算） */
+      const cap = G.Phys.cap(l);
+      if (cap <= 0) continue;
+      edge(l.a, l.b, l.id, cap, 0.05, l);
     }
     /* VM 掛在所在主機的虛擬交換器上：主機只轉送「往自己 VM」的流量，不會替兩台交換器當橋接 */
     for (const d of Object.values(s.devices)) {
@@ -781,7 +786,7 @@
     const linkSt = {};
     for (const l of Object.values(s.links)) {
       const e = g.edges.get(l.id);
-      const cap = l.speed * l.count;
+      const cap = G.Phys.cap(l) || G.Phys.nominal(l) || l.speed * l.count;
       const LD = (k) => (load.get(k) || 0) + (loadP.get(k) || 0);
       const ab = LD(l.id + '>' + l.b), ba = LD(l.id + '>' + l.a);
       linkSt[l.id] = { ab, ba, cap, util: e ? Math.max(ab, ba) / cap : 0, up: !!e };

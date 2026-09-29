@@ -1,4 +1,4 @@
-/* 劇情模式：八個章節、任務目標、進駐時程、據點開幕與劇本事件 */
+/* 劇情模式：九個章節、任務目標、進駐時程、據點開幕與劇本事件 */
 (function (G) {
   'use strict';
   const U = G.U, CAT = G.CAT, Q = G.Q;
@@ -389,7 +389,42 @@
         { id: 'c8-audit', text: '資安健檢評分 A', hint: '到「防火牆 → 資安健檢」逐項處理：備份、修補、弱點、雲端 MFA……', goto: 'fw:audit', kb: 'k-vuln',
           check: () => G.Sec.audit().grade === 'A' },
       ],
-      outro: ['稽核員闔上筆電：「這是我今年看過最整齊的機房。」', '從一間空蕩蕩的 B1 機房，到橫跨四個據點、上雲、上萬台電腦與 AI 運算中心的企業 IT —— 你做到了。'],
+      outro: ['稽核員闔上筆電：「這是我今年看過最整齊的機房。」', '從一間空蕩蕩的 B1 機房，到橫跨四個據點、上雲、上萬台電腦與 AI 運算中心的企業 IT —— 你做到了。',
+        '不過，原廠寄來了一封公告：第一台核心交換器明年就停止支援（End of Support）……'],
+    },
+    {
+      id: 'c9', title: '第九章｜割接之夜', grant: 6000000,
+      story: [
+        '原廠公告：第一章買的那台核心交換器明年停止支援（EoS），韌體不會再修補漏洞，稽核也把它列為高風險。',
+        '新的 CX-9600 已經到貨，原廠工程師幫你上架、灌好出廠設定。剩下的工作——把舊核心上的每一條線，一條一條搬到新核心——要由你在凌晨 02:00～05:00 的維護窗口內完成（日期寫在割接計畫上）。',
+        '一萬人的網路不能停。窗口內每個動作都要花時間：拔線、插線、循線追蹤……準備工作做得越徹底，割接的那一夜就越平靜。',
+      ],
+      learn: ['割接計畫（MOP）與變更管理', '維護窗口與回退計畫', '光模組與跳線（SR / LR、LC / MPO、DAC）', '光纖極性', 'LACP 與 STP：迴圈與廣播風暴', '線路標籤與 show interface'],
+      moveIns: [],
+      begin: (s) => G.Cut.begin(s),
+      kb: ['k-patch', 'k-stp', 'k-cutover'],
+      objectives: [
+        { id: 'c9-mop', text: '打開割接計畫書（MOP），看清楚要搬哪些線、維護窗口是什麼時候', hint: '到「機房」切換到「實體接線」，右邊的「割接計畫」卡片按「打開 MOP」。MOP（Method of Procedure）是割接的劇本：每一條線從哪個埠搬到哪個埠、需要什麼模組、出問題怎麼回退。', goto: 'rack:patch', kb: 'k-cutover',
+          check: (s) => G.Cut.skip() || (!!s.cut && s.cut.mopRead) },
+        { id: 'c9-prep', text: '檢查新核心：開啟 STP，拆掉原廠留下的燒機測試線', hint: '原廠出貨預設「關閉 STP」，還留著一條把兩個埠接在一起的測試線（自我迴圈）。新核心只要一接上網路，廣播封包就會在迴圈裡無限循環——整個公司的網路瞬間癱瘓。先在新核心開啟 STP，再把測試線拔掉收走。', goto: 'rack:patch', kb: 'k-stp',
+          check: () => G.Cut.skip() || G.Cut.prepOk() },
+        { id: 'c9-label', text: '舊核心上的每一條線都貼好標籤', hint: '舊核心上很多線沒有標籤：割接時你根本不知道它通往哪一層樓。趁現在逐條「循線追蹤並貼標籤」（窗口前不用花時間；窗口內每條要 6 分鐘）。', goto: 'rack:patch', kb: 'k-cutover',
+          check: () => G.Cut.skip() || G.Cut.labelsOk(), progress: () => { const c = G.S.cut; return c ? `還有 ${G.Cut.unlabeled().length} 條沒標籤` : ''; } },
+        { id: 'c9-mods', text: '依 MOP 在新核心插好光模組（和對端同一種）', hint: '模組要成對：對端是 10GBASE-LR（單模、藍色拉環），新核心這一頭也要 LR；對端是 SR（多模）就配 SR。點新核心上 MOP 指定的埠，選模組插上。', goto: 'rack:patch', kb: 'k-patch',
+          check: () => G.Cut.skip() || G.Cut.modsOk(), progress: () => (G.S.cut ? `${G.Cut.modsReady()}/${G.Cut.rows().length}` : '') },
+        { id: 'c9-lag', text: '新核心 ⇄ 另一台核心：接兩條 100G 互連，設定 LACP（兩條都要轉送）', hint: '在新核心的 Hu1/2/31、32 和另一台核心的空 QSFP 埠之間各接一條 100G。沒有 LACP 的兩條線是「迴圈」：STP 會擋掉一條，只剩一半頻寬。接第二條時勾選 LACP，或在埠詳情把 LACP 打開。新跳線不通？先翻轉極性試試。', goto: 'rack:patch', kb: 'k-lacp',
+          check: () => G.Cut.skip() || G.Cut.lagOk() },
+        { id: 'c9-window', text: '等到維護窗口開始（凌晨 02:00，時間到會自動暫停）', hint: '準備工作都做好了，就在「割接計畫」卡片按「快轉到維護窗口」（窗口一開始會自動暫停）。窗口前別去動舊核心上的線：上班時間拔線會影響同事，也違反變更管理。', goto: 'rack:patch', kb: 'k-cutover',
+          check: (s) => G.Cut.skip() || (!!s.cut && s.time >= s.cut.win.start) },
+        { id: 'c9-move', text: '依 MOP 把舊核心的線全部搬到新核心（每條搬完確認燈號轉綠）', hint: '一次搬一條：在舊核心上點那條線 →「拔掉這一端」→ 點新核心上 MOP 指定的埠插上 → 看燈號、show interface 確認通了，再搬下一條。有雙上行的樓層先搬、單線的伺服器最後搬，影響最小。', goto: 'rack:patch', kb: 'k-cutover',
+          check: () => G.Cut.skip() || G.Cut.movedAll(), progress: () => { const p = G.Cut.progress(); return `${p.done}/${p.total}`; } },
+        { id: 'c9-verify', text: '驗證：所有樓層與服務都正常，而且持續 30 分鐘', hint: '搬完不等於結束：到「監控」看每層樓都上線、沒有中斷的服務、沒有 STP 阻擋以外的異常，觀察 30 分鐘。', goto: 'noc', kb: 'k-cutover',
+          sustain: 30, cond: () => G.Cut.skip() || (G.Cut.movedAll() && G.Cut.healthy()) },
+        { id: 'c9-remove', text: '舊核心下架：拆掉剩下的線（含核心互連），從機櫃移除', hint: '舊核心上剩下的只有和另一台核心的互連：拔掉收走，再到「機房」把舊核心下架（或出售）。', goto: 'rack', kb: 'k-cutover',
+          check: () => G.Cut.skip() || G.Cut.removed() },
+      ],
+      outro: ['最後一條線的燈號轉綠，監控中心的曲線恢復平穩。一次好的割接，就該讓人感覺不到它發生過。',
+        '你在變更單上寫下結案紀錄，把舊核心推出機房。天亮了，一萬名同事照常上班——下面是這一夜的成績單。'],
     },
   ];
 
@@ -441,6 +476,8 @@
       if (fs.movedIn === 0 && fs.moveInAt === null) fs.moveInAt = mi.at(s.time);
     }
     if (ch.flags) Object.assign(s.flags, ch.flags(s.time));
+    /* 章節自己的開場（第九章：原廠上架新核心、產生 MOP） */
+    if (ch.begin) ch.begin(s);
     /* 分支據點開幕、提前發布一次安全更新（讓本章可以練習派送） */
     for (const x of ch.sites || []) { const w = s.wan.sites[x.id]; if (w && w.openAt === null) w.openAt = x.at(s.time); }
     if (ch.patchAt) s.ep.forceAt = ch.patchAt(s.time);
@@ -493,6 +530,7 @@
     }
     if (allDone && !s.flags['done-' + ch.id]) {
       s.flags['done-' + ch.id] = s.time;
+      if (ch.id === 'c9' && G.Cut) G.Cut.finish();
       G.bus.emit('chapter', { idx: s.chapter, kind: 'done' });
     }
   };

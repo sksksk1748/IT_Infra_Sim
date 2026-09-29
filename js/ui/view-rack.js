@@ -6,27 +6,44 @@
   G.Views.rack = V;
   const UH = 15, TOP = 14, LEFT = 30, RW = 300;
 
-  V.mount = (el) => {
+  V.mode = 'rack';
+  V.mount = (el, param) => {
     const s = G.S;
     V.el = el;
+    if (param === 'patch' || param === 'rack') V.mode = param;
     if (!V.rack || !s.racks.find((r) => r.id === V.rack)) V.rack = s.racks.length ? s.racks[0].id : null;
     if (V.sel && !s.devices[V.sel]) V.sel = null;
     if (V.armed && (!s.devices[V.armed] || s.devices[V.armed].rack)) V.armed = null;
-    const use3d = UI.pref3d('rack');
+    const patch = V.mode === 'patch';
+    const use3d = !patch && UI.pref3d('rack');
+    const modeSeg = h('div', { class: 'seg', role: 'group', 'aria-label': '機房檢視' },
+      h('button', { class: patch ? '' : 'on', 'data-hint': 'mode:rack', 'aria-pressed': String(!patch), onclick: () => { V.mode = 'rack'; UI.refresh(); } }, '機櫃'),
+      h('button', { class: patch ? 'on' : '', 'data-hint': 'mode:patch', 'aria-pressed': String(patch), onclick: () => { V.mode = 'patch'; UI.refresh(); } }, '實體接線'));
     el.appendChild(h('div', { class: 'view-h' },
-      h('div', {}, h('h2', {}, 'B1 主機房（MDF）'), h('div', { class: 'desc' }, use3d
-        ? '3D 機房：機櫃正面朝冷通道（藍色冷風）、背面朝熱通道（紅色熱風）。點設備看詳情、點機櫃切換；選好倉庫裡的設備後，點亮起的空位就能上架。'
-        : '所有核心設備都要安裝在機櫃中才能通電運作。注意每座機櫃的電力上限，以及整間機房的 UPS 與冷卻能力。')),
-      h('div', { class: 'row wrap' }, UI.toggle3d('rack'), h('button', { class: 'btn', onclick: () => UI.openKb('k-rack') }, '機櫃與 U 數'), h('button', { class: 'btn', onclick: () => UI.openKb('k-power') }, '電力'), h('button', { class: 'btn', onclick: () => UI.openKb('k-cooling') }, '冷卻'))));
-    V.bar = h('div', { class: 'room-bar' });
-    el.appendChild(V.bar);
+      h('div', {}, h('h2', {}, patch ? 'B1 主機房 · 實體接線' : 'B1 主機房（MDF）'), h('div', { class: 'desc' }, patch
+        ? '親手接線：點面板上的埠看狀態（show interface），插光模組、接跳線、拔線、翻轉光纖極性、貼標籤。兩端模組要成對、跳線要配對、多條線之間要 LACP，否則 STP 會擋下迴圈——沒開 STP 就是廣播風暴。'
+        : use3d
+          ? '3D 機房：機櫃正面朝冷通道（藍色冷風）、背面朝熱通道（紅色熱風）。點設備看詳情、點機櫃切換；選好倉庫裡的設備後，點亮起的空位就能上架。'
+          : '所有核心設備都要安裝在機櫃中才能通電運作。注意每座機櫃的電力上限，以及整間機房的 UPS 與冷卻能力。')),
+      h('div', { class: 'row wrap' }, modeSeg, patch ? null : UI.toggle3d('rack'),
+        patch ? h('button', { class: 'btn', onclick: () => UI.openKb('k-patch') }, '光模組與跳線') : h('button', { class: 'btn', onclick: () => UI.openKb('k-rack') }, '機櫃與 U 數'),
+        patch ? h('button', { class: 'btn', onclick: () => UI.openKb('k-stp') }, 'STP 與迴圈') : h('button', { class: 'btn', onclick: () => UI.openKb('k-power') }, '電力'),
+        patch ? null : h('button', { class: 'btn', onclick: () => UI.openKb('k-cooling') }, '冷卻'))));
+    V.bar = patch ? null : h('div', { class: 'room-bar' });
+    if (V.bar) el.appendChild(V.bar);
     const tabs = h('div', { class: 'racks-row' });
     for (const r of s.racks) {
       const fr = G.R.fac && G.R.fac.racks[r.id];
       const down = fr && G.Net.rackDown(r.id);
-      tabs.appendChild(h('button', { class: 'rack-tab' + (r.id === V.rack ? ' on' : '') + (r.type === 'ai' ? ' ai' : ''), onclick: () => { V.rack = r.id; UI.refresh(); } },
+      tabs.appendChild(h('button', { class: 'rack-tab' + (r.id === V.rack ? ' on' : '') + (r.type === 'ai' ? ' ai' : ''), 'data-hint': 'racktab:' + r.id, onclick: () => { V.rack = r.id; UI.refresh(); } },
         h('div', { class: 'n' }, r.id, r.type === 'ai' ? h('span', { class: 'chip accent', style: { marginLeft: '5px', fontSize: '10px', padding: '0 5px' } }, 'AI') : null),
         h('div', { class: 'm mono ' + (down ? 'bad-t' : '') }, fr ? `${fr.used}U · ${(fr.load / 1000).toFixed(1)}${r.type === 'ai' ? ' / ' + (fr.limit / 1000).toFixed(0) : ''} kW${down ? ' ⚡' : ''}` : '')));
+    }
+    if (patch) {
+      el.appendChild(tabs);
+      V.svgWrap = null;
+      G.PatchUI.mount(el, V);
+      return;
     }
     if (s.racks.length < CAT.rack.maxRacks) {
       tabs.appendChild(h('button', { class: 'rack-tab', 'data-hint': 'buy:rack', onclick: () => { const r = UI.res(G.Act.buyRack()); if (r.ok) V.rack = r.id; } }, h('div', { class: 'n' }, '＋ 機櫃'), h('div', { class: 'm mono' }, U.money(CAT.rack.price))));
@@ -101,6 +118,7 @@
       sel: () => ({ rack: V.rack, dev: V.sel, armed: V.armed }),
       onDev: (id) => { const d = G.S.devices[id]; V.sel = id; V.armed = null; if (d && d.rack) V.rack = d.rack; UI.refresh(); },
       onRack: (id) => { V.rack = id; UI.refresh(); },
+      onPort: (n, p) => { const d = G.S.devices[n]; V.mode = 'patch'; if (d && d.rack) V.rack = d.rack; G.PatchUI.sel = { n, p }; UI.refresh(); },
       onSlot: (rack, u) => {
         if (!V.armed) return;
         V.rack = rack;
@@ -128,9 +146,11 @@
       ai ? tile('AI 算力', `${ai.pflops.toFixed(1)} PF`, `利用率 ${U.pct(ai.util)} · ${ai.gpus} 顆 GPU`, ai.util >= 0.85 ? 'ok-t' : ai.util >= 0.5 ? 'warn-t' : 'bad-t') : null);
   };
   V.update = () => {
+    if (V.mode === 'patch') { if (G.CutUI) G.CutUI.tick(); }
     const now = performance.now();
     if (now - (V.last || 0) < 1000) return;
     V.last = now;
+    if (V.mode === 'patch') { G.PatchUI.update(V); return; }
     V.renderBar();
     if (V.svgWrap) V.drawRack();
   };
@@ -191,12 +211,12 @@
     g.appendChild(U.s('circle', { cx: LEFT + 13, cy: y + hgt / 2, r: 2.4, fill: led }));
     g.appendChild(U.s('text', { x: LEFT + 20, y: y + Math.min(hgt / 2, 8) + (m.u > 1 ? 2 : 1), 'dominant-baseline': 'middle', 'font-size': 8.5, 'font-weight': 700, fill: 'var(--text)' }, d.name + (d.role ? ` · ${CAT.roles[d.role].short}` : '')));
     if (m.u > 1) g.appendChild(U.s('text', { x: LEFT + 20, y: y + 20, 'dominant-baseline': 'middle', 'font-size': 7.5, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)' }, d.model));
-    /* 連接埠示意：亮燈 = 已接線 */
-    const P = Q.ports(d.id);
+    /* 連接埠示意：燈號和「實體接線」一樣（綠 = 正常轉送、琥珀 = STP 阻擋、紅 = 被停用） */
     const ports = [];
-    for (let i = 0; i < m.ports.rj45; i++) ports.push({ k: 'rj45', used: i < P.rj45.used });
-    for (let i = 0; i < m.ports.sfp; i++) ports.push({ k: 'sfp', used: i < P.sfp.used });
-    for (let i = 0; i < m.ports.qsfp; i++) ports.push({ k: 'qsfp', used: i < P.qsfp.used });
+    const portLed = (pid) => G.PatchUI.led(d.id, pid);
+    for (let i = 0; i < m.ports.rj45; i++) ports.push({ k: 'rj45', led: portLed('r' + (i + 1)) });
+    for (let i = 0; i < m.ports.sfp; i++) ports.push({ k: 'sfp', led: portLed('s' + (i + 1)) });
+    for (let i = 0; i < m.ports.qsfp; i++) ports.push({ k: 'qsfp', led: portLed('q' + (i + 1)) });
     const maxShow = Math.min(ports.length, 48);
     const pw = 4.2, gap = 1.3;
     const perRow = m.u > 1 ? 24 : 24;
@@ -209,7 +229,7 @@
       const py = y + 3 + r * 6.5;
       const p = ports[i];
       g.appendChild(U.s('rect', { x: px, y: py, width: pw, height: 4.5, fill: p.k === 'rj45' ? '#0b0f12' : p.k === 'qsfp' ? '#1d2a33' : '#16222a', stroke: 'var(--line-2)', 'stroke-width': 0.3 }));
-      if (p.used && running) g.appendChild(U.s('rect', { x: px + 1, y: py - 1.6, width: 2.2, height: 1.2, fill: 'var(--ok)' }));
+      if (p.led !== 'off' && running) g.appendChild(U.s('rect', { x: px + 1, y: py - 1.6, width: 2.2, height: 1.2, fill: p.led === 'on' || p.led === 'storm' ? 'var(--ok)' : p.led === 'blk' ? 'var(--warn)' : 'var(--bad)' }));
     }
     const note = m.cat === 'ups' ? `${(m.capW / 1000).toFixed(0)} kW · ${Math.round(s.power.upsCharge * 100)}%`
       : m.cat === 'power' ? `PSU ${m.psuN - (d.psuFail || 0)}/${m.psuN} · ${((m.psuN - (d.psuFail || 0)) * m.psuW / 1000).toFixed(0)} kW`

@@ -499,6 +499,27 @@
       return { a: L(0.03), b: L(0.55), up: L(0.55, TRAY_Y - 0.5), row: di.ri.p.dir > 0 ? 0 : 1, face: sp.face, ri: di.ri };
     }
     const V3 = (v) => [v.x, v.y, v.z];
+    /** 設備上某一個埠的 3D 位置：面板上真的那個埠（模型沒畫到的埠，退回估計的位置） */
+    function portEnd(id, pid) {
+      const di = devInfo.get(id), d = G.S.devices[id];
+      if (!di || !d || !pid) return devEnd(id);
+      const pr = proto(d.model);
+      const cls = G.Phys.cls(pid), n = (parseInt(pid.slice(1), 10) || 1) - 1;
+      let v = null, face = 'front';
+      if (pr.slots) {
+        for (const f of ['front', 'rear']) {
+          const arr = pr.slots[f][cls];
+          if (arr && arr.length) { v = arr[Math.min(n, arr.length - 1)]; face = f; break; }
+        }
+      }
+      if (!v) return devEnd(id);
+      const zc = R.zRail + 0.03 - di.depth / 2;
+      const out = face === 'front' ? 1 : -1;
+      di.ri.g.updateMatrixWorld(true);
+      const L = (dz, yy) => di.ri.g.localToWorld(new T.Vector3(v.x, yy === undefined ? di.y + v.y : yy, zc + v.z + out * dz));
+      return { a: L(0.02), b: L(0.5), up: L(0.5, TRAY_Y - 0.5), row: di.ri.p.dir > 0 ? 0 : 1, face, ri: di.ri };
+    }
+    const cordHex = (k) => (CAT.cords[k] || {}).color || '#8a96a0';
     function buildCables() {
       const s = G.S;
       for (const o of cableG.children.slice()) { cableG.remove(o); o.geometry.dispose(); }
@@ -513,35 +534,61 @@
         for (const p of tail) pts.push(p);
         return pts;
       };
+      const addTube = (pts, smooth, hex, pick, r) => {
+        const mesh = smooth ? K.tube(pts, r || 0.055, cabMat(hex, 'ok'), 40, 6) : fx.tubeAlong(pts, r || 0.055, cabMat(hex, 'ok'));
+        mesh.userData.pick = pick;
+        cableG.add(mesh);
+        return mesh;
+      };
+      /* 每一條實體跳線各畫一條：從它插的那個埠拉出來 */
       for (const l of Object.values(s.links)) {
         const fa = l.a.startsWith('F:'), fb = l.b.startsWith('F:');
-        let pts = null, smooth = false;
-        if (fa || fb) {
-          const E = devEnd(fa ? l.b : l.a);
-          if (!E) continue;
-          anyFloor = true;
-          pts = route(E, [], (lx, ly) => [[EXIT.riser.x + lx, TRAY_Y + ly, trayZ(E.row) + lx], [EXIT.riser.x + lx, TRAY_Y + ly, ROOM.z0 + 0.6], [EXIT.riser.x + lx, EXIT.riser.y - 0.3, ROOM.z0 + 0.6]]);
-        } else {
-          const A = devEnd(l.a), B = devEnd(l.b);
-          if (!A || !B) continue;
-          if (A.ri === B.ri && A.face === 'front' && B.face === 'front') {
-            const dz = A.b.clone().sub(A.a).normalize().multiplyScalar(0.7);
-            pts = [V3(A.a), V3(A.b), [(A.b.x + B.b.x) / 2 + 0.3, (A.b.y + B.b.y) / 2, (A.b.z + B.b.z) / 2 + dz.z], V3(B.b), V3(B.a)];
-            smooth = true;
+        for (const m of l.members || []) {
+          let pts = null, smooth = false;
+          if (fa || fb) {
+            const E = portEnd(fa ? l.b : l.a, fa ? m.bp : m.ap);
+            if (!E) continue;
+            anyFloor = true;
+            pts = route(E, [], (lx, ly) => [[EXIT.riser.x + lx, TRAY_Y + ly, trayZ(E.row) + lx], [EXIT.riser.x + lx, TRAY_Y + ly, ROOM.z0 + 0.6], [EXIT.riser.x + lx, EXIT.riser.y - 0.3, ROOM.z0 + 0.6]]);
           } else {
-            pts = route(A, [V3(B.up), V3(B.b), V3(B.a)], (lx, ly) => (A.row !== B.row ? [[A.up.x, TRAY_Y + ly, trayZ(B.row) + lx], [B.up.x, TRAY_Y + ly, trayZ(B.row) + lx]] : [[B.up.x, TRAY_Y + ly, trayZ(A.row) + lx]]));
+            const A = portEnd(l.a, m.ap), B = portEnd(l.b, m.bp);
+            if (!A || !B) continue;
+            if (A.ri === B.ri && A.face === B.face) {
+              const dz = A.b.clone().sub(A.a).normalize().multiplyScalar(0.7);
+              pts = [V3(A.a), V3(A.b), [(A.b.x + B.b.x) / 2 + 0.3, (A.b.y + B.b.y) / 2, (A.b.z + B.b.z) / 2 + dz.z], V3(B.b), V3(B.a)];
+              smooth = true;
+            } else {
+              pts = route(A, [V3(B.up), V3(B.b), V3(B.a)], (lx, ly) => (A.row !== B.row ? [[A.up.x, TRAY_Y + ly, trayZ(B.row) + lx], [B.up.x, TRAY_Y + ly, trayZ(B.row) + lx]] : [[B.up.x, TRAY_Y + ly, trayZ(A.row) + lx]]));
+            }
           }
+          const hex = cordHex(m.cord);
+          const mesh = addTube(pts, smooth, hex, { kind: 'link', id: l.id, m: m.id });
+          const cb = { l, m, hex, mesh, path: fx.path(smooth ? new T.CatmullRomCurve3(pts.map((p) => new T.Vector3(p[0], p[1], p[2]))).getPoints(30) : pts), ab: 0, ba: 0, on: false };
+          cableCols(cb);
+          cables.push(cb);
         }
-        const hex = CAT.cables[l.cable].color;
-        const mesh = smooth ? K.tube(pts, 0.075, cabMat(hex, 'ok'), 40, 6) : fx.tubeAlong(pts, 0.075, cabMat(hex, 'ok'));
-        mesh.userData.pick = { kind: 'link', id: l.id };
-        cableG.add(mesh);
-        const cb = { l, hex, mesh, path: fx.path(smooth ? new T.CatmullRomCurve3(pts.map((p) => new T.Vector3(p[0], p[1], p[2]))).getPoints(30) : pts), ab: 0, ba: 0, on: false };
-        cableCols(cb);
-        cables.push(cb);
+      }
+      /* 懸空的線：從插著的那個埠垂下來；同一台設備兩個埠互接：一小段弧線 */
+      for (const x of G.Phys.st().loose) {
+        if (x.node.startsWith('F:')) continue;
+        const E = portEnd(x.node, x.pid);
+        if (!E) continue;
+        const dir = E.b.clone().sub(E.a).normalize();
+        const tip = E.b.clone().add(dir.clone().multiplyScalar(0.25));
+        const pts = [V3(E.a), V3(E.b), [tip.x + 0.1, tip.y - 0.8, tip.z], [tip.x + 0.18, tip.y - 1.7, tip.z - dir.z * 0.1]];
+        const mesh = addTube(pts, true, cordHex(x.cord), { kind: 'loose', id: x.id });
+        mesh.material = cabMat(cordHex(x.cord), 'ghost');
+      }
+      for (const x of G.Phys.st().self) {
+        const A = portEnd(x.node, x.ap), B = portEnd(x.node, x.bp);
+        if (!A || !B) continue;
+        const dz = A.b.clone().sub(A.a).normalize().multiplyScalar(0.55);
+        const pts = [V3(A.a), V3(A.b), [(A.b.x + B.b.x) / 2, (A.b.y + B.b.y) / 2 - 0.35, (A.b.z + B.b.z) / 2 + dz.z], V3(B.b), V3(B.a)];
+        const mesh = addTube(pts, true, cordHex(x.cord), { kind: 'self', id: x.id });
+        cables.push({ self: x, hex: cordHex(x.cord), mesh, path: fx.path(new T.CatmullRomCurve3(pts.map((p) => new T.Vector3(p[0], p[1], p[2]))).getPoints(20)), ab: 0, ba: 0, on: false });
       }
       for (const c of s.isp) {
-        const E = c.router && devEnd(c.router);
+        const E = c.router && (c.pid ? portEnd(c.router, c.pid) : devEnd(c.router));
         if (!E) continue;
         anyIsp = true;
         const pts = route(E, [], (lx, ly) => [[ROOM.x0 + 2 + lx, TRAY_Y + ly, trayZ(E.row) + lx], [ROOM.x0 + 2 + lx, TRAY_Y + ly, EXIT.isp.z + lx], [ROOM.x0 + 0.6, EXIT.isp.y - 0.2, EXIT.isp.z + lx]]);
@@ -557,16 +604,25 @@
     }
     function syncCables() {
       const s = G.S, sim = G.R.sim || { links: {}, isp: {} };
-      const sig = sigR + '#' + Object.values(s.links).map((l) => `${l.id}:${l.a}:${l.b}:${l.cable}`).join(',') + '#' + s.isp.map((c) => c.id + ':' + c.router).join(',');
+      const P = G.Phys.st();
+      const sig = sigR + '#' + Object.values(s.links).map((l) => `${l.id}:${l.a}:${l.b}:` + (l.members || []).map((m) => m.id + m.ap + m.bp + m.cord).join(';')).join(',')
+        + '#' + s.isp.map((c) => c.id + ':' + c.router + ':' + c.pid).join(',') + '#' + P.loose.map((x) => x.id + x.node + x.pid).join(',') + '#' + P.self.map((x) => x.id).join(',');
       if (sig !== sigL) { sigL = sig; buildCables(); }
       for (const cb of cables) {
-        if (cb.l) {
+        if (cb.self) {
+          const st = G.Phys.selfState(cb.self);
+          cb.on = st.code === 'storm';
+          cb.ab = cb.ba = cb.on ? 1 : 0;
+          cb.mesh.material = st.code === 'storm' ? cabMat('#f25f5c', 'hot') : st.code === 'blk' ? cabMat('#ffb020', 'ghost') : cabMat(cb.hex, 'ok');
+        } else if (cb.l) {
           const l = cb.l, ls = sim.links[l.id];
-          const building = G.Net.linkBuilding(l), up = G.Net.linkUp(l);
-          cb.on = up;
-          cb.ab = ls && ls.cap ? ls.ab / ls.cap : 0;
-          cb.ba = ls && ls.cap ? ls.ba / ls.cap : 0;
-          cb.mesh.material = building ? cabMat('#8a96a0', 'ghost') : l.status !== 'up' ? cabMat('#f25f5c', 'ok') : Math.max(cb.ab, cb.ba) >= 0.9 ? cabMat(cb.hex, 'hot') : cabMat(cb.hex, 'ok');
+          const st = G.Phys.mState(l, cb.m);
+          cb.on = st.fwd || st.code === 'storm';
+          cb.ab = st.code === 'storm' ? 1 : ls && ls.cap ? ls.ab / ls.cap : 0;
+          cb.ba = st.code === 'storm' ? 1 : ls && ls.cap ? ls.ba / ls.cap : 0;
+          cb.mesh.material = st.code === 'build' ? cabMat('#8a96a0', 'ghost') : st.code === 'cut' ? cabMat('#f25f5c', 'ok') : st.code === 'storm' ? cabMat('#f25f5c', 'hot')
+            : st.code === 'blk' || st.code === 'stby' ? cabMat('#ffb020', 'ghost') : !st.fwd && st.code !== 'down' ? cabMat('#f25f5c', 'ghost')
+              : Math.max(cb.ab, cb.ba) >= 0.9 ? cabMat(cb.hex, 'hot') : cabMat(cb.hex, 'ok');
           /* 連到樓層的線：從機房看出去，流量往樓層 = a→b 或 b→a */
           if (l.a.startsWith('F:')) { const t = cb.ab; cb.ab = cb.ba; cb.ba = t; }
         } else {
@@ -872,9 +928,25 @@
           const l = s.links[p.id];
           if (!l) return null;
           const ls = G.R.sim && G.R.sim.links[l.id];
-          const st = G.Net.linkBuilding(l) ? '施工中' : l.status !== 'up' ? '中斷！' : G.Net.linkUp(l) ? '正常' : '一端設備沒有運作';
+          const m = (l.members || []).find((x) => x.id === p.m);
           const toFloor = l.a.startsWith('F:') || l.b.startsWith('F:');
+          if (m) {
+            const st = G.Phys.mState(l, m);
+            return [`${G.Phys.label(l.a, m.ap)} ⇄ ${G.Phys.label(l.b, m.bp)}`, `${(CAT.cords[m.cord] || {}).name || ''} · ${st.speed ? U.speed(st.speed) : '—'}${l.members.length > 1 ? `（${l.members.length} 條${l.lacp ? '，LACP' : ''}）` : ''}`,
+              `狀態：${st.text}${ls && st.fwd ? ' · 使用率 ' + U.pct(ls.util) : ''}`, toFloor ? '經線槽到弱電豎井，再往上到樓層 IDF' : '機房內跳線：走機櫃上方的線槽'];
+          }
+          const st = G.Net.linkBuilding(l) ? '施工中' : l.status !== 'up' ? '中斷！' : G.Net.linkUp(l) ? '正常' : '一端設備沒有運作';
           return [`${G.Q.nodeName(l.a)} ⇄ ${G.Q.nodeName(l.b)}`, `${CAT.cables[l.cable].name} · ${U.speed(l.speed)} × ${l.count}`, `狀態：${st}${ls ? ' · 使用率 ' + U.pct(ls.util) : ''}`, toFloor ? '經線槽到弱電豎井，再往上到樓層 IDF' : '機房內跳線：走機櫃上方的線槽'];
+        }
+        if (p.kind === 'loose') {
+          const x = G.Phys.st().loose.find((y) => y.id === p.id);
+          return x ? [`懸空的跳線：${G.Phys.label(x.node, x.pid)}`, (CAT.cords[x.cord] || {}).name || '', x.fromNode ? `原本接在 ${G.Phys.label(x.fromNode, x.fromPid)}` : '另一端還沒插'] : null;
+        }
+        if (p.kind === 'self') {
+          const x = G.Phys.st().self.find((y) => y.id === p.id);
+          if (!x) return null;
+          const st = G.Phys.selfState(x);
+          return [`${G.Q.nodeName(x.node)} 的 ${G.Phys.name(x.node, x.ap)} ⇄ ${G.Phys.name(x.node, x.bp)}`, x.tag === 'burnin' ? '原廠燒機測試線（同一台設備兩個埠互接）' : '同一台設備兩個埠互接', `狀態：${st.text}`];
         }
         if (p.kind === 'door') {
           const lv = G.Acc.level();
@@ -890,6 +962,14 @@
         if (p.kind === 'dev' && opts.onDev) opts.onDev(p.id);
         else if (p.kind === 'rack' && opts.onRack) opts.onRack(p.id);
         else if (p.kind === 'slot' && opts.onSlot) opts.onSlot(p.rack, p.u);
+        /* 點跳線：到「實體接線」看那個埠 */
+        else if (p.kind === 'link' && opts.onPort) {
+          const l = G.S.links[p.id], m = l && (l.members || []).find((x) => x.id === p.m);
+          if (m) { if (l.a.startsWith('F:')) opts.onPort(l.b, m.bp); else opts.onPort(l.a, m.ap); }
+        } else if ((p.kind === 'loose' || p.kind === 'self') && opts.onPort) {
+          const P = G.Phys.st(), x = (p.kind === 'loose' ? P.loose : P.self).find((y) => y.id === p.id);
+          if (x) opts.onPort(x.node, x.pid || x.ap);
+        }
         selSig = '';
       },
       dispose() {

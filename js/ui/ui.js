@@ -442,7 +442,7 @@
     const last = idx === G.Campaign.chapters.length - 1;
     UI.modal({
       kicker: '章節完成', title: ch.title, wide: true, dismissible: false, onClose: () => { UI._doneOpen = false; },
-      body: [...ch.outro.map((p) => h('p', {}, p)), statsBlock(),
+      body: [...ch.outro.map((p) => h('p', {}, p)), ch.id === 'c9' && G.CutUI ? G.CutUI.reportBlock() : null, statsBlock(),
         h('div', { class: 'note info' }, h('b', {}, '章節小測驗　'), '用 5 題檢查這一章的觀念，答錯會附上解說與知識卡。')],
       actions: [
         { label: '做本章小測驗', kind: 'ghost', close: false, onClick: () => { UI.quiz(idx); return false; } },
@@ -467,7 +467,7 @@
     UI.modal({
       kicker: '全劇情完成', title: '萬人企業網路，建設完成', wide: true, dismissible: false,
       body: [
-        h('p', {}, '從一間空蕩蕩的 B1 機房開始，你規劃了機櫃、路由、防火牆、23 層樓的布線與 Wi-Fi、DMZ、備援與縱深防禦，在攻擊中守住了公司；建好 AI 運算中心，把四個據點、電話與雲端串起來，最後讓虛擬化、備份、修補與弱點管理都經得起稽核。'),
+        h('p', {}, '從一間空蕩蕩的 B1 機房開始，你規劃了機櫃、路由、防火牆、23 層樓的布線與 Wi-Fi、DMZ、備援與縱深防禦，在攻擊中守住了公司；建好 AI 運算中心，把四個據點、電話與雲端串起來，讓虛擬化、備份、修補與弱點管理都經得起稽核；最後在凌晨的維護窗口裡，親手把一整台核心交換器的線一條條搬到新設備上。'),
         h('div', { class: 'row wrap', style: { gap: '16px' } }, h('div', {}, h('div', { class: 'label' }, '最終分數'), h('div', { class: 'grade mono' }, U.num(score))), h('div', {}, h('div', { class: 'label' }, '資安健檢'), h('div', { class: 'grade' }, g))),
         statsBlock(),
         h('p', { class: 'muted' }, '你可以繼續營運這個網路（隨機事件仍會發生），或回到標題畫面挑戰沙盒模式。'),
@@ -597,7 +597,7 @@
       else go();
     };
     menu.append(
-      h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '八章，從空機房到萬人企業、AI 運算中心與集團 IT')),
+      h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '九章，從空機房到萬人企業、AI 運算中心、集團 IT 與核心割接')),
       h('button', { class: 'btn', onclick: () => startNew('sandbox') }, '沙盒模式', h('small', {}, '預算 1.5 億，自由建設')),
       h('button', { class: 'btn', onclick: () => UI.scenPicker() }, '情境挑戰', h('small', {}, '限時處理事件 · 評分')),
       h('button', { class: 'btn ghost', onclick: () => UI.importSave() }, '匯入存檔', h('small', {}, '')));

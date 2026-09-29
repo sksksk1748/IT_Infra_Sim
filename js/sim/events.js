@@ -164,6 +164,8 @@
     const ch = Q.chapterNum();
     if (s.mode === 'campaign' && ch < 2) return;
     if (s.gameOver || s.scen) return;
+    /* 割接的維護窗口內不產生隨機事件 */
+    if (G.Cut && G.Cut.inWindow()) return;
     if (Ev.active().length >= 3) return;
     const p = ch >= 99 ? 0.03 : ch >= 4 ? 0.035 : ch >= 3 ? 0.025 : 0.012;
     if (Math.random() > p) return;

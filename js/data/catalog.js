@@ -236,6 +236,42 @@
     smf: { 1000: '1000BASE-LX', 10000: '10GBASE-LR', 25000: '25GBASE-LR', 40000: '40GBASE-LR4', 100000: '100GBASE-LR4', 400000: '400GBASE-FR4' },
   };
   CAT.riserBuildMin = 120;   /* 跨樓層垂直主幹佈線施工時間 */
+  /* DAC 直連銅纜：兩端直接做成模組的銅纜，便宜、省電，但只能接同一座機櫃內（最長約 5 m）。
+   * 只在「實體接線」使用（pick: false：拓撲的快速連線不列出） */
+  CAT.cables.dac = { name: 'DAC 直連銅纜', short: 'DAC', medium: 'dac', perM: 0, termCost: 0, color: '#3b4046', pick: false,
+    max: { 10000: 5, 25000: 5, 40000: 5, 100000: 5, 400000: 3 }, desc: '兩端直接做成 SFP / QSFP 模組的銅纜：不用另外買光模組，便宜又省電，但最長只有 3～5 m，只能接同一座機櫃裡的設備。' };
+
+  /* ---------- 實體接線：光模組（插在 SFP / QSFP 埠上）與跳線 ----------
+   * SR / SX = 多模光纖（850 nm，模組拉環黑色）、LR / LX / FR = 單模光纖（1310 nm，拉環藍色）；
+   * 兩端的模組要同一種（同速率、同波長），跳線的光纖種類要和模組相同；-T 是插網路線的電口模組。
+   * conn = 接頭：LC（雙芯）、MPO（多芯，40G / 100G / 400G 的 SR4 / SR8）、RJ45 */
+  CAT.xcvr = {
+    '1G-T':     { name: '1000BASE-T 電口模組', form: 'sfp', speed: 1000, media: 'copper', conn: 'rj45', price: 1000 },
+    '10G-T':    { name: '10GBASE-T 電口模組', form: 'sfp', speed: 10000, media: 'copper', conn: 'rj45', price: 4500 },
+    '1G-SX':    { name: '1000BASE-SX', form: 'sfp', speed: 1000, media: 'mmf', wl: 850, conn: 'lc', price: 1500 },
+    '1G-LX':    { name: '1000BASE-LX', form: 'sfp', speed: 1000, media: 'smf', wl: 1310, conn: 'lc', price: 2500 },
+    '10G-SR':   { name: '10GBASE-SR', form: 'sfp', speed: 10000, media: 'mmf', wl: 850, conn: 'lc', price: 2800 },
+    '10G-LR':   { name: '10GBASE-LR', form: 'sfp', speed: 10000, media: 'smf', wl: 1310, conn: 'lc', price: 6000 },
+    '25G-SR':   { name: '25GBASE-SR', form: 'sfp', speed: 25000, media: 'mmf', wl: 850, conn: 'lc', price: 4800 },
+    '25G-LR':   { name: '25GBASE-LR', form: 'sfp', speed: 25000, media: 'smf', wl: 1310, conn: 'lc', price: 11000 },
+    '40G-SR4':  { name: '40GBASE-SR4', form: 'qsfp', speed: 40000, media: 'mmf', wl: 850, conn: 'mpo', price: 9500 },
+    '40G-LR4':  { name: '40GBASE-LR4', form: 'qsfp', speed: 40000, media: 'smf', wl: 1310, conn: 'lc', price: 28000 },
+    '100G-SR4': { name: '100GBASE-SR4', form: 'qsfp', speed: 100000, media: 'mmf', wl: 850, conn: 'mpo', price: 22000 },
+    '100G-LR4': { name: '100GBASE-LR4', form: 'qsfp', speed: 100000, media: 'smf', wl: 1310, conn: 'lc', price: 52000 },
+    '400G-SR8': { name: '400GBASE-SR8', form: 'qsfp', speed: 400000, media: 'mmf', wl: 850, conn: 'mpo', price: 68000 },
+    '400G-FR4': { name: '400GBASE-FR4', form: 'qsfp', speed: 400000, media: 'smf', wl: 1310, conn: 'lc', price: 120000 },
+  };
+  /* 跳線（機房內接設備用）。cable = 對應到線路的線材種類 */
+  CAT.cords = {
+    'cat6':    { name: 'Cat6 網路跳線', short: 'Cat6', media: 'copper', conn: 'rj45', cable: 'cat6', color: '#4f86e8', price: 150 },
+    'cat6a':   { name: 'Cat6A 網路跳線', short: 'Cat6A', media: 'copper', conn: 'rj45', cable: 'cat6a', color: '#7aa2f7', price: 260 },
+    'om4':     { name: 'OM4 多模光纖跳線（LC-LC）', short: 'OM4 LC', media: 'mmf', conn: 'lc', cable: 'om4', color: '#2fc6b8', price: 900 },
+    'om4-mpo': { name: 'OM4 多模 MPO-12 跳線', short: 'OM4 MPO', media: 'mmf', conn: 'mpo', cable: 'om4', color: '#8fe0d8', price: 3200 },
+    'os2':     { name: 'OS2 單模光纖跳線（LC-LC）', short: 'OS2 LC', media: 'smf', conn: 'lc', cable: 'os2', color: '#f2c14e', price: 800 },
+    'dac':     { name: 'DAC 直連銅纜（兩端內建模組）', short: 'DAC', media: 'dac', conn: 'dac', cable: 'dac', color: '#3b4046', price: 1200, priceBy: { 10000: 1200, 25000: 1800, 40000: 3200, 100000: 4500, 400000: 12000 } },
+  };
+  /** 實體接線每個動作要花的遊戲時間（分鐘）：割接的維護窗口內會真的扣時間 */
+  CAT.physMin = { plug: 1, unplug: 1, module: 1, flip: 1, label: 1, trace: 5, config: 2 };
 
   /* ---------- 水平布線（IDF → 座位 / AP） ---------- */
   CAT.horizontal = {

@@ -422,9 +422,14 @@
       styleEdge(e, util, down, building, ls && ls.ba > ls.ab);
       const isFloor = l.a.startsWith('F:') || l.b.startsWith('F:');
       const selected = V.sel && V.sel.type === 'link' && V.sel.id === l.id;
-      const show = !isFloor || selected || util >= 0.7 || l.status === 'cut';
-      e.label.textContent = show ? (l.status === 'cut' ? '✖ 中斷' : building ? `施工中 ${U.dur(l.readyAt - s.time)}` : `${U.speed(l.speed)}${l.count > 1 ? '×' + l.count : ''} ${U.pct(util)}`) : '';
-      e.label.setAttribute('fill', l.status === 'cut' || util >= 0.9 ? 'var(--bad)' : 'var(--text-2)');
+      /* 實體層：有幾條跳線沒在轉送（STP 阻擋、模組不對、極性接反……） */
+      const mem = l.members || [];
+      const idle = building || l.status !== 'up' ? [] : mem.filter((m) => !G.Phys.mState(l, m).fwd);
+      const why = idle.length ? G.Phys.SHORT[G.Phys.mState(l, idle[0]).code] || '不通' : '';
+      const all = idle.length && idle.length === mem.length;
+      const show = !isFloor || selected || util >= 0.7 || l.status === 'cut' || idle.length > 0;
+      e.label.textContent = show ? (l.status === 'cut' ? '✖ 中斷' : building ? `施工中 ${U.dur(l.readyAt - s.time)}` : all ? `✖ ${why}` : `${U.speed(l.speed)}${l.count > 1 ? '×' + l.count : ''} ${U.pct(util)}${idle.length ? ` · ${idle.length} 條${why}` : ''}`) : '';
+      e.label.setAttribute('fill', l.status === 'cut' || all || util >= 0.9 ? 'var(--bad)' : idle.length ? 'var(--warn)' : 'var(--text-2)');
     }
     for (const c of s.isp) {
       const e = V.refs.isp[c.id];
@@ -586,7 +591,16 @@
       const l = s.links[sel.id];
       if (!l) return;
       const ls = (G.R.sim && G.R.sim.links[l.id]) || { ab: 0, ba: 0, util: 0 };
-      const cap = l.speed * l.count;
+      const cap = G.Phys.cap(l) || G.Phys.nominal(l) || l.speed * l.count;
+      /* 每一條實體跳線：兩端的埠、狀態 */
+      const memRows = (l.members || []).map((m) => {
+        const st = G.Phys.mState(l, m);
+        const dev = l.a.startsWith('F:') ? [l.b, m.bp] : [l.a, m.ap];
+        return h('div', { class: 'row between small' },
+          h('span', { class: 'mono' }, `${G.Phys.name(l.a, m.ap)} ⇄ ${G.Phys.name(l.b, m.bp)}`),
+          h('span', { class: 'row' }, h('span', { class: st.fwd ? 'ok-t' : st.code === 'blk' || st.code === 'stby' ? 'warn-t' : 'bad-t', title: st.text }, G.Phys.SHORT[st.code] || st.code),
+            h('button', { class: 'btn ghost xs', title: '到「機房 → 實體接線」看這個埠', onclick: () => { const d = s.devices[dev[0]]; const R = G.Views.rack; R.mode = 'patch'; if (d && d.rack) R.rack = d.rack; G.PatchUI.sel = { n: dev[0], p: dev[1] }; UI.go('rack'); } }, '埠')));
+      });
       const dirRow = (from, to, v) => h('div', {},
         h('div', { class: 'row between small' }, h('span', { class: 'muted' }, `${Q.nodeName(from)} → ${Q.nodeName(to)}`), h('span', { class: 'mono' }, `${U.bw(v)} · ${U.pct(v / cap)}`)),
         h('div', { class: 'bar ' + U.utilClass(v / cap) }, h('i', { style: { width: Math.min(100, (v / cap) * 100) + '%' } })));
@@ -597,7 +611,9 @@
           h('span', { class: 'k' }, '規格'), h('span', { class: 'v mono' }, `${CAT.cables[l.cable].name} · ${U.speed(l.speed)} × ${l.count}`),
           h('span', { class: 'k' }, '總頻寬'), h('span', { class: 'v mono' }, U.bw(cap)),
           h('span', { class: 'k' }, '長度'), h('span', { class: 'v mono' }, `${l.len} m`),
-          l.zone ? h('span', { class: 'k' }, '防火牆介面') : null, l.zone ? h('span', { class: 'v' }, UI.ZONE_NAMES[l.zone]) : null),
+          l.zone ? h('span', { class: 'k' }, '防火牆介面') : null, l.zone ? h('span', { class: 'v' }, UI.ZONE_NAMES[l.zone]) : null,
+          (l.members || []).length > 1 ? h('span', { class: 'k' }, 'LACP') : null, (l.members || []).length > 1 ? h('span', { class: 'v' }, l.lacp ? '已設定（多條一起轉送）' : '沒有設定（STP 會擋下多出來的線）') : null),
+        memRows.length ? h('div', { class: 'col', style: { gap: '3px' } }, h('div', { class: 'label' }, '實體跳線'), memRows) : null,
         dirRow(l.a, l.b, ls.ab), dirRow(l.b, l.a, ls.ba),
         h('div', { class: 'row wrap' },
           h('button', { class: 'btn primary sm', onclick: () => UI.linkDialog(l.a, l.b, l.id) }, '編輯 / 升級'),
