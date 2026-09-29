@@ -1,12 +1,16 @@
 /* 3D 機房：依玩家實際的機櫃與上架位置即時呈現
- * 設備狀態燈、機櫃用電與斷路器跳脫、冷熱通道氣流、停電 / UPS / 過熱。
+ * 兩組冷熱通道（每組兩排背對背、最多 24 座機櫃）、設備狀態燈、機櫃用電與斷路器跳脫、冷熱通道氣流、停電 / UPS / 過熱；
+ * 後牆右側是機房入口：鑰匙鎖 / 感應卡讀卡機 / 雙因子 + 防尾隨雙門（依門禁等級），尾隨、清潔人員、廠商等事件會有人出現在機房裡。
  * 點選設備或機櫃會同步到右側的設備面板；選好倉庫裡的設備後，可以直接點機櫃中亮起的空位上架。
  */
 (function (G) {
   'use strict';
   const U = G.U, CAT = G.CAT, M3 = G.M3;
-  const PER_ROW = 5, PITCH = 6.4, ROW = 11;
-  const ROOM = { x0: -31, x1: 22, z0: -27, z1: 27, h: 30 };
+  /* 兩組冷熱通道（pod）左右並排：每組兩排機櫃背對背，中間是熱通道；一排最多 6 座，共 24 座 */
+  const PER_ROW = 6, PITCH = 6.4, ROW = 11, PODS = [-22, 26];
+  const ROOM = { x0: -70, x1: 58, z0: -44, z1: 52, h: 30 };
+  /* 入口在後牆右側：沒有門禁 = 一扇鎖著的門；感應卡 = 讀卡機；雙因子 = 防尾隨雙門（mantrap） */
+  const DOOR = { x0: 45, x1: 57, depth: 16 };
 
   /** opts: { height, sel() → {rack, dev, armed}, onDev(id), onRack(id), onSlot(rack, u) } */
   M3.room = (opts) => M3.stage({ height: opts.height, label: '3D 機房', create: (api) => createRoom(api, opts) });
@@ -37,7 +41,7 @@
       K.D.txt(c, 'B1  主機房  MDF', 450, 84, 74, '#dce7ec', 'center', 800);
     }, 1.5);
     const sign = K.plane(9, 1.6, K.texMat(signT, { metalness: 0, roughness: 0.6 }));
-    sign.position.set(4, 25.5, ROOM.z0 + 0.05);
+    sign.position.set(-6, 25.5, ROOM.z0 + 0.05);
     root.add(sign);
     const perfT = K.makeTex(600, 600, (c) => {
       K.D.rect(c, 0, 0, 600, 600, '#4c5860');
@@ -95,11 +99,12 @@
     tags.alert.pos.set(4, 28, ROOM.z0 + 1);
     tags.alert.show = false;
 
+    /* 第 1～6 座：A 組前排（面向鏡頭）、7～12：A 組後排、13～18：B 組前排、19～24：B 組後排 */
     const rackPos = (i, n) => {
-      const row = i < PER_ROW ? 0 : 1;
-      const inRow = row === 0 ? Math.min(PER_ROW, n) : n - PER_ROW;
-      const k = i % PER_ROW;
-      return { x: (k - (inRow - 1) / 2) * PITCH, z: row === 0 ? ROW : -ROW, dir: row === 0 ? 1 : -1 };
+      const r = Math.floor(i / PER_ROW), k = i % PER_ROW;
+      const inRow = Math.min(PER_ROW, n - r * PER_ROW);
+      const pod = Math.min(PODS.length - 1, r >> 1), front = r % 2 === 0;
+      return { x: PODS[pod] + (k - (inRow - 1) / 2) * PITCH, z: front ? ROW : -ROW, dir: front ? 1 : -1, pod };
     };
     function buildRacks() {
       const s = G.S;
@@ -159,13 +164,8 @@
         ri.g.add(led);
         devInfo.set(d.id, { o, led, y, h: m.u * R.UH, depth, ri, blink: 0 });
       }
-      const b = new T.Box3();
-      if (rackInfo.length) {
-        for (const ri of rackInfo) b.expandByPoint(new T.Vector3(ri.p.x - R.W / 2, 0, ri.p.z - R.D / 2)).expandByPoint(new T.Vector3(ri.p.x + R.W / 2, R.H + 3, ri.p.z + R.D / 2));
-        b.expandByScalar(4);
-        b.min.x = Math.min(b.min.x, -16); b.max.x = Math.max(b.max.x, 16);
-        if (b.max.z - b.min.z < 26) { const cz = (b.max.z + b.min.z) / 2; b.min.z = cz - 13; b.max.z = cz + 13; }
-      } else b.set(new T.Vector3(ROOM.x0, 0, ROOM.z0), new T.Vector3(ROOM.x1, 20, ROOM.z1));
+      /* 預設取景：整間機房（空調、UPS、門禁入口與兩組機櫃都看得到），不隨機櫃數量變動 */
+      const b = new T.Box3(new T.Vector3(ROOM.x0 + 2, 0, ROOM.z0), new T.Vector3(ROOM.x1, R.H + 2, ROOM.z1 - 12));
       frameBox.position.copy(b.getCenter(new T.Vector3()));
       frameBox.scale.copy(b.getSize(new T.Vector3()));
       frameBox.updateMatrixWorld(true);
@@ -177,7 +177,7 @@
       for (const t of tags.fac) t.remove();
       tags.fac = [];
       facInfo = [];
-      let zc = 21, upsX = 17, cduZ = -2;
+      let zc = ROOM.z1 - 4, upsX = ROOM.x0 + 18, cduZ = -2;
       /* 機櫃排的範圍（通道封閉、VESDA 取樣管、漏水偵測線、液冷管路都跟著機櫃走） */
       const xs = rackInfo.map((ri) => ri.p.x);
       const rx0 = xs.length ? Math.min(...xs) - R.W / 2 - 0.6 : -8, rx1 = xs.length ? Math.max(...xs) + R.W / 2 + 0.6 : 8;
@@ -203,7 +203,7 @@
         } else if (r.model === 'GAS-FS') {
           g = proto('GAS-FS').obj.clone();
           g.scale.setScalar(0.9);
-          g.position.set(-8, 0, ROOM.z0 + 2);
+          g.position.set(30, 0, ROOM.z0 + 2);
           size = [12, 16, 3];
           /* 天花板上的噴頭 */
           for (const x of [rx0 + 3, (rx0 + rx1) / 2, rx1 - 3]) for (const z of [-11, 0, 11]) {
@@ -242,20 +242,25 @@
           const z0 = -ROW - R.D / 2 - 1.2, z1 = ROW + R.D / 2 + 1.2;
           pipeAlong([[rx0 - 1, 0.1, z0], [rx1 + 1, 0.1, z0], [rx1 + 1, 0.1, z1], [rx0 - 1, 0.1, z1], [rx0 - 1, 0.1, z0 + 0.3]], 0.07, M.rope);
         } else if (r.model === 'CONTAIN') {
-          /* 兩排機櫃中間（背對背的熱通道）加上頂板與兩端的門 */
+          /* 每一組（pod）的兩排機櫃中間（背對背的熱通道）加上頂板與兩端的門 */
           g = new T.Group();
-          const w = rx1 - rx0, d = (ROW - R.D / 2) * 2 + 0.4;
-          const roof = ownMesh(new T.BoxGeometry(w, 0.15, d), M.glass);
-          roof.position.set((rx0 + rx1) / 2, R.H + 0.3, 0);
-          g.add(roof);
-          for (const x of [rx0 - 0.1, rx1 + 0.1]) {
-            const door = ownMesh(new T.BoxGeometry(0.12, R.H, d), M.glass);
-            door.position.set(x, R.H / 2, 0);
-            g.add(door);
-            const fr = ownMesh(new T.BoxGeometry(0.25, 0.25, d), K.std('#59636b', { metalness: 0.6 }));
-            fr.userData.ownMat = true;
-            fr.position.set(x, R.H, 0);
-            g.add(fr);
+          const d = (ROW - R.D / 2) * 2 + 0.4;
+          for (let pod = 0; pod < PODS.length; pod++) {
+            const pxs = rackInfo.filter((ri) => ri.p.pod === pod).map((ri) => ri.p.x);
+            if (!pxs.length) continue;
+            const px0 = Math.min(...pxs) - R.W / 2 - 0.6, px1 = Math.max(...pxs) + R.W / 2 + 0.6, w = px1 - px0;
+            const roof = ownMesh(new T.BoxGeometry(w, 0.15, d), M.glass);
+            roof.position.set((px0 + px1) / 2, R.H + 0.3, 0);
+            g.add(roof);
+            for (const x of [px0 - 0.1, px1 + 0.1]) {
+              const door = ownMesh(new T.BoxGeometry(0.12, R.H, d), M.glass);
+              door.position.set(x, R.H / 2, 0);
+              g.add(door);
+              const fr = ownMesh(new T.BoxGeometry(0.25, 0.25, d), K.std('#59636b', { metalness: 0.6 }));
+              fr.userData.ownMat = true;
+              fr.position.set(x, R.H, 0);
+              g.add(fr);
+            }
           }
           facG.add(g);
           const tagC = api.tag('', 'info');
@@ -278,7 +283,7 @@
           g = proto(r.model).obj.clone();
           g.position.set(upsX, 9.75, ROOM.z0 + 4.5 + 0.4);
           size = [6, 19.5, 9];
-          upsX -= 7;
+          upsX += 7;
         } else if (r.model === 'AC-8') {
           g = new T.Group();
           g.add(K.box(9, 3, 2.4, K.std('#eef1f3', { metalness: 0.05, roughness: 0.5 })));
@@ -307,6 +312,100 @@
         facG.add(bc);
         facInfo.push({ r, g, tag, ghost, bc });
       }
+    }
+
+    /* ---- 入口與門禁：鑰匙鎖 / 感應卡讀卡機 / 雙因子 + 防尾隨雙門（mantrap）與監視器 ---- */
+    const accG = new T.Group();
+    root.add(accG);
+    const accTag = api.tag('', 'info', 'center', 1);
+    accTag.pos.set((DOOR.x0 + DOOR.x1) / 2, 24.6, ROOM.z0 + 1);
+    const accSignT = K.makeTex(640, 120, (c) => {
+      K.D.rr(c, 0, 0, 640, 120, 12, '#1a2126', '#f0a63a', 4);
+      K.D.txt(c, '機房重地 · 門禁管制', 320, 62, 52, '#f2c14e', 'center', 800);
+    }, 1.5);
+    let accLv = -1, readerLed = null, accTailgate = false;
+    const accMats = [];
+    const accStd = (hex, o) => { const m = K.std(hex, o); accMats.push(m); return m; };
+    function buildAccess(lv) {
+      for (const o of accG.children.slice()) { accG.remove(o); o.traverse((x) => { if (x.geometry) x.geometry.dispose(); }); }
+      for (const m of accMats.splice(0)) m.dispose();
+      const cx = (DOOR.x0 + DOOR.x1) / 2, zw = ROOM.z0, dw = DOOR.x1 - DOOR.x0;
+      const metal = accStd('#5c666e', { metalness: 0.6, roughness: 0.4 });
+      const add = (o, x, y, z, pick) => { o.position.set(x, y, z); if (pick) o.userData.pick = { kind: 'door' }; else o.raycast = () => {}; accG.add(o); return o; };
+      add(K.box(dw + 1.2, 22, 0.5, metal), cx, 11, zw + 0.25, true);
+      /* 門板：沒有門禁是一般木門（鑰匙鎖），有門禁換成金屬防火門 + 電磁鎖 */
+      add(K.box(dw - 1, 20.5, 0.35, accStd(lv >= 1 ? '#3a4a55' : '#7a6248', { metalness: lv >= 1 ? 0.5 : 0.05, roughness: 0.5 })), cx, 10.25, zw + 0.6, true);
+      add(K.box(0.35, 1.2, 0.4, accStd('#c9d0d4', { metalness: 0.8, roughness: 0.3 })), DOOR.x0 + 1.4, 10, zw + 0.9);
+      add(K.plane(10.5, 2, K.texMat(accSignT, { metalness: 0, roughness: 0.6 })), cx, 23.4, zw + 0.07);
+      readerLed = null;
+      if (lv >= 1) {
+        add(K.box(1, 1.5, 0.3, accStd('#1b2126', { metalness: 0.4, roughness: 0.5 })), DOOR.x0 - 1.5, 12, zw + 0.2, true);
+        readerLed = add(new T.Mesh(new T.BoxGeometry(0.56, 0.14, 0.05), new T.MeshBasicMaterial({ color: C('#3fe07a') })), DOOR.x0 - 1.5, 12.5, zw + 0.38);
+        accMats.push(readerLed.material);
+      }
+      if (lv >= 2) {
+        /* 防尾隨雙門：兩道互鎖的門中間隔出一個小隔間，一次只能進一個人 */
+        const zf = zw + DOOR.depth;
+        const glassW = accStd('#9fd3ee', { transparent: true, opacity: 0.22, roughness: 0.1, metalness: 0.1, depthWrite: false });
+        add(K.box(0.15, 21, DOOR.depth, glassW), DOOR.x0 - 0.3, 10.5, zw + DOOR.depth / 2, true);
+        add(K.box(0.15, 21, DOOR.depth, glassW), DOOR.x1 + 0.3, 10.5, zw + DOOR.depth / 2, true);
+        add(K.box(dw + 0.6, 21, 0.15, glassW), cx, 10.5, zf, true);
+        add(K.box(dw + 0.6, 0.35, DOOR.depth, metal), cx, 21.1, zw + DOOR.depth / 2);
+        add(K.box(5.2, 20, 0.22, accStd('#b8c4ca', { metalness: 0.5, roughness: 0.3, transparent: true, opacity: 0.6 })), cx - 1, 10, zf + 0.12, true);
+        add(K.box(1, 1.5, 0.3, accStd('#1b2126', { metalness: 0.4, roughness: 0.5 })), cx + 3.6, 12, zf + 0.3, true);
+        add(K.box(0.55, 0.55, 0.05, K.glow('#5aa9f0', 1.2)), cx + 3.6, 11.6, zf + 0.48);
+        const dome = new T.Mesh(new T.SphereGeometry(0.9, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), accStd('#1b2126', { metalness: 0.3, roughness: 0.2 }));
+        dome.rotation.x = Math.PI;
+        add(dome, cx, ROOM.h - 0.3, zf + 4);
+      }
+    }
+    /* 機房裡的人：尾隨進來的陌生人、半夜打掃的清潔人員、來保養的廠商 */
+    const bodyG = new T.CylinderGeometry(0.9, 1.1, 9.2, 12); bodyG.translate(0, 9.6, 0);
+    const headG = new T.SphereGeometry(1.15, 14, 10); headG.translate(0, 15.6, 0);
+    const people = [0, 1, 2].map(() => {
+      const g = new T.Group();
+      const body = new T.Mesh(bodyG, K.std('#5aa9f0', { roughness: 0.8 }));
+      const head = new T.Mesh(headG, K.std('#e0ac85', { roughness: 0.7 }));
+      g.add(body, head);
+      g.visible = false;
+      g.userData.pick = { kind: 'person' };
+      root.add(g);
+      return { g, body };
+    });
+    const scrubber = K.box(3.2, 3.4, 4.2, K.std('#e8c547', { roughness: 0.6 }));
+    scrubber.visible = false;
+    scrubber.userData.pick = { kind: 'person' };
+    root.add(scrubber);
+    let visitSig = '';
+    function syncPeople() {
+      const s = G.S, want = [];
+      let scrub = null;
+      for (const inc of s.incidents) {
+        if (inc.status !== 'active') continue;
+        const d = inc.data;
+        if (inc.type === 'tailgate') {
+          const ri = rackInfo.find((x) => x.id === d.rack);
+          const at = ri && d.planted ? [ri.p.x + 2, ri.p.z + ri.p.dir * (R.D / 2 + 2.5)] : [(DOOR.x0 + DOOR.x1) / 2 - 3, ROOM.z0 + DOOR.depth + 3];
+          want.push({ x: at[0], z: at[1], col: '#f0823a', ry: 0 });
+          if (!d.planted) want.push({ x: at[0] + 3, z: at[1] + 1, col: '#2f3a44', ry: 0 });
+        } else if (inc.type === 'cleaner') {
+          const ri = rackInfo.find((x) => x.id === d.rack);
+          if (ri) { const bz = ri.p.z - ri.p.dir * (R.D / 2 + 3); want.push({ x: ri.p.x - 2, z: bz, col: d.who === 'vendor' ? '#3f6f8f' : '#6d8f5a', ry: 0 }); if (d.who !== 'vendor') scrub = [ri.p.x + 2.2, bz]; }
+        } else if (inc.type === 'vendor' && (d.done && s.time < (d.doneAt || 0) || d.perm)) {
+          const fi = facInfo.find((x) => ['ups', 'cooling'].includes(CAT.room[x.r.model].kind) && x.g.visible && !x.plain);
+          if (fi) { want.push({ x: fi.g.position.x + 6, z: fi.g.position.z + 4, col: '#3f6f8f', ry: 0 }); if (!d.bad && !d.perm) want.push({ x: fi.g.position.x + 9, z: fi.g.position.z + 5, col: '#2f3a44', ry: 0 }); }
+        }
+      }
+      const sig = JSON.stringify(want) + JSON.stringify(scrub);
+      if (sig === visitSig) return;
+      visitSig = sig;
+      people.forEach((p, i) => {
+        const w = want[i];
+        p.g.visible = !!w;
+        if (w) { p.g.position.set(w.x, 0, w.z); p.body.material.color.copy(C(w.col)); }
+      });
+      scrubber.visible = !!scrub;
+      if (scrub) scrubber.position.set(scrub[0], 1.7, scrub[1]);
     }
 
     /* ---- 燈光：停電時變暗、紅色警示燈 ---- */
@@ -668,8 +767,9 @@
         const fr = fac && fac.racks[ri.id];
         const load = fr ? fr.load : 0, lim = fr ? fr.limit : CAT.rack.powerLimit;
         const trip = fac && fac.rackTripped[ri.id], down = G.Net.rackDown(ri.id);
-        const txt = trip ? `${ri.id} ⚡跳電` : ri.ai ? (down && load > 0 ? `${ri.id} AI ⚡斷電` : `${ri.id} AI ${(load / 1000).toFixed(1)}/${(lim / 1000).toFixed(0)}kW`) : `${ri.id} ${(load / 1000).toFixed(1)}kW`;
-        ri.tag.set(txt, trip || load > lim || (ri.ai && down && load > 0) ? 'bad' : load > lim * 0.85 || (ri.ai && fr && load > fr.n1) ? 'warn' : 'ok');
+        const unp = !!(s.racks.find((x) => x.id === ri.id) || {}).unplugged;
+        const txt = unp ? `${ri.id} 🔌 插頭被拔掉了` : trip ? `${ri.id} ⚡跳電` : ri.ai ? (down && load > 0 ? `${ri.id} AI ⚡斷電` : `${ri.id} AI ${(load / 1000).toFixed(1)}/${(lim / 1000).toFixed(0)}kW`) : `${ri.id} ${(load / 1000).toFixed(1)}kW`;
+        ri.tag.set(txt, unp || trip || load > lim || (ri.ai && down && load > 0) ? 'bad' : load > lim * 0.85 || (ri.ai && fr && load > fr.n1) ? 'warn' : 'ok');
       }
       for (const fi of facInfo) {
         const building = s.time < (fi.r.readyAt || 0);
@@ -705,6 +805,13 @@
         if (inc.type === 'cdu-leak' && inc.detected) { a = '💧 CDU 冷卻液洩漏'; ac = 'bad'; }
       }
       syncPuddles();
+      /* 門禁：等級變了就重建入口；門口的標籤與機房裡的人 */
+      const lv = G.Acc.level();
+      if (lv !== accLv) { accLv = lv; buildAccess(lv); }
+      const tg = s.incidents.some((i) => i.status === 'active' && i.type === 'tailgate' && i.detected);
+      accTag.set(tg ? '🚨 有人尾隨進入機房' : lv === 0 ? '⚠ 只有鑰匙鎖（沒有門禁系統）' : lv === 1 ? '門禁：感應卡' : '門禁：雙因子 + 防尾隨雙門', tg ? 'bad' : lv === 0 ? 'warn' : 'info');
+      accTailgate = tg;
+      syncPeople();
       if (!s.racks.length) { a = '機房裡還沒有機櫃：先在上方採購 42U 機櫃'; ac = 'info'; }
       if (a !== alertTxt) { alertTxt = a; tags.alert.set(a, ac); tags.alert.show = !!a; }
       const dim = fac && !fac.mdfPowered ? 0.35 : fac && (fac.onBattery || fac.genRunning) ? 0.7 : 1;
@@ -726,8 +833,9 @@
         const fac = G.R.fac;
         alarm.intensity = fac && !fac.mdfPowered ? (Math.sin(t * 5) > 0 ? 2.2 : 0.3) : 0;
         M.slot.opacity = 0.2 + 0.15 * (0.5 + 0.5 * Math.sin(t * 4));
+        if (readerLed) readerLed.material.color.copy(C(accTailgate && Math.sin(t * 7) > 0 ? '#ff4a3d' : '#3fe07a'));
       },
-      pickables: () => [racksG, facG, slotG, cableG],
+      pickables: () => [racksG, facG, slotG, cableG, accG],
       focusFill: (p) => (p.kind === 'dev' ? 0.3 : p.kind === 'slot' ? 0.2 : 0.62),
       clickable: (p) => p.kind === 'dev' || p.kind === 'rack' || p.kind === 'slot',
       tip(p) {
@@ -768,6 +876,10 @@
           const toFloor = l.a.startsWith('F:') || l.b.startsWith('F:');
           return [`${G.Q.nodeName(l.a)} ⇄ ${G.Q.nodeName(l.b)}`, `${CAT.cables[l.cable].name} · ${U.speed(l.speed)} × ${l.count}`, `狀態：${st}${ls ? ' · 使用率 ' + U.pct(ls.util) : ''}`, toFloor ? '經線槽到弱電豎井，再往上到樓層 IDF' : '機房內跳線：走機櫃上方的線槽'];
         }
+        if (p.kind === 'door') {
+          const lv = G.Acc.level();
+          return ['機房入口', G.Acc.LEVEL[lv], lv === 0 ? '只有鑰匙：誰拿到鑰匙都能進，也沒有進出紀錄' : lv === 1 ? '感應卡 + 電磁鎖：每次進出都有紀錄（但擋不住尾隨）' : '兩道互鎖的門：一次只能進一個人，還要驗指紋', '權限設定在右側的「機房門禁」'];
+        }
         if (p.kind === 'isp') {
           const c = s.isp.find((x) => x.id === p.id);
           return c ? [`${CAT.isp.providers[c.provider].name} ${c.plan} 專線`, `ISP 單模光纖（OS2）接到 ${s.devices[c.router] ? s.devices[c.router].name : '路由器'}`] : null;
@@ -782,7 +894,9 @@
       },
       dispose() {
         offTheme();
-        for (const t of [...tags.racks, ...tags.fac, tags.alert, exitTags.riser, exitTags.isp]) t.remove();
+        for (const t of [...tags.racks, ...tags.fac, tags.alert, exitTags.riser, exitTags.isp, accTag]) t.remove();
+        for (const m of accMats) m.dispose();
+        bodyG.dispose(); headG.dispose();
         for (const m of cabMats.values()) m.dispose();
       },
     };

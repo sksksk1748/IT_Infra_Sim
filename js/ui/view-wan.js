@@ -198,13 +198,13 @@
     const card = h('div', { class: 'card col', style: { gap: '8px' } }, h('h3', {}, '據點一覽'), h('div', { class: 'small muted' }, '點地圖上的據點、總部或公有雲看詳情。'));
     for (const id of G.SITE_IDS) {
       const st = G.SITES[id], x = R.sites[id] || {}, w = s.wan.sites[id];
-      card.appendChild(h('button', { class: 'btn', style: { justifyContent: 'space-between' }, onclick: () => sel(id) },
+      card.appendChild(h('button', { class: 'btn', 'data-hint': 'wan-site:' + id, style: { justifyContent: 'space-between' }, onclick: () => sel(id) },
         h('span', {}, h('b', {}, st.name), h('span', { class: 'muted small' }, `　${st.city} · ${U.num(st.staff)} 人`)),
         h('span', { class: 'mono small', style: { color: satCol(x.sat) } }, !G.Wan.open(id) ? (w.openAt !== null ? '即將開幕' : '尚未開幕') : x.up === false ? '斷線' : x.sat !== null && x.sat !== undefined ? U.pct(x.sat) : '—')));
     }
     card.append(h('div', { class: 'hr' }),
-      h('button', { class: 'btn', onclick: () => sel('hq') }, '總部的 WAN 出口（ISP、MPLS 匯接、SD-WAN 集中器）'),
-      h('button', { class: 'btn', onclick: () => sel('cloud') }, '雲端服務（Microsoft 365、官網上雲、雲端專線）'));
+      h('button', { class: 'btn', 'data-hint': 'wan-site:hq', onclick: () => sel('hq') }, '總部的 WAN 出口（ISP、MPLS 匯接、SD-WAN 集中器）'),
+      h('button', { class: 'btn', 'data-hint': 'wan-site:cloud', onclick: () => sel('cloud') }, '雲端服務（Microsoft 365、官網上雲、雲端專線）'));
     return card;
   }
 
@@ -256,20 +256,20 @@
     const T = CAT.wan.types[o.type];
     card.appendChild(h('div', { class: 'col', style: { gap: '6px' } },
       h('div', { class: 'label' }, '申請線路'),
-      h('div', { class: 'seg' }, types.map(([k, t]) => h('button', { class: o.type === k ? 'on' : '', onclick: () => { o.type = k; renderSide(); } }, t.short))),
+      h('div', { class: 'seg' }, types.map(([k, t]) => h('button', { class: o.type === k ? 'on' : '', 'data-hint': 'wan-type:' + k + '@' + id, onclick: () => { o.type = k; renderSide(); } }, t.short))),
       h('div', { class: 'small muted' }, T.desc),
       h('div', { class: 'row wrap' },
         h('div', { class: 'seg' }, T.bws.map((b) => h('button', { class: o.bw === b ? 'on' : '', onclick: () => { o.bw = b; renderSide(); } }, U.speed(b)))),
         h('span', { class: 'mono small' }, `${U.money(CAT.wan.price(o.type, o.bw, st.intl))}/月 · 開通 ${U.dur(T.lead)}`),
-        h('button', { class: 'btn primary sm', disabled: !Q.unlocked(CAT.wan) || null, onclick: () => UI.res(G.Wan.order(id, o.type, o.bw)) }, '申請'))));
+        h('button', { class: 'btn primary sm', 'data-hint': 'wan-order@' + id, disabled: !Q.unlocked(CAT.wan) || null, onclick: () => UI.res(G.Wan.order(id, o.type, o.bw)) }, '申請'))));
     /* SD-WAN / VPN */
     const hub = G.Wan.hubs().length > 0;
     card.appendChild(h('div', { class: 'col', style: { gap: '6px' } },
       h('div', { class: 'label' }, '連回總部的方式'),
-      h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: w.sdwan, disabled: !Q.unlocked(CAT.wan) || null, onchange: (e) => UI.res(G.Wan.setSdwan(id, e.target.checked)) }),
+      h('label', { class: 'row small', 'data-hint': 'sdwan:' + id }, h('input', { type: 'checkbox', checked: w.sdwan, disabled: !Q.unlocked(CAT.wan) || null, onchange: (e) => UI.res(G.Wan.setSdwan(id, e.target.checked)) }),
         `SD-WAN（${U.money(CAT.wan.sdwan.perSite)}/月）：依應用程式自動選路、斷線瞬間切換、上網就近從據點出去`),
       w.sdwan && !hub ? h('div', { class: 'note warn small' }, '總部還沒有 SD-WAN 集中器（SDW-1，或 SD-WAN 角色的 VM）：據點的隧道沒有地方可以連。') : null,
-      h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: w.vpn, onchange: (e) => UI.res(G.Wan.setVpn(id, e.target.checked)) }),
+      h('label', { class: 'row small', 'data-hint': 'vpn:' + id }, h('input', { type: 'checkbox', checked: w.vpn, onchange: (e) => UI.res(G.Wan.setVpn(id, e.target.checked)) }),
         'IPsec VPN（免費）：經網際網路連回總部防火牆，當作專線的備援（要等路由收斂才切換）')));
     return card;
   }
@@ -287,7 +287,7 @@
     card.appendChild(h('div', { class: 'small muted' }, '走網際網路的 VPN / SD-WAN 隧道，會用到總部的 ISP 頻寬與防火牆效能；MPLS 與 IPLC 則是另外的線路，接在邊界路由器上。據點進來的流量在防火牆上是「WAN」區域。'));
     card.appendChild(h('div', { class: 'col', style: { gap: '6px' } },
       h('div', { class: 'label' }, 'MPLS 匯接（所有 MPLS 據點共用）'),
-      h('div', { class: 'row wrap' }, CAT.wan.hqMpls.bws.map((b) => h('button', { class: 'btn xs' + (hq.mpls === b ? ' on' : ''), disabled: !Q.unlocked(CAT.wan) || null, onclick: () => UI.res(G.Wan.orderHq(b)) }, `${U.speed(b)} · ${U.money(b * CAT.wan.hqMpls.perMbps)}/月`))),
+      h('div', { class: 'row wrap' }, CAT.wan.hqMpls.bws.map((b) => h('button', { class: 'btn xs' + (hq.mpls === b ? ' on' : ''), 'data-hint': 'hqmpls:' + b, disabled: !Q.unlocked(CAT.wan) || null, onclick: () => UI.res(G.Wan.orderHq(b)) }, `${U.speed(b)} · ${U.money(b * CAT.wan.hqMpls.perMbps)}/月`))),
       hq.mpls ? h('button', { class: 'btn danger xs', style: { alignSelf: 'flex-start' }, onclick: () => UI.confirm('終止 MPLS 匯接', '所有 MPLS 據點都會斷線。', '終止', () => UI.res(G.Wan.cancelHq()), 'danger') }, '終止') : null));
     card.appendChild(h('div', { class: 'row wrap' },
       h('button', { class: 'btn sm', onclick: () => UI.go('shop:isp') }, 'ISP 專線'),
@@ -305,7 +305,7 @@
     for (const id of ['m365', 'cloudweb', 'cloudbk', 'cspm']) {
       const svc = CAT.services[id], on = Q.hasService(id), locked = !Q.unlocked(svc);
       card.appendChild(h('div', { class: 'col', style: { gap: '4px', borderTop: '1px solid var(--line)', paddingTop: '8px' } },
-        h('div', { class: 'row between' }, h('b', { class: 'small' }, svc.name), h('button', { class: 'btn xs ' + (on ? 'danger' : 'primary'), disabled: locked || null, onclick: () => UI.res(on ? G.Act.unsubscribe(id) : G.Act.subscribe(id)) }, on ? '停用' : locked ? `第 ${svc.unlock} 章` : `啟用（${U.money(Q.monthlyServiceCost(id))}/月）`)),
+        h('div', { class: 'row between' }, h('b', { class: 'small' }, svc.name), h('button', { class: 'btn xs ' + (on ? 'danger' : 'primary'), 'data-hint': 'svc:' + id, disabled: locked || null, onclick: () => UI.res(on ? G.Act.unsubscribe(id) : G.Act.subscribe(id)) }, on ? '停用' : locked ? `第 ${svc.unlock} 章` : `啟用（${U.money(Q.monthlyServiceCost(id))}/月）`)),
         h('div', { class: 'tiny muted' }, svc.desc)));
     }
     card.appendChild(h('div', { class: 'col', style: { gap: '6px', borderTop: '1px solid var(--line)', paddingTop: '8px' } },

@@ -146,6 +146,7 @@
       accent: g('--accent'), accent2: g('--accent-2'), ok: g('--ok'), warn: g('--warn'), bad: g('--bad'), info: g('--info'),
       floor: g('--floor'), desk: g('--desk'), room: g('--room'), core: g('--core'), wall: g('--wall'), glass: g('--glass'),
       kitchen: g('--kitchen'), serve: g('--serve'), dine: g('--dine'), cold: g('--cold'),
+      park: g('--park'), moto: g('--moto'), ramp: g('--ramp'), pillar: g('--pillar'),
       mono: g('--font-mono'), sans: g('--font-sans'),
     };
   };

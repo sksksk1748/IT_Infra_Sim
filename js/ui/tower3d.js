@@ -1,4 +1,4 @@
-/* 3D 大樓剖面：23 層樓（22F、23F 員工餐廳）+ B1 機房、弱電豎井裡的主幹線、ISP 進線、即時流量與駭客攻擊路徑
+/* 3D 大樓剖面：23 層樓（22F、23F 員工餐廳）+ B1 機房 + B2 員工停車場、弱電豎井裡的主幹線、ISP 進線、即時流量與駭客攻擊路徑
  * 單位：公尺。窗戶亮燈 = 進駐人數、顏色 = 滿意度；線上的光點 = 流量（越多越滿）；紅色 = 中斷或攻擊。
  * 攻擊路徑只顯示「已偵測到」的資安事件，並沿著模擬中實際的路由（ISP → 路由器 → 防火牆 → 核心 → 樓層）移動。
  */
@@ -16,7 +16,8 @@
   /** opts: { height, onFloor(fid), onRack(), onDev(id), onTopo(), onInc() } */
   M3.tower = (opts) => M3.stage({ height: opts.height, label: '3D 大樓剖面', fov: 32, pitchMin: -0.3, minFar: 2600, create: (api) => createTower(api, opts) });
 
-  const yOf = (level) => (level - 1) * FH;
+  /* 地上樓層從 0 往上；地下室在 B1 機房下面（B2 = −2） */
+  const yOf = (level) => (level > 0 ? (level - 1) * FH : B1 - FH * (-level - 1));
   const idfPt = (level) => [RX - 2.9, yOf(level) + 1.65, RZ];
   const lane = (k) => [((k % 7) - 3) * 0.5, ((Math.floor(k / 7) % 6) - 2.5) * 0.5];
   const hash = (n) => { const x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
@@ -57,9 +58,10 @@
     }, 2);
     earthT.wrapS = T.RepeatWrapping;
     const earthM = K.texMat(earthT, { metalness: 0, roughness: 0.95 });
-    const secL = K.plane(90 - W / 2, 7, earthM); secL.position.set(-(90 + W / 2) / 2, -3.5, D / 2); root.add(secL);
-    const secR = K.plane(90 - W / 2, 7, earthM); secR.position.set((90 + W / 2) / 2, -3.5, D / 2); root.add(secR);
-    const secB = K.plane(W, 1.6, K.std('#3a2f27', { roughness: 0.95 })); secB.position.set(0, -6.2, D / 2); root.add(secB);
+    const DEEP = -B1 + FH + 2.4;
+    const secL = K.plane(90 - W / 2, DEEP, earthM); secL.position.set(-(90 + W / 2) / 2, -DEEP / 2, D / 2); root.add(secL);
+    const secR = K.plane(90 - W / 2, DEEP, earthM); secR.position.set((90 + W / 2) / 2, -DEEP / 2, D / 2); root.add(secR);
+    const secB = K.plane(W, 1.6, K.std('#3a2f27', { roughness: 0.95 })); secB.position.set(0, B1 - FH - 1.2, D / 2); root.add(secB);
     const gs = new T.Shape();
     [[-90, 70], [90, 70], [90, -D / 2], [W / 2, -D / 2], [W / 2, D / 2], [-W / 2, D / 2], [-W / 2, -D / 2], [-90, -D / 2]].forEach(([x, y], i) => (i ? gs.lineTo(x, y) : gs.moveTo(x, y)));
     const ground = new T.Mesh(new T.ShapeGeometry(gs), K.std('#27313a', { roughness: 0.95, metalness: 0 }));
@@ -111,7 +113,27 @@
       root.add(idf);
       const tag = api.tag(f.id, '', 'right', 1, true);
       tag.pos.set(-W / 2 - 1, y + FH / 2, D / 2);
-      floors.push({ f, y, slab, glass, idf, led, tag, col: HEX.none, lit: 0 });
+      const rec = { f, y, slab, glass, idf, led, tag, col: HEX.none, lit: 0, under: f.level < 0 };
+      /* 地下停車場：擋土牆 + 一排排停好的車（跟著上下班時段增減） */
+      if (rec.under) {
+        glass.visible = edges.visible = false;
+        const wallM = K.std('#2b353d', { roughness: 0.9 });
+        const bk = K.plane(W, FH, wallM); bk.position.set(0, y + FH / 2, -D / 2); root.add(bk);
+        for (const sx of [-1, 1]) { const sd = K.plane(D, FH, wallM); sd.rotation.y = sx * -Math.PI / 2; sd.position.set(sx * W / 2, y + FH / 2, 0); root.add(sd); }
+        const ramp = K.box(8, 0.25, 3.2, concrete); ramp.position.set(-W / 2 - 3.6, y + FH / 2 + 0.6, -D / 2 + 2.2); ramp.rotation.z = -0.5; root.add(ramp);
+        const slots = [];
+        for (const zz of [-D / 2 + 2.2, -1.6, 1.6, D / 2 - 2.4]) for (let x = -W / 2 + 3; x <= W / 2 - 6; x += 2.7) if (!(Math.abs(zz) < 3 && x > RX - 6)) slots.push([x, zz]);
+        slots.sort((a, b) => hash(a[0] * 5.1 + a[1] * 3.3) - hash(b[0] * 5.1 + b[1] * 3.3));
+        const carM = new T.InstancedMesh(new T.BoxGeometry(1.8, 1.1, 4.2), K.std('#ffffff', { metalness: 0.5, roughness: 0.4 }), slots.length);
+        const CARC = ['#f2f3f3', '#c8ccd0', '#2a2e33', '#8d949a', '#1f3552', '#c0392b', '#d8d2c4'];
+        const dm = new T.Object3D();
+        slots.forEach((p, i) => { dm.position.set(p[0], y + 0.35 + 0.55, p[1]); dm.updateMatrix(); carM.setMatrixAt(i, dm.matrix); carM.setColorAt(i, C(CARC[Math.floor(hash(i * 3.7 + 1) * CARC.length)])); });
+        carM.count = 0;
+        carM.userData.pick = { kind: 'floor', id: f.id };
+        root.add(carM);
+        rec.cars = carM; rec.carSlots = slots.length;
+      }
+      floors.push(rec);
     }
     const roof = K.box(W + 0.8, 0.6, D + 0.8, concrete); roof.position.set(0, NF * FH + 0.3, 0); root.add(roof);
     const mast = K.cylY(0.18, 9, K.std('#8f989f', { metalness: 0.7 }), 10); mast.position.set(-W / 2 + 8, NF * FH + 5, -D / 2 + 5); root.add(mast);
@@ -123,13 +145,15 @@
 
     /* 窗戶（一個 InstancedMesh） */
     const per = PANES.length;
-    const win = new T.InstancedMesh(new T.PlaneGeometry(2.3, 2.5), new T.MeshBasicMaterial({ color: 0xffffff }), per * NF);
+    const win = new T.InstancedMesh(new T.PlaneGeometry(2.3, 2.5), new T.MeshBasicMaterial({ color: 0xffffff }), per * floors.length);
     const dummy = new T.Object3D();
     const DARK = C('#1a2733'), tmpC = new T.Color();
     floors.forEach((fl, L) => {
       PANES.forEach((p, i) => {
         dummy.position.set(p.x, fl.y + 0.35 + 1.95, p.z);
         dummy.rotation.set(0, p.ry, 0);
+        /* 地下室沒有窗戶 */
+        dummy.scale.setScalar(fl.under ? 0 : 1);
         dummy.updateMatrix();
         win.setMatrixAt(L * per + i, dummy.matrix);
         win.setColorAt(L * per + i, DARK);
@@ -140,9 +164,10 @@
     root.add(win);
 
     /* 弱電豎井 */
-    const shaftH = NF * FH - B1;
+    const BOT = Math.min(B1, ...floors.map((fl) => fl.y));
+    const shaftH = NF * FH - BOT;
     const shaft = K.box(4.4, shaftH, 4.4, K.std('#2fc6b8', { transparent: true, opacity: 0.06, depthWrite: false, roughness: 0.3 }));
-    shaft.position.set(RX, B1 + shaftH / 2, RZ);
+    shaft.position.set(RX, BOT + shaftH / 2, RZ);
     root.add(shaft);
     const shaftE = new T.LineSegments(new T.EdgesGeometry(new T.BoxGeometry(4.4, shaftH, 4.4)), new T.LineBasicMaterial({ color: C('#2fc6b8'), transparent: true, opacity: 0.45 }));
     shaftE.position.copy(shaft.position);
@@ -218,8 +243,8 @@
     }
     /* 預設取景：大樓 + 雲（不含大片地面） */
     const frameBox = new T.Mesh(new T.BoxGeometry(1, 1, 1), new T.MeshBasicMaterial({ visible: false }));
-    frameBox.scale.set(W / 2 + 52, NF * FH + 18, D / 2 + 24);
-    frameBox.position.set((W / 2 - 52) / 2, (NF * FH + 10 - 8) / 2, (24 - D / 2) / 2);
+    frameBox.scale.set(W / 2 + 52, NF * FH + 18 - (BOT - B1), D / 2 + 24);
+    frameBox.position.set((W / 2 - 52) / 2, (NF * FH + 10 - 8 + (BOT - B1)) / 2, (24 - D / 2) / 2);
     frameBox.raycast = () => {};
     root.add(frameBox);
 
@@ -481,6 +506,7 @@
     const cc = (hex) => colC.get(hex) || (colC.set(hex, C(hex)), colC.get(hex));
     function paintFloor(L, pulse) {
       const fl = floors[L];
+      if (fl.under) return;
       const lit = fl.lit, redK = alertFloors.get(fl.f.id);
       const base = cc(fl.col), EMG = cc('#3a2a1a'), REDC = cc('#ff3b30');
       const outage = G.R.fac && G.R.fac.outage && !G.R.fac.genRunning;
@@ -512,7 +538,9 @@
         const fty = G.FT[fl.f.type];
         /* 餐廳：工作人員點亮一小部分，用餐人潮越多越亮 */
         const litK = fty.dine ? (stp ? 0.25 * U.clamp((stp.crew || 0) / fl.f.staff, 0, 1) + 0.75 * U.clamp((stp.diners || 0) / fty.diners, 0, 1) : 0) : present / fl.f.staff;
-        fl.lit = Math.round(U.clamp(litK, 0, 1) * per);
+        fl.lit = fl.under ? 0 : Math.round(U.clamp(litK, 0, 1) * per);
+        /* 地下停車場：停好的車跟著上下班時段增減 */
+        if (fl.cars) { const n = fs.movedIn > 0 && M3.parkFill ? Math.round(M3.parkFill(s.time) * Math.min(1, 0.3 + Q.officeStaff() / 6000) * fl.carSlots) : 0; if (fl.cars.count !== n) fl.cars.count = n; }
         const stt = G.Views.building.floorStatus(fl.f.id);
         const unpowered = facP && facP.idfPowered && facP.idfPowered[fl.f.id] === false;
         fl.led.material.color.copy(C(unpowered ? '#20262b' : HEX[stt.c] || HEX.none));

@@ -38,6 +38,7 @@
         wan: G.Wan.newState(),
         ep: G.Ep.newState(),
         vuln: G.Vuln.newState(),
+        access: G.Acc.newState(),
         /* 電話：沙盒模式從週一上班開始要有自己的電話交換機（之前用大樓的舊總機） */
         voice: { qos: false, trunk: 0, next: 0, nextAt: 0, graceUntil: mode === 'sandbox' ? U.at(3, 9) : 0 },
         stor: { snap: false, extraTB: 0 },
@@ -76,8 +77,10 @@
       for (const f of G.BLD.floors) {
         if (s.floors[f.id]) continue;
         s.floors[f.id] = newFloorState();
-        /* 新版本加入的樓層（22F、23F 員工餐廳）：沙盒模式下一個工作天開張；劇情模式在第七章開張 */
-        if (s.mode === 'sandbox') s.floors[f.id].moveInAt = U.nextWeekdayAt(s.time, 9, 1);
+        /* 新版本加入的樓層：沙盒模式下一個工作天啟用；
+         * 劇情模式的 22F、23F 餐廳在第七章開張，B2 停車場在第二章啟用（已經過了第二章的存檔：下一個工作天一早啟用） */
+        if (s.mode === 'sandbox') s.floors[f.id].moveInAt = U.nextWeekdayAt(s.time, f.id === 'B2' ? 7 : 9, 1);
+        else if (f.id === 'B2' && s.mode === 'campaign' && s.chapter >= 1) s.floors[f.id].moveInAt = U.nextWeekdayAt(s.time, 7, 1);
       }
       s.sched = s.sched || [];
       if (s.hum === undefined) s.hum = 55;
@@ -85,6 +88,7 @@
       s.vm = s.vm || { ha: true };
       s.ep = s.ep || G.Ep.newState();
       s.vuln = s.vuln || G.Vuln.newState();
+      s.access = s.access || G.Acc.newState();
       /* 舊存檔：加入分支據點；沙盒模式接下來幾天陸續開幕 */
       if (!s.wan) {
         s.wan = G.Wan.newState();
@@ -185,10 +189,12 @@
     const seats = Math.ceil(f.staff * ft.wired);
     const printers = Math.ceil(f.staff / 40);
     const pos = ft.pos || 0;
-    return { seats, printers, pos, aps: fs.aps.length, total: seats + printers + pos + fs.aps.length };
+    /* 停車場：車道的車牌辨識 / 柵欄機、監視器 */
+    const gates = ft.gates || 0, cams = ft.cams || 0;
+    return { seats, printers, pos, gates, cams, aps: fs.aps.length, total: seats + printers + pos + gates + cams + fs.aps.length };
   };
-  /** 辦公樓層的進駐人數（不含餐廳人員） */
-  Q.officeStaff = () => U.sum(G.BLD.floors.filter((f) => !G.FT[f.type].dine), (f) => G.S.floors[f.id].movedIn);
+  /** 辦公樓層的進駐人數（不含餐廳與停車場人員） */
+  Q.officeStaff = () => U.sum(G.BLD.floors.filter((f) => !G.FT[f.type].dine && !G.FT[f.type].park), (f) => G.S.floors[f.id].movedIn);
   Q.floorPorts = (fid) => {
     const fs = G.S.floors[fid];
     return fs.idf.count * CAT.access[fs.idf.model].ports;
@@ -197,8 +203,10 @@
     const f = G.BLD.byId[fid], fs = G.S.floors[fid], ft = G.FT[f.type];
     const budget = fs.idf.count * CAT.access[fs.idf.model].poe;
     const phones = ft.voip ? Math.ceil(f.staff * ft.wired) * 6 : 0;
+    /* 監視器：每台約 7 W（PoE Class 2～3） */
+    const cams = (ft.cams || 0) * 7;
     const aps = U.sum(fs.aps, (a) => CAT.aps[a.model].poe);
-    return { budget, phones, aps, used: phones + aps };
+    return { budget, phones, cams, aps, used: phones + cams + aps };
   };
 
   /** CIDR 前綴 → 可用主機數 */

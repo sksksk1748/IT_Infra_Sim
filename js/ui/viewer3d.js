@@ -432,12 +432,26 @@
       v.tagList.sort((a, b) => b.prio - a.prio);
       return t;
     };
+    /** 轉到目標角度時走最短的方向（玩家可能已經轉了好幾圈） */
+    const nearYaw = (from, to) => from + ((((to - from) % (Math.PI * 2)) + Math.PI * 3) % (Math.PI * 2)) - Math.PI;
     const home = () => {
       if (!v.homeV) return;
-      v.fly = { c0: v.center.clone(), c1: v.homeV.center.clone(), d0: v.dist, d1: v.homeV.dist, y0: v.yaw, y1: v.homeV.yaw, p0: v.pitch, p1: v.homeV.pitch, t: 0 };
+      v.fly = { c0: v.center.clone(), c1: v.homeV.center.clone(), d0: v.dist, d1: v.homeV.dist, y0: v.yaw, y1: nearYaw(v.yaw, v.homeV.yaw), p0: v.pitch, p1: v.homeV.pitch, t: 0 };
       v.atHome = true;
     };
     api.home = home;
+    /** 飛到指定角度（例如俯視），並重新取景讓整個場景剛好放進畫面 */
+    api.setView = (yaw, pitch, fill) => {
+      if (!v.camera || !v.sc) return;
+      const f = framing(v.sc.frame || v.sc.obj);
+      const vw = v.sc.view || {};
+      const fl = fill || vw.fill || 0.8;
+      const fit = vw.balance ? balanceFit(v.camera, f, yaw, pitch, fl) : { center: f.center, dist: fitDist(v.camera, f, yaw, pitch, fl) };
+      camAt(v.camera, v.center, v.dist, v.yaw, v.pitch, opts.minFar);
+      v.fly = { c0: v.center.clone(), c1: fit.center.clone(), d0: v.dist, d1: U.clamp(fit.dist, v.minD, v.maxD), y0: v.yaw, y1: nearYaw(v.yaw, yaw), p0: v.pitch, p1: pitch, t: 0 };
+      v.atHome = false;
+      v.needs = true;
+    };
     /** 場景範圍改變時重新計算預設取景（使用者沒移動過鏡頭就直接套用） */
     api.refit = () => resize();
     /** 目前鏡頭距離 / 預設距離（1 = 全景，越小代表拉得越近） */

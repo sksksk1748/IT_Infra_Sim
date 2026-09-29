@@ -170,9 +170,14 @@
     /* AI 液冷 */
     'CDU-100': { kind: 'cdu', name: '液冷分配單元 CDU-100', coolKW: 100, price: 2400000, powerKW: 4, unlock: 6, buildMin: 360,
       desc: '把冷卻液送進 AI 伺服器 GPU 上的冷板（直接液冷），一台帶走 100 kW 的熱。AI 機櫃動輒 40 kW 以上，光靠空調吹不涼。' },
+    /* 門禁（實體安全）：沒有門禁時，機房只有一把鑰匙 */
+    'ACS-CARD': { kind: 'access', name: '感應卡門禁系統', price: 180000, powerKW: 0.1, unlock: 1, buildMin: 180, level: 1,
+      desc: '讀卡機 + 電磁鎖 + 門禁紀錄：每個人用自己的卡、每次進出都有紀錄，權限可以依人員設定、離職時立刻停用。' },
+    'ACS-MFA': { kind: 'access', name: '雙因子門禁 + 防尾隨雙門', price: 950000, powerKW: 0.3, unlock: 3, buildMin: 480, level: 2,
+      desc: '感應卡 + 指紋雙因子驗證，搭配兩道互鎖的門（mantrap）：第一道門關上、第二道門才會開，一次只能進一個人，杜絕尾隨；門口加裝監視器錄影。' },
   };
-  CAT.roomSlots = { cooling: 4, ups: 2, generator: 1, fire: 3, ems: 1, contain: 1, cdu: 2 };
-  CAT.rack = { price: 55000, units: 42, powerLimit: 8000, maxRacks: 10,
+  CAT.roomSlots = { cooling: 5, ups: 4, generator: 1, fire: 3, ems: 1, contain: 1, cdu: 3, access: 2 };
+  CAT.rack = { price: 55000, units: 42, powerLimit: 8000, maxRacks: 24,
     ai: { price: 380000, max: 4, unlock: 6, name: 'ORv3 AI 機櫃', desc: '寬機櫃、背面有 54V 銅排（busbar）與液冷歧管。沒有 PDU：電力由你裝進去的電源櫃（PSU）決定。' } };
   /** 送風溫度設定（°C）：越高越省電、但出事時升溫得越快 */
   CAT.coolSets = [18, 21, 24];
@@ -234,11 +239,14 @@
 
   /* ---------- 水平布線（IDF → 座位 / AP） ---------- */
   CAT.horizontal = {
-    cat6:  { name: 'Cat6 水平布線', perDrop: 2200, buildMin: 8 * 60, maxSpeed: 5000,
+    cat6:  { name: 'Cat6 水平布線', perDrop: 2200, diyPerDrop: 900, buildMin: 8 * 60, maxSpeed: 5000,
       desc: '每個座位 / AP 點拉一條 Cat6 到 IDF。支援 1G，搭配 mGig 可到 5G。' },
-    cat6a: { name: 'Cat6A 水平布線', perDrop: 3300, buildMin: 10 * 60, maxSpeed: 10000,
+    cat6a: { name: 'Cat6A 水平布線', perDrop: 3300, diyPerDrop: 1500, buildMin: 10 * 60, maxSpeed: 10000,
       desc: '較貴，但每個點都能跑 10G，是 Wi-Fi 7 時代的保險選擇。' },
   };
+
+  /* 自己布線：打線刀、剝線鉗、理線工具與認證測試儀（買一次就好，材料費另計 diyPerDrop） */
+  CAT.diyKit = 150000;
 
   /* ---------- ISP 企業專線 ---------- */
   CAT.isp = {

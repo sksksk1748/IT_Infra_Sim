@@ -16,7 +16,7 @@
     el.appendChild(h('div', { class: 'view-h' },
       h('div', {}, h('h2', {}, '系統管理'), h('div', { class: 'desc' }, '機房裡跑的「服務」：虛擬化主機上的 VM、存放公司資料的儲存設備、每晚的備份，以及電話系統與上萬台電腦的管理。')),
       h('div', { class: 'row wrap' }, h('button', { class: 'btn', onclick: () => UI.go('shop:sys') }, '採購系統設備'))));
-    el.appendChild(h('div', { class: 'tabs', role: 'tablist' }, V.TABS.map(([k, t]) => h('button', { class: V.tab === k ? 'on' : '', onclick: () => { V.tab = k; UI.refresh(); } }, t, badge(k)))));
+    el.appendChild(h('div', { class: 'tabs', role: 'tablist' }, V.TABS.map(([k, t]) => h('button', { class: V.tab === k ? 'on' : '', 'data-hint': 'tab:sys:' + k, onclick: () => { V.tab = k; UI.refresh(); } }, t, badge(k)))));
     const r = V.renderers[V.tab] || vmTab;
     r(el);
   };
@@ -48,7 +48,7 @@
       tile('記憶體', c.ram ? U.pct(c.ur / c.ram) : '—', c.ram ? `${c.ur} / ${c.ram} GB（不能超用）` : '', c.ram && c.ur / c.ram > 0.9 ? 'warn-t' : ''),
       tile('HA 高可用', c.ha ? (c.n1 ? '可容錯' : '資源不足') : '未啟用', !c.haOn ? 'HA 已關閉' : c.hosts < 2 ? '至少要兩台主機' : !c.shared ? '缺共用儲存（SAN）' : c.n1 ? '任一台主機故障，VM 都能在別台重開' : '壞一台主機後，剩下的記憶體放不下所有 VM', c.ha && c.n1 ? 'ok-t' : 'warn-t')));
     el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } },
-      h('button', { class: 'btn ' + (s.vm.ha ? 'on' : 'primary'), onclick: () => UI.res(G.VM.setHa(!s.vm.ha)) }, s.vm.ha ? 'HA 已開啟 · 關閉' : '開啟 HA'),
+      h('button', { class: 'btn ' + (s.vm.ha ? 'on' : 'primary'), 'data-hint': 'vm-ha', onclick: () => UI.res(G.VM.setHa(!s.vm.ha)) }, s.vm.ha ? 'HA 已開啟 · 關閉' : '開啟 HA'),
       kbBtn('k-vm'), kbBtn('k-san')));
     if (!c.hosts) {
       el.appendChild(h('div', { class: 'card col', style: { gap: '8px', marginBottom: '12px' } },
@@ -75,7 +75,7 @@
       h('h3', {}, '建立 VM'),
       h('select', { id: 'vm-role', onchange: (e) => { V.newRole = e.target.value; UI.refresh(); } }, roles.map((r) => h('option', { value: r, selected: r === V.newRole || null }, `${CAT.roles[r].name}（${CAT.vmSize[r][0]} vCPU · ${CAT.vmSize[r][1]} GB）`))),
       h('div', { class: 'small muted' }, `${vc} vCPU、${ram} GB 記憶體、系統碟 ${disk} TB。作業系統授權 ${U.money(CAT.vmCfg.osLicense)}，約 ${CAT.vmCfg.bootMin} 分鐘開機。${G.VM.sanUp() ? '硬碟會放在 SAN。' : '目前沒有 SAN：硬碟只能放主機本機（不能 HA）。'}`),
-      h('button', { class: 'btn primary sm', disabled: !c.up || null, style: { alignSelf: 'flex-start' }, onclick: () => { const r = UI.res(G.VM.create(V.newRole)); if (r.ok) V.selVm = r.id; } }, '建立 VM'));
+      h('button', { class: 'btn primary sm', 'data-hint': 'vm-create', disabled: !c.up || null, style: { alignSelf: 'flex-start' }, onclick: () => { const r = UI.res(G.VM.create(V.newRole)); if (r.ok) V.selVm = r.id; } }, '建立 VM'));
     const phys = Q.devices('server').filter((d) => d.rack && !d.host && d.role && roles.includes(d.role) && !CAT.devices[d.model].hv);
     const p2v = h('div', { class: 'card col', style: { gap: '6px' } },
       h('h3', {}, '實體轉虛擬（P2V）'),
@@ -84,7 +84,7 @@
         const dmz = (G.Net.zones().get(d.id) || {}).zone === 'DMZ';
         return h('div', { class: 'row between small' }, h('span', {}, h('b', {}, d.name), h('span', { class: 'muted' }, `　${CAT.roles[d.role].short} · ${m.u}U · ${m.watts} W`),
           dmz ? h('div', { class: 'tiny warn-t' }, '在 DMZ：VM 會跟著主機的網段（內部伺服器區），對外服務建議留在 DMZ 或用 DMZ 專用的主機') : null),
-          h('button', { class: 'btn xs', disabled: busy || !c.up || null, onclick: () => UI.res(G.VM.p2v(d.id)) }, busy ? '轉換中…' : '轉成 VM')); }) : h('div', { class: 'small dim' }, '沒有可以轉換的實體伺服器。'));
+          h('button', { class: 'btn xs', 'data-hint': 'p2v', disabled: busy || !c.up || null, onclick: () => UI.res(G.VM.p2v(d.id)) }, busy ? '轉換中…' : '轉成 VM')); }) : h('div', { class: 'small dim' }, '沒有可以轉換的實體伺服器。'));
     const right = h('div', { class: 'col', style: { gap: '10px' } }, create, p2v);
     const left = h('div', { class: 'col', style: { gap: '10px' } });
     if (V.selVm && G.S.devices[V.selVm]) left.appendChild(UI.vmCard(V.selVm));
@@ -158,10 +158,10 @@
       h('div', { class: 'row wrap' }, h('span', { class: 'small muted' }, '保存'), h('div', { class: 'seg' }, G.Stor.KEEP.map((k) => h('button', { class: b.keep === k ? 'on' : '', onclick: () => UI.res(G.Stor.setPolicy(null, k)) }, `${k} 天`)))),
       h('div', { class: 'small dim' }, '保存越久，越能還原到「被入侵之前」的版本（勒索軟體常潛伏好幾週），但備份空間也越大。'),
       h('div', { class: 'row wrap' },
-        h('button', { class: 'btn primary sm', disabled: !srv.length || b.drillUntil > s.time || null, onclick: () => UI.res(G.Stor.drill()) }, b.drillUntil > s.time ? `演練中（剩 ${U.dur(b.drillUntil - s.time)}）` : '進行還原演練（2 小時）'),
+        h('button', { class: 'btn primary sm', 'data-hint': 'bkp-drill', disabled: !srv.length || b.drillUntil > s.time || null, onclick: () => UI.res(G.Stor.drill()) }, b.drillUntil > s.time ? `演練中（剩 ${U.dur(b.drillUntil - s.time)}）` : '進行還原演練（2 小時）'),
         !srv.length ? h('button', { class: 'btn sm', onclick: () => UI.go('shop:srv') }, '部署備份伺服器') : null));
     const tape = G.Stor.hasTape();
-    const svcBtn = (id) => { const on = Q.hasService(id), svc = CAT.services[id]; return h('button', { class: 'btn xs ' + (on ? 'danger' : 'primary'), disabled: !Q.unlocked(svc) || null, onclick: () => UI.res(on ? G.Act.unsubscribe(id) : G.Act.subscribe(id)) }, on ? '停用' : `啟用（${U.money(Q.monthlyServiceCost(id))}/月）`); };
+    const svcBtn = (id) => { const on = Q.hasService(id), svc = CAT.services[id]; return h('button', { class: 'btn xs ' + (on ? 'danger' : 'primary'), 'data-hint': 'svc:' + id, disabled: !Q.unlocked(svc) || null, onclick: () => UI.res(on ? G.Act.unsubscribe(id) : G.Act.subscribe(id)) }, on ? '停用' : `啟用（${U.money(Q.monthlyServiceCost(id))}/月）`); };
     const rule = h('div', { class: 'card col', style: { gap: '10px' } },
       h('h3', {}, '3-2-1 原則'),
       chk(r.local, '第 2 份：本地備份', srv.length ? (r.local ? '備份伺服器上有 26 小時內的備份' : '最近 26 小時內沒有成功的備份') : '還沒有備份伺服器（ST-4U 角色設為備份，或建一台備份 VM）'),
@@ -203,7 +203,7 @@
       tile('外線阻塞率', R.active ? U.pct(R.blocking || 0, 1) : '—', R.active ? (R.blocking > 0.05 ? '客戶打不進來' : 'Erlang B：< 1% 最理想') : '', R.blocking > 0.05 ? 'bad-t' : R.blocking > 0.01 ? 'warn-t' : 'ok-t'),
       tile('通話品質 MOS', R.mos ? R.mos.toFixed(2) : '—', R.worst ? `最差：${R.worst.fid} ${R.worst.mos.toFixed(2)}（4 以上清楚）` : '1～5 分', R.mos && R.mos < 3.6 ? 'bad-t' : R.mos && R.mos < 4 ? 'warn-t' : 'ok-t')));
     el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } },
-      h('button', { class: 'btn ' + (v.qos ? 'on' : 'primary'), onclick: () => UI.res(G.Voice.setQos(!v.qos)) }, v.qos ? '語音 QoS：開 · 關閉' : '啟用語音 QoS'),
+      h('button', { class: 'btn ' + (v.qos ? 'on' : 'primary'), 'data-hint': 'qos', onclick: () => UI.res(G.Voice.setQos(!v.qos)) }, v.qos ? '語音 QoS：開 · 關閉' : '啟用語音 QoS'),
       kbBtn('k-pbx'), kbBtn('k-qos')));
     /* 設備 */
     const devRow = (d, what) => { const st = UI.devStatus(d), z = G.Net.zones().get(d.id); return h('div', { class: 'row between small' }, h('span', {}, h('b', {}, d.name), h('span', { class: 'muted' }, `　${what}${d.host ? '（VM）' : ''} · ${z ? UI.zoneText(z.zone) : ''}`)), h('span', { class: 'chip ' + st.c }, st.t)); };
@@ -225,7 +225,7 @@
         const n = Number(ch), b = A > 0 ? G.Voice.erlangB(n, A) : 0;
         return h('div', { class: 'row between small' },
           h('span', {}, h('b', { class: 'mono' }, `${ch} 路`), h('span', { class: 'muted' }, `　${U.money(p.monthly)}/月`), A > 0 ? h('span', { class: b > 0.05 ? 'bad-t' : b > 0.01 ? 'warn-t' : 'ok-t' }, `　目前阻塞率 ${U.pct(b, 1)}`) : null),
-          v.trunk === n && !v.next ? h('span', { class: 'chip ok' }, '使用中') : v.next === n ? h('span', { class: 'chip warn' }, '開通中') : h('button', { class: 'btn xs', disabled: !Q.unlocked(CAT.voice) || null, onclick: () => UI.res(G.Voice.orderTrunk(n)) }, v.trunk ? '改成這個' : `申請（開通費 ${U.money(p.setup)}）`));
+          v.trunk === n && !v.next ? h('span', { class: 'chip ok' }, '使用中') : v.next === n ? h('span', { class: 'chip warn' }, '開通中') : h('button', { class: 'btn xs', 'data-hint': 'trunk:' + n, disabled: !Q.unlocked(CAT.voice) || null, onclick: () => UI.res(G.Voice.orderTrunk(n)) }, v.trunk ? '改成這個' : `申請（開通費 ${U.money(p.setup)}）`));
       })),
       v.trunk ? h('button', { class: 'btn danger xs', style: { alignSelf: 'flex-start' }, onclick: () => UI.confirm('終止 SIP 中繼', '終止後所有外線都會中斷。', '終止', () => UI.res(G.Voice.cancelTrunk()), 'danger') }, '終止合約') : null);
     el.appendChild(h('div', { class: 'grid c2', style: { marginBottom: '12px' } }, devs, trunk));
@@ -261,22 +261,22 @@
       tile('下一次更新', nextRel ? U.stamp(nextRel) : '—', '每週三凌晨（微軟 Patch Tuesday 的台灣時間）')));
     if (!active) el.appendChild(h('div', { class: 'note info', style: { marginBottom: '10px' } }, '第八章起，每週的作業系統更新才會開始模擬。'));
     el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } },
-      h('button', { class: 'btn ' + (uem ? 'danger' : 'primary'), disabled: !Q.unlocked(CAT.services.uem) || null, onclick: () => UI.res(uem ? G.Act.unsubscribe('uem') : G.Act.subscribe('uem')) }, uem ? '停用端點管理平台' : `啟用端點管理平台（${U.money(Q.monthlyServiceCost('uem'))}/月）`),
+      h('button', { class: 'btn ' + (uem ? 'danger' : 'primary'), 'data-hint': 'svc:uem', disabled: !Q.unlocked(CAT.services.uem) || null, onclick: () => UI.res(uem ? G.Act.unsubscribe('uem') : G.Act.subscribe('uem')) }, uem ? '停用端點管理平台' : `啟用端點管理平台（${U.money(Q.monthlyServiceCost('uem'))}/月）`),
       uem ? h('button', { class: 'btn', onclick: () => UI.res(G.Ep.deployNow()) }, '立即派送更新') : null,
       uem && !e.paused && e.patch < 0.999 ? h('button', { class: 'btn', onclick: () => UI.res(G.Ep.pause()) }, '暫停派送') : null,
       kbBtn('k-patch'), kbBtn('k-uem')));
     const opts = h('div', { class: 'card col', style: { gap: '10px' } },
       h('h3', {}, '派送設定'),
-      h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: e.rings, disabled: !uem || null, onchange: (ev) => UI.res(G.Ep.setRings(ev.target.checked)) }), '分批派送（rings）：先派給 5% 的試點電腦，4 小時沒問題才全面派送'),
+      h('label', { class: 'row small', 'data-hint': 'ep-rings' }, h('input', { type: 'checkbox', checked: e.rings, disabled: !uem || null, onchange: (ev) => UI.res(G.Ep.setRings(ev.target.checked)) }), '分批派送（rings）：先派給 5% 的試點電腦，4 小時沒問題才全面派送'),
       h('div', { class: 'tiny dim' }, '更新偶爾會出包（藍白當、印表機不能用）。分批派送讓問題只出現在試點電腦上，還來得及暫停。'),
-      h('label', { class: 'row small' }, h('input', { type: 'checkbox', checked: e.bitlocker, disabled: !uem || null, onchange: (ev) => UI.res(G.Ep.setBitlocker(ev.target.checked)) }), 'BitLocker 全磁碟加密（由端點管理平台保管復原金鑰）'),
+      h('label', { class: 'row small', 'data-hint': 'ep-bitlocker' }, h('input', { type: 'checkbox', checked: e.bitlocker, disabled: !uem || null, onchange: (ev) => UI.res(G.Ep.setBitlocker(ev.target.checked)) }), 'BitLocker 全磁碟加密（由端點管理平台保管復原金鑰）'),
       h('div', { class: 'tiny dim' }, '筆電遺失時，沒有金鑰就讀不到資料；再搭配遠端抹除。'));
     const src = h('div', { class: 'card col', style: { gap: '8px' } },
       h('h3', {}, '更新從哪裡下載'),
       h('div', { class: 'small muted' }, `每台電腦每次更新約 1.3 GB。一萬台電腦各自從網際網路下載就是 13 TB：全面派送時會塞爆公司的對外頻寬。內部的更新快取（WSUS / Connected Cache）只從網際網路下載一次，電腦再從機房取得。`),
       cache.length ? cache.map((d) => h('div', { class: 'row between small' }, h('span', {}, h('b', {}, d.name), h('span', { class: 'muted' }, d.host ? '　VM' : '')), h('span', { class: 'chip ' + UI.devStatus(d).c }, UI.devStatus(d).t))) : h('div', { class: 'small dim' }, '還沒有更新快取伺服器（UPD 角色）。'),
       h('div', { class: 'row wrap' },
-        Q.unlocked(CAT.devices.VM) && G.VM.hosts().length ? h('button', { class: 'btn sm', onclick: () => UI.res(G.VM.create('upd')) }, '建立更新快取 VM') : null,
+        Q.unlocked(CAT.devices.VM) && G.VM.hosts().length ? h('button', { class: 'btn sm', 'data-hint': 'vm-upd', onclick: () => UI.res(G.VM.create('upd')) }, '建立更新快取 VM') : null,
         h('button', { class: 'btn sm', onclick: () => UI.go('shop:srv') }, '實體伺服器（SV-1U）')));
     el.appendChild(h('div', { class: 'grid c2' }, opts, src));
   }

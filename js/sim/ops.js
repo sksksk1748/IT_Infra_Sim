@@ -84,6 +84,9 @@
     trunk:     { sev: 'high', text: () => '客戶來電一直忙線，外線打不出去', hint: '外線（SIP 中繼）不夠或不通：到「系統 → 語音」看阻塞率並增加路數；也要確認防火牆有放行 SIP（有 SBC：INTERNET → DMZ、DMZ → SERVERS）。', goto: 'sys:voice' },
     filefull:  { sev: 'high', text: () => '存檔失敗：共用資料夾的空間滿了', hint: '檔案伺服器的儲存空間用完了。到「系統 → 儲存」擴充容量（SAN 加擴充櫃、再加一台檔案伺服器），或把結案的專案封存到磁帶。', goto: 'sys:stor' },
     pos:       { sev: 'high', text: (f) => `${f}：收銀機不能刷卡，結帳大排長龍`, hint: '收銀機（POS）要連到網際網路上的金流閘道。檢查這層樓的網路、上行與防火牆（LAN → INTERNET：WEB）。' },
+    clockin:   { sev: 'high', text: (f) => `${f}：停車場手機打卡失敗，好多人被記遲到`, hint: '地下室收不到 GPS、手機訊號也很差，打卡 App 要靠公司 Wi-Fi 確認位置。在停車場佈建 AP：停車格、走道和電梯廳都要有訊號（混凝土柱會擋訊號）；這層樓也要能上網（LAN → INTERNET：WEB）。' },
+    gate:      { sev: 'high', text: (f) => `${f}：車道柵欄機連不上系統，車子回堵到馬路上`, hint: '車牌辨識攝影機與柵欄機要接有線網路：IDF 的接入交換器要留足埠數，而且這層樓要有上行主幹。' },
+    cam:       { sev: 'med', text: (f) => `${f}：保全反映停車場的監視器畫面中斷`, hint: '監視器用 PoE 供電：接入交換器的埠數與 PoE 預算都要夠（每台約 7 W）。PoE 不夠時，AP 也會跟著沒電。' },
   };
   Ops.TK = TK;
 
@@ -126,7 +129,12 @@
       if (st.portFrac < 0.98) flag('ports');
       if (st.dhcpWired < 1) flag('dhcpwired');
       if (st.wifi.unpowered > 0) flag('poe');
-      if (st.wifiShare > 0.05 && st.wifi.cover < 0.85) flag('wificov');
+      if (ft.park) {
+        /* 停車場：打卡、柵欄機、監視器 */
+        if (st.parkers > 15 && G.Net.clockWindow(s.time) && st.clockOk < 0.85) flag('clockin');
+        if (st.parkers > 15 && !st.gateOk) flag('gate');
+        if (st.camOk < 1) flag('cam');
+      } else if (st.wifiShare > 0.05 && st.wifi.cover < 0.85) flag('wificov');
       if (ft.dine && st.diners > 60 && (st.dinerRatio < 0.8 || st.wifi.gcover < 0.85)) flag('dinewifi');
       else if (st.wifiShare > 0.05 && st.capRatio < 0.8) flag('wificap');
       if (ft.pos && st.diners > 30 && !st.posOk) flag('pos');

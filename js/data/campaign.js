@@ -57,7 +57,7 @@
       ],
       learn: ['機櫃與 U 數', '路由器 / 防火牆 / 交換器的角色', 'ISP 專線', 'DHCP / DNS', '樓層布線與 Wi-Fi', '防火牆規則'],
       moveIns: [{ floor: '2F', at: () => U.at(3, 9) }],
-      kb: ['k-dhcpdns', 'k-cable', 'k-wifi', 'k-rules'],
+      kb: ['k-dhcpdns', 'k-cable', 'k-wifi', 'k-rules', 'k-diy'],
       objectives: [
         { id: 'c1-rack', text: '在 B1 機房設置一座 42U 機櫃', hint: '到「機房」點「採購機櫃」。所有網路設備都要安裝在機櫃裡才能通電運作。', goto: 'rack', kb: 'k-rack',
           check: (s) => s.racks.length > 0 },
@@ -75,7 +75,7 @@
           check: (s) => s.isp.some((c) => c.status === 'active' && c.router) },
         { id: 'c1-ad', text: '部署伺服器，角色設為 AD / DNS / DHCP，並接上核心交換器', hint: '買一台 SV-1U 上架，在機房點選它設定角色，再到拓撲把它連到核心交換器。', goto: 'rack', kb: 'k-dhcpdns',
           check: () => H.roleUp('ad') },
-        { id: 'c1-cabling', text: '2F 完成水平布線工程', hint: '到「樓層」選 2F，發包水平布線。施工要 8～10 小時！', goto: 'floor:2F', kb: 'k-mdf',
+        { id: 'c1-cabling', text: '2F 完成水平布線（發包施工或自己布線都可以）', hint: '到「樓層」選 2F：「發包施工」最省事，但要等 8～10 小時；想親手體驗就選「自己布線」——在平面圖上畫出走線路徑、依 T568B 色序打線，再用測試儀驗證。', goto: 'floor:2F', kb: 'k-mdf',
           check: (s) => s.floors['2F'].cabling.status === 'done' },
         { id: 'c1-access', text: '2F IDF 的接入交換器埠數足夠（有線座位 + AP + 印表機）', hint: '樓層頁的「接入交換器」數量要讓埠數 ≥ 需求。48 埠的機型最划算。', goto: 'floor:2F', kb: 'k-poe',
           check: () => G.S.floors['2F'].idf.count > 0 && H.portsOk('2F') },
@@ -95,16 +95,19 @@
       story: [
         '3F 到 8F 的六個部門將在接下來三個工作天陸續進駐，總人數將超過 3,600 人。',
         '研發部要求共用的檔案伺服器；客服中心有上百支 IP 電話；行銷設計部天天傳大檔案。',
+        'B2 員工停車場也要啟用了：地下室收不到 GPS 和手機訊號，開車、騎車來的同事一停好車就要用 App 打卡。',
         '人一多，Wi-Fi 頻道、IP 位址、ISP 頻寬……所有你還沒想到的問題都會冒出來。',
       ],
-      learn: ['檔案伺服器與內部流量', '網管監控 NMS', 'ISP 頻寬規劃', '頻道規劃與無線控制器', 'IP 子網路規劃', 'PoE 預算'],
+      learn: ['檔案伺服器與內部流量', '網管監控 NMS', 'ISP 頻寬規劃', '頻道規劃與無線控制器', 'IP 子網路規劃', 'PoE 預算', '地下停車場的 Wi-Fi 與手機打卡'],
       moveIns: [
+        /* B2 員工停車場：第一批同事上班那天一早啟用（開車、騎車來的人一進停車場就要打卡） */
+        { floor: 'B2', at: (t0) => U.nextWeekdayAt(t0, 7, 1) },
         { floor: '3F', at: (t0) => U.nextWeekdayAt(t0, 9, 1) }, { floor: '4F', at: (t0) => U.nextWeekdayAt(t0, 9, 1) },
         { floor: '5F', at: (t0) => U.nextWeekdayAt(U.nextWeekdayAt(t0, 9, 1), 9, 1) }, { floor: '6F', at: (t0) => U.nextWeekdayAt(U.nextWeekdayAt(t0, 9, 1), 9, 1) },
         { floor: '7F', at: (t0) => U.nextWeekdayAt(U.nextWeekdayAt(U.nextWeekdayAt(t0, 9, 1), 9, 1), 9, 1) }, { floor: '8F', at: (t0) => U.nextWeekdayAt(U.nextWeekdayAt(U.nextWeekdayAt(t0, 9, 1), 9, 1), 9, 1) },
       ],
       events: [{ type: 'allhands', at: (t0) => U.nextWeekdayAt(U.nextWeekdayAt(U.nextWeekdayAt(t0, 10, 1), 10, 1), 10, 1) + 60 }],
-      kb: ['k-optics', 'k-poe', 'k-channel', 'k-wlc', 'k-ip', 'k-nms', 'k-oversub', 'k-lacp', 'k-vlan'],
+      kb: ['k-optics', 'k-poe', 'k-channel', 'k-wlc', 'k-ip', 'k-nms', 'k-oversub', 'k-lacp', 'k-vlan', 'k-parking'],
       objectives: [
         { id: 'c2-file', text: '部署檔案伺服器（ST-4U，角色：檔案）並接上核心', hint: '內部流量大部分是存取共用資料夾。儲存伺服器有 25G 網卡，建議用 25G 或多條線路連接核心。', goto: 'shop:srv', kb: 'k-oversub',
           check: () => H.roleUp('file') },
@@ -114,6 +117,8 @@
           check: () => Q.ispBw(true) >= 5000 },
         { id: 'c2-floors', text: '3F～8F 全部完成佈建（布線、交換器、上行、Wi-Fi ≥ 85%）', hint: '做好一層後，可用「複製設計」一次套用到其他樓層。不同樓層類型的 AP 需求不同喔。', goto: 'building', kb: 'k-hier',
           check: () => H.floorsDone(C2F) === C2F.length, progress: () => `${H.floorsDone(C2F)}/${C2F.length}` },
+        { id: 'c2-park', text: 'B2 員工停車場：手機打卡的 Wi-Fi 覆蓋 ≥ 90%，柵欄機與監視器都連上網路', hint: '地下室收不到 GPS 與手機訊號，打卡 App 要靠公司 Wi-Fi 確認你人在公司。B2 一樣要布線、接入交換器（柵欄機與 24 台 PoE 監視器也要埠）、上行，再用 AP 蓋滿停車格、走道與電梯廳。混凝土柱會擋訊號！', goto: 'floor:B2', kb: 'k-parking',
+          check: () => { const st = G.R.sim && G.R.sim.floors.B2; return H.floorReady('B2', 0.9) && !!st && st.gateOk && st.camOk >= 1; } },
         { id: 'c2-wlc', text: '部署無線控制器（WLC）統一管理 AP', hint: 'AP 一多，手動設定頻道很容易撞頻。WLC 會自動規劃頻道（RRM），也讓員工漫遊不斷線。', goto: 'shop:wifi', kb: 'k-wlc',
           check: () => H.installed('wlc', (d) => H.serverLinked(d)) },
         { id: 'c2-dhcp', text: 'IP 網段規劃：所有 DHCP 位址池都足夠', hint: '到「防火牆 → 網段規劃」檢查：員工 Wi-Fi 的裝置數會隨人數暴增，/22 很快就不夠了。', goto: 'fw:net', kb: 'k-ip',
@@ -345,10 +350,10 @@
       id: 'c8', title: '第八章｜系統維運', grant: 42000000,
       story: [
         'ISO 27001 稽核即將到來。稽核員列了一長串問題：三十幾台實體伺服器、每台只用了一成的效能；備份從來沒有還原過；沒人知道一萬台電腦裝了哪些更新；防火牆有沒修補的漏洞……',
-        '這一章要把機房的「系統」整頓好：虛擬化、共用儲存、3-2-1 備份、端點管理，以及弱點管理。',
+        '這一章要把機房的「系統」整頓好：虛擬化、共用儲存、3-2-1 備份、端點管理、弱點管理，還有稽核員最先檢查的——機房門禁。',
         '記住：真正的考驗不是建好，而是出事的時候還撐得住。',
       ],
-      learn: ['虛擬化與 HA', 'SAN 與 RAID', '備份 3-2-1 與還原演練', '端點管理與修補', '弱點掃描與 CVSS', '維護窗口'],
+      learn: ['虛擬化與 HA', 'SAN 與 RAID', '備份 3-2-1 與還原演練', '端點管理與修補', '弱點掃描與 CVSS', '維護窗口', '機房門禁與最小權限'],
       moveIns: [],
       patchAt: (t0) => U.nextWeekdayAt(t0, 1, 2),
       events: [
@@ -357,8 +362,9 @@
         { type: 'kev', at: (t0) => U.nextWeekdayAt(t0, 14, 3) },
         { type: 'del-file', at: (t0) => U.nextWeekdayAt(t0, 16, 3) },
         { type: 'laptop-lost', at: (t0) => U.nextWeekdayAt(t0, 19, 4) },
+        { type: 'vendor', at: (t0) => U.nextWeekdayAt(t0, 10, 1) },
       ],
-      kb: ['k-vm', 'k-san', 'k-backup', 'k-uem', 'k-patch', 'k-vuln'],
+      kb: ['k-vm', 'k-san', 'k-backup', 'k-uem', 'k-patch', 'k-vuln', 'k-access'],
       objectives: [
         { id: 'c8-cluster', text: '建置虛擬化叢集：至少 3 台虛擬化主機 + SAN 共用儲存，開啟 HA', hint: '「採購 → 系統」買 HV-2U 與 SAN-5K，上架並接上核心交換器（25G）。「系統 → 虛擬化」確認 HA 已開啟。', goto: 'sys:vm', kb: 'k-vm',
           check: () => { const c = G.VM.cluster(); return c.hosts >= 3 && c.up >= 3 && c.shared && c.ha; }, progress: () => `${G.VM.cluster().up}/3 台主機${G.VM.cluster().shared ? ' · SAN ✓' : ''}` },
@@ -378,6 +384,8 @@
           check: (s) => s.ep.releaseAt >= s.chapterStart && s.ep.patch >= 0.95, progress: () => (G.S.ep.releaseAt >= G.S.chapterStart ? U.pct(G.S.ep.patch) : '等待更新發布') },
         { id: 'c8-vuln', text: '部署弱點掃描：沒有超過 SLA 的嚴重弱點，對外設備沒有嚴重弱點', hint: '建一台弱點掃描 VM（VS 角色），到「防火牆 → 弱點管理」把嚴重與高風險的弱點排入維護窗口。', goto: 'fw:vuln', kb: 'k-vuln',
           check: (s) => G.Vuln.scannerUp() && s.vuln.lastScan !== null && s.vuln.lastScan >= s.chapterStart && !G.Vuln.known().some((x) => x.sev === 'crit' && G.Vuln.overdue(x)) && !G.Vuln.exposedCrit().length },
+        { id: 'c8-access', text: '機房門禁：裝好門禁系統，清潔人員、廠商、主管都不能自己進機房（最小權限）', hint: '「採購 → 機房設施」安裝感應卡門禁（或雙因子 + 防尾隨雙門）。裝好後到「機房」的「機房門禁」：清潔人員與廠商改成「需 IT 陪同」、主管改成「不能進入」。', goto: 'rack', kb: 'k-access',
+          check: () => G.Acc.level() >= 1 && !G.Acc.overPriv().length },
         { id: 'c8-audit', text: '資安健檢評分 A', hint: '到「防火牆 → 資安健檢」逐項處理：備份、修補、弱點、雲端 MFA……', goto: 'fw:audit', kb: 'k-vuln',
           check: () => G.Sec.audit().grade === 'A' },
       ],
@@ -408,6 +416,8 @@
       s.rating = 60;
       const plan = [['2F', '3F', '4F', '5F', '6F'], ['7F', '8F', '9F', '10F', '11F'], ['12F', '13F', '14F', '15F', '16F'], ['17F', '18F', '19F', '20F', '21F', '1F', '22F', '23F']];
       plan.forEach((g, i) => g.forEach((fid) => { s.floors[fid].moveInAt = U.at(3 + i, 9); }));
+      /* B2 停車場：第一批同事上班那天一早啟用 */
+      s.floors.B2.moveInAt = U.at(3, 7);
       /* 分支據點：第 5～7 天陸續開幕 */
       Object.assign(s.wan.sites.tc, { openAt: U.at(5, 9) });
       Object.assign(s.wan.sites.ks, { openAt: U.at(5, 9) });
@@ -459,6 +469,8 @@
   };
 
   /** 每分鐘：檢查任務 */
+  /** 這個任務的條件現在是否已經達成（暫停中也能即時打勾；累積時間的任務要等時間走） */
+  Campaign.ready = (o) => { if (!G.S || o.sustain) return false; try { return !!o.check(G.S); } catch (e) { return false; } };
   Campaign.check = (s) => {
     const ch = Campaign.current();
     if (!ch || s.won) return;

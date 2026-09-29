@@ -83,6 +83,7 @@
     G.Wan.tick();
     G.Ep.tick();
     G.Vuln.tick();
+    G.Acc.tick();
     heatFailures(s);
     G.Ev.tick();
     if (s.scen && G.Scen) G.Scen.pre(s);

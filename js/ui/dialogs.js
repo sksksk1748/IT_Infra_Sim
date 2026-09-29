@@ -114,7 +114,7 @@
         h('div', { class: 'mono' }, h('div', { class: 'label' }, '總頻寬'), h('b', { style: { fontSize: '18px' } }, U.bw(spec.speed * spec.count)))));
       if (fwEnds === 1) {
         const zs = h('div', { class: 'seg' });
-        for (const z of ['outside', 'inside', 'dmz']) zs.appendChild(h('button', { class: pv.zone === z ? 'on' : '', onclick: () => { spec.zone = z; render(); } }, ZONE_NAMES[z]));
+        for (const z of ['outside', 'inside', 'dmz']) zs.appendChild(h('button', { class: pv.zone === z ? 'on' : '', 'data-hint': 'zone:' + z, onclick: () => { spec.zone = z; render(); } }, ZONE_NAMES[z]));
         body.appendChild(h('div', {}, h('div', { class: 'label', style: { marginBottom: '6px' } }, '防火牆介面區域'), zs, h('div', { class: 'small muted', style: { marginTop: '4px' } }, ZONE_DESC[pv.zone] || '')));
       } else if (fwEnds === 2) body.appendChild(h('div', { class: 'note info' }, ZONE_DESC.ha));
       const portTxt = (id, P) => {
@@ -139,7 +139,7 @@
       const same = ex && ex.cable === spec.cable && ex.speed === spec.speed && ex.count === spec.count;
       body.appendChild(h('div', { class: 'row', style: { justifyContent: 'flex-end', gap: '8px' } },
         h('button', { class: 'btn ghost', onclick: () => m.close() }, '取消'),
-        h('button', { class: 'btn primary', disabled: !pv.ok || null, onclick: () => {
+        h('button', { class: 'btn primary', 'data-hint': 'link-ok', disabled: !pv.ok || null, onclick: () => {
           const r = ex ? G.Act.updateLink(linkId, spec.cable, spec.speed, spec.count, pv.zone) : G.Act.createLink(a, b, spec.cable, spec.speed, spec.count, pv.zone);
           UI.res(r);
           if (r.ok) { m.close(); if (onDone) onDone(r); }
@@ -159,7 +159,7 @@
     for (const d of cands) {
       const st = UI.devStatus(d);
       const P = Q.ports(d.id);
-      body.appendChild(h('button', { class: 'btn', style: { justifyContent: 'space-between' }, onclick: () => { m.close(); UI.linkDialog(from, d.id); } },
+      body.appendChild(h('button', { class: 'btn', 'data-hint': Q.isL3(d) ? 'pick:core' : 'pick:' + d.id, style: { justifyContent: 'space-between' }, onclick: () => { m.close(); UI.linkDialog(from, d.id); } },
         h('span', {}, h('b', {}, d.name), h('span', { class: 'muted small' }, '　' + CAT.devices[d.model].name)),
         h('span', { class: 'mono small' }, `SFP ${P.sfp.total - P.sfp.used} 可用`, '　', h('span', { class: 'chip ' + st.c }, st.t))));
     }
@@ -234,7 +234,7 @@
     }
     if (m.tape) card.appendChild(h('div', { class: 'small muted' }, `LTO-9 磁帶：每捲 ${m.tapeTB} TB · ${m.slots} 格。${s.bkp.lastTape ? `最後一次寫入磁帶：${U.stamp(s.bkp.lastTape)}` : '還沒有寫入過備份（要有備份伺服器）'}`));
     if (m.cat === 'server' && !m.hv) {
-      const sel = h('select', { id: 'role-' + id, onchange: (e) => UI.res(G.Act.setRole(id, e.target.value || null)) },
+      const sel = h('select', { id: 'role-' + id, 'data-hint': 'role:' + id, onchange: (e) => UI.res(G.Act.setRole(id, e.target.value || null)) },
         h('option', { value: '' }, '— 尚未設定角色 —'),
         m.roles.map((r) => h('option', { value: r, selected: d.role === r || null }, CAT.roles[r].name)));
       card.appendChild(h('label', { class: 'field' }, h('span', {}, '伺服器角色'), sel));
@@ -288,7 +288,7 @@
       UI.modal({ title: '重新命名', body: [inp], blocking: true, actions: [{ label: '取消', kind: 'ghost' }, { label: '確定', kind: 'primary', onClick: () => UI.res(G.Act.renameDevice(id, inp.value)) }] });
     } }, '改名'));
     if (d.rack) acts.appendChild(h('button', { class: 'btn sm', onclick: () => UI.res(G.Act.uninstallDevice(id)) }, '下架'));
-    acts.appendChild(h('button', { class: 'btn danger sm', onclick: () => UI.confirm('出售設備', `出售 ${d.name}？會拆除它的所有連線，回收 ${U.money(m.price * 0.4)}。`, '出售', () => UI.res(G.Act.sellDevice(id)), 'danger') }, '出售'));
+    acts.appendChild(h('button', { class: 'btn danger sm', 'data-hint': 'sell:' + d.id, onclick: () => UI.confirm('出售設備', `出售 ${d.name}？會拆除它的所有連線，回收 ${U.money(m.price * 0.4)}。`, '出售', () => UI.res(G.Act.sellDevice(id)), 'danger') }, '出售'));
     card.appendChild(acts);
     return card;
   };

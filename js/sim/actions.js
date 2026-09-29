@@ -41,7 +41,7 @@
     const s = G.S;
     const ai = type === 'ai';
     const spec = ai ? CAT.rack.ai : CAT.rack;
-    if (s.racks.length >= CAT.rack.maxRacks) return err('B1 機房的空間最多容納 10 座機櫃');
+    if (s.racks.length >= CAT.rack.maxRacks) return err(`B1 機房的空間最多容納 ${CAT.rack.maxRacks} 座機櫃`);
     if (ai && !Q.unlocked(spec)) return err(`第 ${spec.unlock} 章解鎖`);
     if (ai && s.racks.filter((r) => r.type === 'ai').length >= spec.max) return err(`AI 機櫃最多 ${spec.max} 座（機房的電力與液冷管路有限）`);
     if (!Act.spend(spec.price, ai ? `採購 ${spec.name}` : '採購 42U 機櫃')) return need(spec.price);
@@ -65,6 +65,8 @@
     if (!m || m.buyable === false) return err('無法採購');
     if (!Q.unlocked(m)) return err(`第 ${m.unlock} 章解鎖`);
     if (m.kind === 'fire' && s.room.some((r) => r.model === model)) return err(`已經有${m.name}了`);
+    /* 門禁只能往上升級（雙因子門禁沿用原本的讀卡機與電磁鎖） */
+    if (m.kind === 'access') { const cur = s.room.filter((r) => CAT.room[r.model].kind === 'access').map((r) => CAT.room[r.model]); if (cur.some((c) => c.level >= m.level)) return err(`已經有${cur.find((c) => c.level >= m.level).name}了`); }
     const count = s.room.filter((r) => CAT.room[r.model].kind === m.kind).length;
     if (count >= CAT.roomSlots[m.kind]) return err('機房已沒有空間放置更多這類設備');
     if (!Act.spend(m.price, `採購 ${m.name}`)) return need(m.price);
@@ -449,7 +451,7 @@
   /* ---------- 樓層 ---------- */
   Act.floorDrops = (fid) => {
     const f = G.BLD.byId[fid], ft = G.FT[f.type];
-    return Math.ceil(f.staff * ft.wired) + Math.ceil(f.staff / 40) + (ft.pos || 0) + 40;
+    return Math.ceil(f.staff * ft.wired) + Math.ceil(f.staff / 40) + (ft.pos || 0) + (ft.gates || 0) + (ft.cams || 0) + 40;
   };
   Act.cablingCost = (fid, std) => Act.floorDrops(fid) * CAT.horizontal[std].perDrop;
   Act.startCabling = (fid, std) => {

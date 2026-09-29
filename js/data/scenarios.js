@@ -65,6 +65,8 @@
     G.R.topoVer++;
     return { rtr, fws, cores, srv, sts };
   }
+  /* 開發測試也會用到（在瀏覽器主控台快速建一套網路） */
+  Scen.buildNetwork = buildNetwork;
   const ALL = ['1F', '2F', '3F', '4F', '5F', '6F', '7F', '8F', '9F', '10F', '11F', '12F', '15F', '18F', '21F'];
 
   /* ---------- 情境 ---------- */

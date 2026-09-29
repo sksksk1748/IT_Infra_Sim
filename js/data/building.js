@@ -21,6 +21,10 @@
      * 人人拿著手機滑影片 → 高密度 Wi-Fi。pos = 收銀機（有線、要能連到金流閘道） */
     canteen:    { name: '員工餐廳', wired: 0.5, phones: 0.7, inet: [0.35, 0.1], intra: [0.3, 0.1], diners: 760, pos: 10, dine: true, color: '#e07b54' },
     foodcourt:  { name: '美食街', wired: 0.5, phones: 0.7, inet: [0.35, 0.1], intra: [0.3, 0.1], diners: 700, pos: 16, dine: true, color: '#d9a441' },
+    /* 員工停車場：編制人數是管理員與保全；上下班尖峰時開車、騎車的員工進出（parkPeak = 尖峰同時在停車場裡的人數）。
+     * 地下室收不到 GPS、手機訊號也很差 → 手機打卡要靠公司 Wi-Fi 確認位置。
+     * gates = 車道的車牌辨識攝影機與柵欄機（有線）；cams = 監視器（PoE 供電） */
+    parking:    { name: '停車場', wired: 0.5, phones: 1.0, inet: [0.2, 0.05], intra: [0.1, 0.05], parkPeak: 150, gates: 4, cams: 24, park: true, color: '#7d8a93' },
   };
 
   /* ---------- 大樓 ---------- */
@@ -28,7 +32,9 @@
     name: '新曜大樓',
     floorHeight: 4.2,   /* 每層樓高 (m) */
     mdfHoriz: 30,       /* 機房到弱電豎井 + IDF 內的水平距離 (m) */
+    /* level：地上樓層 = 樓層數；地下室用負數（B1 機房 = −1，不在清單裡；B2 停車場 = −2） */
     floors: [
+      { id: 'B2',  level: -2, type: 'parking',    dept: '員工停車場（汽車 / 機車）', staff: 6 },
       { id: '1F',  level: 1,  type: 'lobby',      dept: '大廳 / 接待 / 保全', staff: 40 },
       { id: '2F',  level: 2,  type: 'office',     dept: '資訊部 / 總務部', staff: 527 },
       { id: '3F',  level: 3,  type: 'office',     dept: '人資 / 財務', staff: 527 },
@@ -56,22 +62,27 @@
   };
   G.BLD.byId = {};
   for (const f of G.BLD.floors) G.BLD.byId[f.id] = f;
-  G.BLD.totalStaff = G.BLD.floors.reduce((s, f) => s + f.staff, 0); /* 10,000 名員工 + 104 位餐廳人員 */
+  G.BLD.totalStaff = G.BLD.floors.reduce((s, f) => s + f.staff, 0); /* 10,000 名員工 + 104 位餐廳人員 + 6 位停車場管理員 */
   G.BLD.top = G.BLD.floors.reduce((m, f) => Math.max(m, f.level), 0);
-  /** 樓層 IDF 到 B1 機房的主幹線長度 (m) */
+  /** 樓層 IDF 到 B1 機房的主幹線長度 (m)：地上樓層往上數，B2 在 B1 正下方一層 */
   G.BLD.riserLength = (floorId) => {
     const f = G.BLD.byId[floorId];
-    return f ? Math.round((f.level * G.BLD.floorHeight + G.BLD.mdfHoriz) * 10) / 10 : 10;
+    if (!f) return 10;
+    const up = f.level > 0 ? f.level : -f.level - 1;
+    return Math.round((up * G.BLD.floorHeight + G.BLD.mdfHoriz) * 10) / 10;
   };
 
   /* ---------- 平面圖產生器 ---------- */
   const W = 72, H = 36;
-  /* KITCHEN 廚房、DINE 用餐區、SERVE 餐檯 / 收銀台、COLD 冷藏冷凍庫（金屬牆，Wi-Fi 幾乎穿不透） */
-  const T = { OPEN: 0, DESK: 1, MEET: 2, CORE: 3, IDF: 4, OFFICE: 5, LAB: 6, LOBBY: 7, CAFE: 8, WALL: 9, GLASS: 10, EXT: 11, KITCHEN: 12, DINE: 13, SERVE: 14, COLD: 15 };
+  /* KITCHEN 廚房、DINE 用餐區、SERVE 餐檯 / 收銀台、COLD 冷藏冷凍庫（金屬牆，Wi-Fi 幾乎穿不透）
+   * RAMP 車道、PARK 汽車停車格、MOTO 機車停車格、PILLAR 結構柱（鋼筋混凝土，擋訊號） */
+  const T = { OPEN: 0, DESK: 1, MEET: 2, CORE: 3, IDF: 4, OFFICE: 5, LAB: 6, LOBBY: 7, CAFE: 8, WALL: 9, GLASS: 10, EXT: 11, KITCHEN: 12, DINE: 13, SERVE: 14, COLD: 15, RAMP: 16, PARK: 17, MOTO: 18, PILLAR: 19 };
   const STAFF_W = { 0: 0.04, 1: 1.0, 2: 0.35, 5: 0.5, 6: 0.8, 7: 0.03, 8: 0.25, 12: 1.0, 13: 0.01, 14: 0.9, 15: 0.05 };
   const GUEST_W = { 0: 0.1, 2: 0.5, 7: 1.0, 8: 0.7 };
   /* 餐廳的用餐人潮：坐在用餐區、在餐檯前排隊、包廂 */
   const DINER_W = { 0: 0.12, 2: 0.6, 13: 1.0, 14: 0.3 };
+  /* 停車場的人潮：剛停好車、走向電梯廳（在電梯廳等電梯、打卡的人最多） */
+  const PARK_W = { 0: 0.3, 7: 1.4, 16: 0.03, 17: 0.3, 18: 0.4 };
   const CORE = { x0: 30, y0: 13, x1: 41, y1: 22 };
 
   function blank() {
@@ -233,6 +244,49 @@
       fill(L, 1, 9, 70, 34, T.OPEN, T.DINE);
       L.rooms.push({ x0: 8, y0: 30, x1: 56, y1: 34, kind: T.DINE, label: '景觀吧台座位', bar: true });
     },
+    /* B2 員工停車場：西北角是從地面下來的車道與柵欄機，北側與南側是汽車格，東側是機車停車區；
+     * 電梯廳在核心筒南側（打卡、等電梯的人最多）。每 9m 一根結構柱。 */
+    parking(L) {
+      L.spaces = [];
+      L.gates = [];
+      L.ev = [];
+      paint(L, 1, 1, 13, 5, T.RAMP);
+      L.rooms.push({ x0: 1, y0: 1, x1: 13, y1: 5, kind: T.RAMP, label: '車道（往地面）', ramp: true });
+      /* 柵欄機：上方車道進場、下方出場；各有一支車牌辨識攝影機 */
+      L.gates.push({ x: 14, y: 2, lane: 'in' }, { x: 14, y: 4, lane: 'out' });
+      room(L, 1, 6, 8, 11, T.OFFICE, 5, '管理室', [[8, 8], [4, 6]]);
+      /* 汽車格：3m × 5m，車頭朝牆 */
+      const cars = (x0, x1, y0, y1, dir, ev) => {
+        for (let x = x0; x + 2 <= x1; x += 3) {
+          paint(L, x, y0, x + 2, y1, T.PARK);
+          L.spaces.push({ x0: x, y0, x1: x + 2, y1, dir, ev: !!(ev && x >= ev) });
+          if (ev && x >= ev) L.ev.push({ x: x + 1, y: dir === 'N' ? y0 : y1, dir });
+        }
+      };
+      cars(16, 70, 1, 5, 'N', 58);
+      cars(2, 26, 12, 16, 'N');
+      cars(2, 26, 17, 21, 'S');
+      cars(2, 43, 30, 34, 'S');
+      L.rooms.push({ x0: 16, y0: 1, x1: 57, y1: 5, kind: T.PARK, label: '汽車停車格' });
+      L.rooms.push({ x0: 58, y0: 1, x1: 69, y1: 5, kind: T.PARK, label: '電動車充電位' });
+      L.rooms.push({ x0: 2, y0: 12, x1: 25, y1: 21, kind: T.PARK, label: '汽車停車格' });
+      L.rooms.push({ x0: 2, y0: 30, x1: 43, y1: 34, kind: T.PARK, label: '汽車停車格' });
+      /* 機車停車區：一排排 1m 寬的格子，中間是走道 */
+      for (const y of [12, 16, 20]) paint(L, 45, y, 70, y + 1, T.MOTO);
+      for (const y of [29, 33]) paint(L, 46, y, 70, y + 1, T.MOTO);
+      L.rooms.push({ x0: 45, y0: 12, x1: 70, y1: 21, kind: T.MOTO, label: '機車停車區' });
+      L.rooms.push({ x0: 46, y0: 29, x1: 70, y1: 34, kind: T.MOTO, label: '機車停車區' });
+      /* 電梯廳：玻璃門隔出來，員工在這裡等電梯、用手機打卡 */
+      room(L, 29, 22, 42, 27, T.LOBBY, 2, '電梯廳（打卡）', [[35, 27], [36, 27], [29, 25], [42, 25]]);
+      /* 結構柱：鋼筋混凝土柱，一根就擋掉 12 dB 以上 */
+      for (const x of [10, 19, 26, 47, 56, 65]) {
+        for (const y of [6, 11, 22, 29]) {
+          const c = get(L, x, y);
+          if (c === T.CORE || c === T.IDF || c === T.EXT || c === T.RAMP || c === T.WALL || c === T.GLASS || c === T.OFFICE || c === T.LOBBY || inCoreMargin(x, y)) continue;
+          set(L, x, y, T.PILLAR, 13);
+        }
+      }
+    },
   };
 
   function finalize(L, type) {
@@ -245,11 +299,14 @@
     if (type === 'lobby') { sw[T.DESK] = 2.5; sw[T.OFFICE] = 1.0; sw[T.MEET] = 0.05; }
     const dine = !!(G.FT[type] && G.FT[type].dine);
     if (dine) { sw[T.MEET] = 0.02; sw[T.OPEN] = 0.02; }
+    const park = !!(G.FT[type] && G.FT[type].park);
+    /* 停車場：管理員坐在管理室，偶爾巡場 */
+    if (park) { for (const k in sw) sw[k] = 0; sw[T.OFFICE] = 1.0; sw[T.OPEN] = 0.004; }
     let so = 0, sg = 0;
     for (let i = 0; i < n; i++) {
       const t = L.type[i];
       L.occ[i] = sw[t] || 0;
-      L.guest[i] = dine ? (DINER_W[t] || 0) : (type === 'lobby' || type === 'conference') ? (GUEST_W[t] || 0) : 0;
+      L.guest[i] = dine ? (DINER_W[t] || 0) : park ? (PARK_W[t] || 0) : (type === 'lobby' || type === 'conference') ? (GUEST_W[t] || 0) : 0;
       so += L.occ[i]; sg += L.guest[i];
     }
     /* 正規化為機率分佈 */

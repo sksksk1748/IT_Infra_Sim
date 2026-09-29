@@ -63,7 +63,7 @@
     const set = new Set();
     if (!floorUp) return set;
     const poe = G.Q.floorPoe(fid);
-    let left = poe.budget - poe.phones;
+    let left = poe.budget - poe.phones - (poe.cams || 0);
     for (const a of fs.aps) {
       const w = CAT.aps[a.model].poe;
       if (left >= w) { set.add(a.id); left -= w; }
@@ -92,16 +92,16 @@
       for (let i = 0; i < n; i++) if (m[i] > best[i]) { best[i] = m[i]; bestIdx[i] = k; }
     }
     const st = aps.map((a) => ({ id: a.id, w: 0, gw: 0, inv: 0, cci: 0, capEff: 0 }));
-    let good = 0, usable = 0, cover = 0, gcover = 0;
-    /* 覆蓋率：一般樓層看員工座位；餐廳看廚房（員工）與用餐區（人潮）各半 */
-    const dine = !!G.FT[f.type].dine;
+    let good = 0, usable = 0, cover = 0, gcover = 0, gusable = 0;
+    /* 覆蓋率：一般樓層看員工座位；餐廳看廚房（員工）與用餐區（人潮）各半；停車場看的是停車格、走道與電梯廳（人潮） */
+    const wcOf = coverWeight(f.type);
     for (let i = 0; i < n; i++) {
       const w = L.occ[i], g = L.guest[i];
       if (w === 0 && g === 0) continue;
       const r = best[i];
-      const wc = dine ? (w + g) / 2 : w;
+      const wc = wcOf(w, g);
       if (r >= Wifi.TH.good) good += wc;
-      if (r >= Wifi.TH.usable) usable += wc;
+      if (r >= Wifi.TH.usable) { usable += wc; gusable += g; }
       if (r >= Wifi.TH.assoc) {
         cover += w; gcover += g;
         const k = bestIdx[i];
@@ -133,7 +133,14 @@
       s.backhaul = bh;
       s.maxClients = m.maxClients;
     }
-    return { aps: st, apIds: aps.map((a) => a.id), best, bestIdx, good, usable, cover, gcover, conflicts, unpowered: fs.aps.length - aps.length };
+    return { aps: st, apIds: aps.map((a) => a.id), best, bestIdx, good, usable, cover, gcover, gusable, conflicts, unpowered: fs.aps.length - aps.length };
+  }
+  /** 覆蓋率要看哪些人：w = 員工分布、g = 人潮分布（訪客 / 用餐 / 停車） */
+  function coverWeight(type) {
+    const ft = G.FT[type];
+    if (ft.dine) return (w, g) => (w + g) / 2;
+    if (ft.park) return (w, g) => w * 0.1 + g * 0.9;
+    return (w) => w;
   }
 
   /** 取得樓層 Wi-Fi 結果（有變動才重算） */
@@ -189,8 +196,8 @@
     const ft = G.FT[f.type];
     const L = G.Layout.get(f.type);
     const m = CAT.aps[model];
-    /* 大廳的訪客、餐廳的用餐人潮都要算進容量 */
-    const guests = (ft.guestPeak || 0) + (ft.diners || 0);
+    /* 大廳的訪客、餐廳的用餐人潮、停車場的上下班人潮都要算進容量 */
+    const guests = (ft.guestPeak || 0) + (ft.diners || 0) + (ft.parkPeak || 0);
     const clients = f.staff * ((1 - ft.wired) + ft.phones) + guests;
     const perUser = ft.inet[0] + ft.inet[1] + ft.intra[0] + ft.intra[1];
     const demand = f.staff * (1 - ft.wired) * perUser * 1.3 + guests * 1.5;
@@ -215,8 +222,9 @@
     const best = new Float32Array(cells).fill(-120);
     const addMap = (p) => { const mp = apMap(f.type, p.x, p.y, m.tx); for (let i = 0; i < cells; i++) if (mp[i] > best[i]) best[i] = mp[i]; };
     out.forEach(addMap);
-    /* 餐廳：用餐區（人潮分布）和廚房（員工分布）一樣重要 */
-    const wt = ft.dine ? (i) => (L.occ[i] + L.guest[i]) / 2 : (i) => L.occ[i];
+    /* 餐廳：用餐區（人潮分布）和廚房（員工分布）一樣重要；停車場以人潮為主 */
+    const wcOf = coverWeight(f.type);
+    const wt = (i) => wcOf(L.occ[i], L.guest[i]);
     const goodCov = () => { let g = 0; for (let i = 0; i < cells; i++) if (best[i] >= Wifi.TH.good) g += wt(i); return g; };
     for (let extra = 0; extra < 10 && goodCov() < 0.93; extra++) {
       let worst = -1, ww = 0;

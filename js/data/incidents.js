@@ -416,7 +416,7 @@
       effects(s, inc, mods) {
         if (inc.data.fixed) return;
         const k = 1 - inc.data.frac * 0.85;
-        for (const f of G.BLD.floors) if (!G.FT[f.type].dine && s.floors[f.id].movedIn > 0) mods.floorPenalty[f.id] = Math.min(mods.floorPenalty[f.id] || 1, k);
+        for (const f of G.BLD.floors) if (!G.FT[f.type].dine && !G.FT[f.type].park && s.floors[f.id].movedIn > 0) mods.floorPenalty[f.id] = Math.min(mods.floorPenalty[f.id] || 1, k);
       },
       tick(s, inc) { if (inc.data.fixed) E().resolve(inc, 'fixed'); else if (s.time - inc.startedAt > 2880) E().resolve(inc, 'fail'); },
       actions: [
@@ -456,6 +456,129 @@
         { id: 'police', label: '報警並聯絡高鐵失物招領', time: 30, verdict: 'neutral', explain: '該做，但不能只等失物招領。' },
       ],
       review(s, inc) { return [inc.data.enc ? 'BitLocker 全磁碟加密讓遺失的筆電只是一台硬體，資料沒有外洩。' : '筆電一定要全磁碟加密（BitLocker）：由端點管理平台強制開啟並保管復原金鑰。', '遺失時第一時間遠端抹除、重設帳號密碼。']; },
+    },
+
+    /* ---------- 機房門禁（實體安全） ---------- */
+    'tailgate': {
+      name: '陌生人進了機房', cat: 'sec', sev: 'high', kb: 'k-access', minCh: 8, cooldown: 4320,
+      weight: (s) => { if (!s.racks.length || !workHours(s.time)) return 0; const lv = G.Acc.level(); return lv >= 2 ? 0 : lv === 1 ? 0.25 : 0.45; },
+      detectChance: () => (G.Acc.level() >= 1 ? 1 : G.Fac.has('EMS-1') ? 0.08 : 0.03),
+      init(s, inc) {
+        const sw = Q.devices('switch').filter((d) => d.rack);
+        const dev = sw.length ? U.pick(sw) : U.pick(Object.values(s.devices).filter((d) => d.rack));
+        if (!dev) return false;
+        const lv = G.Acc.level();
+        inc.data.dev = dev.id; inc.data.rack = dev.rack; inc.data.lv = lv;
+        inc.title = lv >= 1 ? '陌生人尾隨工程師進了機房' : '機房門沒鎖好，陌生人走了進去';
+        E().log(inc, lv >= 1 ? '門禁系統告警：一次刷卡，門卻開了很久——有人跟在工程師後面進了機房（尾隨，tailgating）。' : '機房只有一把鑰匙，門常常沒鎖好：一個穿著外包制服的陌生人走進了機房。');
+        E().log(inc, `他走到了機櫃 ${dev.rack}，站在 ${dev.name} 前面。`);
+      },
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.caught && d.swept) { E().resolve(inc, 'contained'); return; }
+        if (!d.planted && s.time - inc.startedAt >= 25) {
+          d.planted = true;
+          E().log(inc, `🚨 他在 ${s.devices[d.dev] ? s.devices[d.dev].name : '交換器'} 插上了一台小型裝置，然後離開了機房。`);
+        }
+        if (d.planted && !d.swept && s.time - inc.startedAt >= 90) {
+          E().log(inc, '🚨 那台裝置開始把內部流量往外傳。');
+          const srv = Q.devices('server').filter((x) => x.rack && ['file', 'db'].includes(x.role));
+          if (srv.length) E().start('exfil', { src: U.pick(srv).id });
+          E().resolve(inc, 'fail');
+        }
+      },
+      actions: [
+        { id: 'escort', label: '調閱門禁紀錄與監視器，請保全把人帶離', time: 8, verdict: 'good', explain: '先確認身分、請他離開，並留下紀錄。', run(s, inc) { inc.data.caught = true; } },
+        { id: 'sweep', label: '清查機櫃：有沒有多出來的裝置或被拔掉的線', time: 25, verdict: 'good', explain: '人帶走了不代表沒事：攻擊者可能已經在交換器插了一台竊聽 / 遠端控制的小裝置。', run(s, inc) { inc.data.swept = true; if (inc.data.planted) E().log(inc, '在交換器的空埠上找到一台來路不明的小裝置，已經拔除並交給資安團隊鑑識。'); } },
+        { id: 'ignore', label: '應該是新來的同事吧', time: 1, verdict: 'bad', explain: '機房裡出現不認識的人，一定要當場確認身分。' },
+      ],
+      review(s, inc) {
+        const lv = inc.data.lv;
+        return [lv === 0 ? '機房只有鑰匙：沒有門禁紀錄，也不知道誰進去過。先裝感應卡門禁。' : '一張卡刷開門，後面可以跟好幾個人進去（尾隨）。防尾隨雙門（mantrap）一次只讓一個人通過。',
+          '實體安全是資安的第一道防線：人摸得到設備，就繞得過所有防火牆。'];
+      },
+    },
+    'cleaner': {
+      name: '機櫃被拔掉插頭', cat: 'ops', sev: 'high', kb: 'k-access', minCh: 8, cooldown: 4320,
+      weight: (s) => { const h = U.hourOf(s.time); if (h > 5 && h < 22) return 0; if (!s.racks.some((r) => r.type !== 'ai' && Object.values(s.devices).some((d) => d.rack === r.id))) return 0; return G.Acc.can('clean') === 'perm' ? 0.5 : 0; },
+      detectChance: () => (G.Ops.nmsUp() || G.Fac.has('EMS-1') ? 1 : 0.2),
+      init(s, inc) {
+        const racks = s.racks.filter((r) => r.type !== 'ai' && !r.unplugged && Object.values(s.devices).some((d) => d.rack === r.id));
+        const r = inc.data.rack ? s.racks.find((x) => x.id === inc.data.rack) : U.pick(racks);
+        if (!r) return false;
+        r.unplugged = true;
+        inc.data.rack = r.id;
+        inc.data.who = inc.data.who || 'clean';
+        inc.title = inc.data.who === 'vendor' ? `廠商碰掉了機櫃 ${r.id} 的電源` : `清潔人員拔掉機櫃 ${r.id} 的插頭插洗地機`;
+        E().log(inc, inc.data.who === 'vendor' ? `廠商在機櫃 ${r.id} 後面整理線材，把 PDU 的電源線碰掉了：整座機櫃斷電。` : `半夜打掃的清潔人員找不到插座，拔掉了機櫃 ${r.id} 的 PDU 插頭來插洗地機：整座機櫃斷電！`);
+        const n = Object.values(s.devices).filter((d) => d.rack === r.id).length;
+        E().log(inc, `機櫃裡的 ${n} 台設備全部停擺。`);
+      },
+      tick(s, inc) {
+        const r = s.racks.find((x) => x.id === inc.data.rack);
+        if (!r || !r.unplugged) { E().resolve(inc, inc.data.late ? 'auto' : 'contained'); return; }
+        /* 沒人處理：一早上班的人才發現 */
+        if (s.time - inc.startedAt > 480) { r.unplugged = false; inc.data.late = true; E().log(inc, '早上上班的工程師進機房才發現插頭被拔掉，插回去重新開機。'); E().resolve(inc, 'fail'); }
+      },
+      actions: [
+        { id: 'replug', label: '派值班工程師回機房插回電源', time: 20, verdict: 'good', explain: '先恢復服務：插回 PDU、確認設備都開機。', run(s, inc) { const r = s.racks.find((x) => x.id === inc.data.rack); if (r) r.unplugged = false; } },
+        { id: 'acl', label: '把清潔人員 / 廠商的機房權限改成「需 IT 陪同」', time: 2, verdict: 'good', explain: '根本原因是不該讓他們自己進機房。', run(s, inc) { const g = inc.data.who === 'vendor' ? 'vendor' : 'clean'; if (s.access.list[g] === 'perm') s.access.list[g] = 'escort'; G.Acc.log(`門禁權限變更：${G.Acc.groupName(g)} → 需 IT 陪同`); } },
+        { id: 'wait', label: '等明天上班再處理', time: 1, verdict: 'bad', explain: '整座機櫃的服務會停一整晚。' },
+      ],
+      review(s, inc) {
+        return ['清潔人員與廠商不該能自己進機房：改成 IT 陪同，或乾脆不讓他們進去（機房清潔由 IT 另外安排）。', '機櫃的 PDU 要用防脫落 / 鎖定式插頭並清楚標示；重要設備用雙電源接到兩條不同的 PDU。'];
+      },
+    },
+    'vendor': {
+      name: '廠商要進機房', cat: 'ops', sev: 'low', kb: 'k-access', minCh: 8, cooldown: 4320, detect: 'auto',
+      weight: (s) => (workHours(s.time) && s.room.some((r) => ['ups', 'cooling'].includes(CAT.room[r.model].kind) && CAT.room[r.model].price) ? 0.2 : 0),
+      init(s, inc) {
+        const who = U.pick(['UPS 廠商', '精密空調廠商', '伺服器原廠工程師']);
+        inc.data.who = who;
+        inc.title = `${who}要進機房做保養`;
+        const perm = G.Acc.can('vendor') === 'perm';
+        inc.data.perm = perm;
+        if (perm) {
+          E().log(inc, `${who}自己刷卡進了機房——他有常駐權限，IT 完全不知道。`);
+          if (Math.random() < 0.35) { inc.data.mishap = true; }
+        } else E().log(inc, `${who}在機房門口等你開門：要做年度保養，大約兩個小時。`);
+      },
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.mishap && !d.mishapDone && s.time - inc.startedAt >= 30) {
+          d.mishapDone = true;
+          const racks = s.racks.filter((r) => r.type !== 'ai' && !r.unplugged && Object.values(s.devices).some((x) => x.rack === r.id));
+          if (racks.length) E().start('cleaner', { rack: U.pick(racks).id, who: 'vendor' });
+        }
+        if (d.done && s.time >= d.doneAt) { E().log(inc, '保養完成，廠商離開機房。'); E().resolve(inc, d.bad ? 'auto' : 'contained'); }
+        if (!d.done && s.time - inc.startedAt > 180) { E().log(inc, '廠商等不到人，改天再來。'); E().resolve(inc, 'auto'); }
+      },
+      actions: [
+        { id: 'escort', label: '開當天有效的臨時權限，全程陪同', time: 5, verdict: 'good', explain: '廠商要進機房：臨時權限 + IT 全程陪同，完成後權限自動失效。', run(s, inc) { inc.data.done = true; inc.data.doneAt = s.time + 110; G.Acc.log(`${inc.data.who} 臨時權限（當日有效），由 IT 陪同進入`); } },
+        { id: 'lend', label: '把自己的卡借他進去', time: 2, verdict: 'bad', explain: '借卡 = 門禁紀錄全部是你的名字，出事時查不到是誰；廠商也不知道哪些線不能碰。', run(s, inc) { inc.data.done = true; inc.data.bad = true; inc.data.doneAt = s.time + 110; if (Math.random() < 0.4) inc.data.mishap = true; } },
+        { id: 'perm', label: '直接給他常駐權限，以後比較方便', time: 2, verdict: 'bad', explain: '廠商人員常常換，常駐權限會一直留在系統裡。', run(s, inc) { s.access.list.vendor = 'perm'; G.Acc.log('門禁權限變更：機電 / 設備廠商 → 常駐權限', true); inc.data.done = true; inc.data.bad = true; inc.data.doneAt = s.time + 110; } },
+        { id: 'later', label: '今天太忙，請他改天再來', time: 1, verdict: 'neutral', explain: '保養延後不是不行，但不能一直拖。', run(s, inc) { inc.data.done = true; inc.data.doneAt = s.time; } },
+      ],
+      review(s, inc) { return ['廠商進機房：事先申請、臨時權限、IT 全程陪同、完成後收回權限。', '不借卡、不給常駐權限：門禁紀錄要能追到「誰」在「什麼時候」進去。']; },
+    },
+    'badge-ex': {
+      name: '離職員工的卡還能進機房', cat: 'sec', sev: 'med', kb: 'k-access', minCh: 8, cooldown: 10080, detect: 'auto',
+      weight: (s) => (G.Acc.level() >= 1 && G.Acc.reviewDue() && s.racks.length ? 0.3 : 0),
+      init(s, inc) {
+        inc.title = '離職員工的門禁卡還能刷進機房';
+        E().log(inc, '門禁紀錄顯示：上個月離職的網管工程師，昨晚 23:40 刷卡進了機房。人資系統早就把他停用了，門禁卡卻沒有。');
+      },
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.disabled && d.reviewed) { E().resolve(inc, 'contained'); return; }
+        if (s.time - inc.startedAt > 240) { E().log(inc, d.disabled ? '卡片停用了，但其他該停用的卡還沒清查。' : '🚨 他又刷卡進去了一次。'); E().resolve(inc, d.disabled ? 'auto' : 'fail'); }
+      },
+      actions: [
+        { id: 'disable', label: '立刻停用卡片，調閱監視器看他做了什麼', time: 5, verdict: 'good', explain: '先止血，再確認有沒有設備被動過。', run(s, inc) { inc.data.disabled = true; } },
+        { id: 'review', label: '全面做一次門禁權限盤點', time: 30, verdict: 'good', explain: '一張沒停用的卡，代表離職流程有漏洞：和人資名單比對，把所有該停用的卡一次清掉。', run(s, inc) { G.Acc.review(); inc.data.reviewed = true; } },
+        { id: 'hr', label: '請人資下次記得通知 IT', time: 1, verdict: 'neutral', explain: '流程要改，但這張卡現在就要停用。' },
+      ],
+      review() { return ['離職、調職流程要自動通知 IT：當天就停用門禁卡、帳號與 VPN。', '至少每季做一次權限盤點（和人資在職名單比對）。']; },
     },
 
     'kev': {

@@ -137,7 +137,9 @@
       R.bbuMin = R.load > 0 && R.bbuW >= R.load ? 4 * (R.bbuW / R.load) * r.bbu : 0;
     }
     const rackDown = {};
-    for (const id in racks) rackDown[id] = rackTripped[id] || (racks[id].ai ? !aiPowered[id] : !mdfPowered);
+    /* 被人拔掉插頭的機櫃（例如清潔人員插洗地機、廠商整理線材時碰掉） */
+    const unplugged = new Set(s.racks.filter((r) => r.unplugged).map((r) => r.id));
+    for (const id in racks) rackDown[id] = unplugged.has(id) || rackTripped[id] || (racks[id].ai ? !aiPowered[id] : !mdfPowered);
 
     /* 液冷：GPU 的熱經冷板交給 CDU（CDU 的泵要有電：停電時只能靠發電機） */
     let liquidHeat = 0, aiAir = 0, aiUp = 0;

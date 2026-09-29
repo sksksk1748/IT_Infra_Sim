@@ -9,6 +9,7 @@
     const s = G.S, fs = s.floors[fid];
     if (fs.cabling.status === 'none' && fs.idf.count === 0 && !fs.aps.length) return { t: '未佈建', c: '' };
     if (fs.cabling.status === 'building') return { t: `布線中 ${U.dur(fs.cabling.readyAt - s.time)}`, c: 'info' };
+    if (fs.cabling.status === 'diy') { const p = G.Diy.progress(fid); return { t: `自己布線中 ${p.pulled}/${p.total}`, c: 'info' }; }
     if (fs.cabling.status === 'none') return { t: '缺水平布線', c: 'warn' };
     if (fs.idf.count === 0) return { t: '缺接入交換器', c: 'warn' };
     const ups = Q.linksOf('F:' + fid);
@@ -26,7 +27,7 @@
     el.appendChild(h('div', { class: 'view-h' },
       h('div', {}, h('h2', {}, '大樓總覽'), h('div', { class: 'desc' }, use3d
         ? '3D 剖面：窗戶亮燈 = 進駐人數、顏色 = 滿意度。右前角的弱電豎井裡是各樓層連回 B1 的主幹線，光點代表流量；已偵測到的駭客攻擊會以紅色路徑顯示。點一下樓層看資訊並可進入規劃，點兩下拉近。'
-        : `新曜大樓 ${G.BLD.floors.length} 層（22F、23F 是員工餐廳）+ B1 機房。每層樓的 IDF 透過弱電豎井裡的主幹線，連回 B1 機房的核心交換器。點選樓層進入規劃。`)),
+        : `新曜大樓地上 ${G.BLD.top} 層（22F、23F 是員工餐廳）+ B1 機房 + B2 員工停車場。每層樓的 IDF 透過弱電豎井裡的主幹線，連回 B1 機房的核心交換器。點選樓層進入規劃。`)),
       h('div', { class: 'row wrap' }, UI.toggle3d('bld'), V.sum)));
     V.table = h('div', { class: 'card', style: { padding: '4px 6px' } });
     if (use3d) {
@@ -70,10 +71,12 @@
 
   function tower() {
     const s = G.S, sim = G.R.sim || { floors: {}, links: {} };
-    const floors = G.BLD.floors.slice().reverse();
+    /* 地上樓層由上往下畫，B1 機房在地面線下，地下停車場再往下 */
+    const floors = G.BLD.floors.filter((f) => f.level > 0).reverse();
+    const under = G.BLD.floors.filter((f) => f.level < 0).sort((a, b) => b.level - a.level);
     const FH = 17, top = 30, W = 214;
     const baseY = top + floors.length * FH;
-    const H = baseY + 64;
+    const H = baseY + 64 + under.length * (FH + 4);
     const svg = U.s('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': '大樓剖面圖' });
     svg.appendChild(U.s('path', { d: `M24 ${top - 3} L30 ${top - 16} H150 L156 ${top - 3} Z`, fill: 'var(--bg-4)', stroke: 'var(--line-2)' }));
     svg.appendChild(U.s('text', { x: 90, y: top - 6.5, 'text-anchor': 'middle', 'font-size': 8, fill: 'var(--text-3)', 'font-family': 'var(--font-mono)', 'letter-spacing': 2 }, 'NOVALUX'));
@@ -82,14 +85,17 @@
     svg.appendChild(U.s('rect', { x: 164, y: top - 2, width: 44, height: baseY - top + 12, fill: 'var(--bg)', stroke: 'var(--line)', rx: 2 }));
     svg.appendChild(U.s('text', { x: 186, y: top - 5, 'text-anchor': 'middle', 'font-size': 6.5, fill: 'var(--text-3)' }, '弱電豎井'));
     let lane = 0;
-    floors.forEach((f, i) => {
-      const y = top + i * FH;
+    const rowY = (f, i) => (f.level > 0 ? top + i * FH : baseY + 58 + i * (FH + 4));
+    floors.concat(under).forEach((f, idx) => {
+      const i = f.level > 0 ? idx : idx - floors.length;
+      const y = rowY(f, i);
       const fs = s.floors[f.id], st = sim.floors[f.id];
       const up = G.Net.floorUp(f.id);
       const sat = st && st.present > 1 ? st.sat : null;
       const fty = G.FT[f.type];
       /* 餐廳：開張後亮一點，用餐人潮越多越亮 */
-      const lit = fty.dine ? (fs.movedIn > 0 ? Math.round(2 + 8 * Math.min(1, (st ? st.diners || 0 : 0) / fty.diners)) : 0) : Math.round((fs.movedIn / f.staff) * 10);
+      const lit = fty.dine ? (fs.movedIn > 0 ? Math.round(2 + 8 * Math.min(1, (st ? st.diners || 0 : 0) / fty.diners)) : 0)
+        : fty.park ? (fs.movedIn > 0 && G.M3 && G.M3.parkFill ? Math.round(1 + 9 * G.M3.parkFill(s.time)) : 0) : Math.round((fs.movedIn / f.staff) * 10);
       const col = fs.movedIn > 0 && !up ? 'var(--bad)' : satColor(sat === null ? (up ? 0.9 : null) : sat);
       const g = U.s('g', { class: 'fl', onclick: () => UI.go('floor:' + f.id) });
       g.appendChild(U.s('title', {}, `${f.id} ${f.dept}`));

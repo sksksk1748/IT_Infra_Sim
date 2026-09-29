@@ -5,6 +5,7 @@
   const V = { tab: 'rules', draft: { src: 'LAN', dst: 'INTERNET', svc: 'WEB', action: 'allow' } };
   G.Views.fw = V;
   const TABS = [['rules', '政策規則'], ['net', '網段規劃'], ['svc', '資安服務'], ['vuln', '弱點管理'], ['audit', '資安健檢']];
+  V.TABS = TABS;
   const zc = (z) => h('span', { class: 'zone-chip zone-' + z }, z);
 
   V.mount = (el, param) => {
@@ -16,7 +17,7 @@
       h('div', { class: 'row wrap' },
         h('button', { class: 'btn', title: '跟著封包走一趟，看規則怎麼判斷', onclick: () => { G.Views.topo.startJourney(); UI.go('topo'); } }, '用封包旅程測試'),
         h('span', { class: 'chip ' + (audit.grade <= 'B' ? 'ok' : audit.grade === 'C' ? 'warn' : 'bad') }, `資安評分 ${audit.grade}（${audit.score}）`))));
-    const tabs = h('div', { class: 'tabs', role: 'tablist' }, TABS.map(([k, t]) => h('button', { class: V.tab === k ? 'on' : '', onclick: () => { V.tab = k; UI.refresh(); } }, t,
+    const tabs = h('div', { class: 'tabs', role: 'tablist' }, TABS.map(([k, t]) => h('button', { class: V.tab === k ? 'on' : '', 'data-hint': 'tab:fw:' + k, onclick: () => { V.tab = k; UI.refresh(); } }, t,
       k === 'audit' && audit.findings.some((f) => f.sev === 'crit' || f.sev === 'high') ? h('span', { class: 'count' }, String(audit.findings.filter((f) => f.sev === 'crit' || f.sev === 'high').length)) : null)));
     el.appendChild(tabs);
     if (!G.Sec.hasFirewall()) el.appendChild(h('div', { class: 'note warn', style: { marginBottom: '12px' } }, '機房裡還沒有安裝防火牆。規則要等防火牆上架並接好線路後才會生效；在那之前，內網等於直接暴露在網際網路上。'));
@@ -70,10 +71,10 @@
         h('label', { class: 'field' }, h('span', {}, '服務'), sel('svc', svcs)),
         h('label', { class: 'field' }, h('span', {}, '動作'), sel('action', [['allow', '允許 ALLOW'], ['deny', '拒絕 DENY']]))),
       h('div', { class: 'row wrap' },
-        h('button', { class: 'btn primary', onclick: () => UI.res(G.Act.addRule(Object.assign({}, d))) }, '加到最下方'),
+        h('button', { class: 'btn primary', 'data-hint': 'fw-add', onclick: () => UI.res(G.Act.addRule(Object.assign({}, d))) }, '加到最下方'),
         h('button', { class: 'btn', onclick: () => UI.res(G.Act.addRule(Object.assign({ top: true }, d))) }, '加到最上方'),
         h('span', { class: 'small muted' }, '快速範本：'),
-        tmpl.map(([t, r]) => h('button', { class: 'btn xs', onclick: () => UI.res(G.Act.addRule(Object.assign({}, r))) }, t))));
+        tmpl.map(([t, r]) => h('button', { class: 'btn xs', 'data-hint': `fw-tpl:${r.src}>${r.dst}:${r.svc}`, onclick: () => UI.res(G.Act.addRule(Object.assign({}, r))) }, t))));
     el.appendChild(h('div', { class: 'grid c2', style: { marginBottom: '12px' } }, form, reqCard));
     V.hitsEls = new Map();
     const rows = s.fw.rules.map((r, i) => {
@@ -115,11 +116,11 @@
     ];
     const toggles = h('div', { class: 'grid c2', style: { marginBottom: '12px' } },
       h('div', { class: 'card col', style: { gap: '8px' } },
-        h('div', { class: 'row between' }, h('h3', {}, '訪客 Wi-Fi（Guest SSID）'), h('button', { class: 'btn ' + (s.fw.guestWifi ? 'on' : 'primary'), onclick: () => UI.res(G.Act.setGuestWifi(!s.fw.guestWifi)) }, s.fw.guestWifi ? '已啟用 · 關閉' : '啟用')),
+        h('div', { class: 'row between' }, h('h3', {}, '訪客 Wi-Fi（Guest SSID）'), h('button', { class: 'btn ' + (s.fw.guestWifi ? 'on' : 'primary'), 'data-hint': 'guest-wifi', onclick: () => UI.res(G.Act.setGuestWifi(!s.fw.guestWifi)) }, s.fw.guestWifi ? '已啟用 · 關閉' : '啟用')),
         h('p', { class: 'small muted' }, '在所有 AP 上廣播獨立的訪客 SSID，對應獨立 VLAN 與網段，經防火牆的 GUEST 區域上網。記得寫規則：只允許 GUEST → INTERNET。'),
         h('button', { class: 'btn ghost xs', style: { alignSelf: 'flex-start' }, onclick: () => UI.openKb('k-guest') }, '訪客隔離')),
       h('div', { class: 'card col', style: { gap: '8px' } },
-        h('div', { class: 'row between' }, h('h3', {}, '內部分段（LAN ⇄ SERVERS 經防火牆）'), h('button', { class: 'btn ' + (s.fw.segmentation ? 'on' : ''), onclick: () => {
+        h('div', { class: 'row between' }, h('h3', {}, '內部分段（LAN ⇄ SERVERS 經防火牆）'), h('button', { class: 'btn ' + (s.fw.segmentation ? 'on' : ''), 'data-hint': 'seg', onclick: () => {
           if (!s.fw.segmentation) UI.confirm('啟用內部分段', '啟用後，員工到內部伺服器的所有流量都要經過防火牆檢查。請先確認已允許 LAN → SERVERS 的 LDAP、DNS、SMB、SQL，而且防火牆效能足夠，否則全公司會登不進網域！', '啟用', () => UI.res(G.Act.setSegmentation(true)), 'warn');
           else UI.res(G.Act.setSegmentation(false));
         } }, s.fw.segmentation ? '已啟用 · 關閉' : '啟用')),
@@ -134,7 +135,7 @@
         h('td', {}, h('b', {}, g.name), g.sub ? h('div', { class: 'tiny dim' }, g.sub) : null),
         h('td', { class: 'mono small' }, g.vlan),
         h('td', { class: 'mono small' }, g.net(p)),
-        h('td', {}, h('select', { id: 'subnet-' + g.k, onchange: (e) => UI.res(G.Act.setSubnet(g.k, parseInt(e.target.value, 10))) }, g.opts.map((o) => h('option', { value: o, selected: o === p || null }, `/${o}（${U.num(Q.hosts(o))}）`)))),
+        h('td', {}, h('select', { id: 'subnet-' + g.k, 'data-hint': 'subnet:' + g.k, onchange: (e) => UI.res(G.Act.setSubnet(g.k, parseInt(e.target.value, 10))) }, g.opts.map((o) => h('option', { value: o, selected: o === p || null }, `/${o}（${U.num(Q.hosts(o))}）`)))),
         h('td', { class: 'r mono small ' + (g.need > pool ? 'bad-t' : '') }, `${U.num(g.need)} / ${U.num(pool)}`),
         h('td', { style: { width: '18%' } }, h('div', { class: 'bar ' + (u > 1 ? 'bad' : u > 0.85 ? 'warn' : 'ok') }, h('i', { style: { width: Math.min(100, u * 100) + '%' } }))));
     });
@@ -171,7 +172,7 @@
         grid.appendChild(h('div', { class: 'card svc-card' + (locked ? ' prod locked-item' : '') },
           h('div', { class: 'row between' }, h('span', { class: 'label' }, grp), on ? h('span', { class: 'chip ok' }, '已啟用') : locked ? h('span', { class: 'chip' }, `第 ${svc.unlock} 章解鎖`) : null),
           h('b', {}, svc.name), h('p', { class: 'small muted' }, svc.desc), h('div', { class: 'mono small' }, cost),
-          h('button', { class: 'btn ' + (on ? 'danger' : 'primary') + ' sm', disabled: locked || null, style: { alignSelf: 'flex-start' }, onclick: () => UI.res(on ? G.Act.unsubscribe(id) : G.Act.subscribe(id)) }, on ? '停用' : '啟用')));
+          h('button', { class: 'btn ' + (on ? 'danger' : 'primary') + ' sm', 'data-hint': 'svc:' + id, disabled: locked || null, style: { alignSelf: 'flex-start' }, onclick: () => UI.res(on ? G.Act.unsubscribe(id) : G.Act.subscribe(id)) }, on ? '停用' : '啟用')));
       }
     }
     const t = CAT.training;
@@ -201,7 +202,7 @@
       tile('對外設備的嚴重弱點', String(exp), '防火牆、路由器、SBC、SD-WAN、DMZ 官網', exp ? 'bad-t' : 'ok-t')));
     el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } },
       h('button', { class: 'btn primary', disabled: !up || s.vuln.scanUntil > s.time || null, onclick: () => UI.res(VU.scan()) }, '立即掃描'),
-      h('button', { class: 'btn', disabled: !known.length || null, onclick: () => UI.res(VU.patchAllTonight()) }, '嚴重與高風險：排入今晚的維護窗口'),
+      h('button', { class: 'btn', 'data-hint': 'vuln-tonight', disabled: !known.length || null, onclick: () => UI.res(VU.patchAllTonight()) }, '嚴重與高風險：排入今晚的維護窗口'),
       h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-vuln') }, G.KB.byId['k-vuln'] ? G.KB.byId['k-vuln'].title : '弱點管理'),
       h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-patch') }, G.KB.byId['k-patch'] ? G.KB.byId['k-patch'].title : '修補')));
     if (!scanner.length) {

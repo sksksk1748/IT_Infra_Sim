@@ -27,26 +27,33 @@
     const pick = h('div', { class: 'floor-pick', role: 'tablist' });
     for (const x of G.BLD.floors.slice().reverse()) {
       const stt = G.Views.building.floorStatus(x.id);
-      pick.appendChild(h('button', { class: x.id === V.fid ? 'on' : '', onclick: () => { if (x.id !== V.fid) { V.fid = x.id; V.selAp = null; V.stage = null; UI.refresh(); } } },
+      pick.appendChild(h('button', { class: x.id === V.fid ? 'on' : '', 'data-hint': 'floor:' + x.id, onclick: () => { if (x.id !== V.fid) { V.fid = x.id; V.selAp = null; V.stage = null; UI.refresh(); } } },
         h('span', { class: 'dot ' + stt.c }), x.id));
     }
     el.appendChild(pick);
-    const mi = fs.moveInAt !== null && fs.movedIn < f.staff ? (fs.moveInAt > s.time ? `預計 ${U.stamp(fs.moveInAt)} 進駐（${U.dur(fs.moveInAt - s.time)} 後）` : '進駐中') : fs.movedIn ? '已進駐' : '尚未排定進駐';
+    const open = ft.park ? '啟用' : '進駐';
+    const mi = fs.moveInAt !== null && fs.movedIn < f.staff ? (fs.moveInAt > s.time ? `預計 ${U.stamp(fs.moveInAt)} ${open}（${U.dur(fs.moveInAt - s.time)} 後）` : `${open}中`) : fs.movedIn ? `已${open}` : `尚未排定${open}`;
     const use3d = UI.pref3d('floor');
     el.appendChild(h('div', { class: 'view-h' },
       h('div', {}, h('h2', {}, `${f.id} ${f.dept}`), h('div', { class: 'desc' }, ft.dine
         ? `${ft.name} · 廚師與服務人員 ${U.num(f.staff)} 人 · 午餐尖峰約 ${U.num(ft.diners)} 人同時用餐（人人滑手機）· 收銀機 ${ft.pos} 台 · ${mi}`
-        : `${ft.name}樓層 · 編制 ${U.num(f.staff)} 人 · 有線座位約 ${U.pct(ft.wired)} · ${mi}`)),
+        : ft.park
+          ? `地下停車場 · 管理員 ${f.staff} 人 · 上下班尖峰約 ${U.num(ft.parkPeak)} 人同時進出（地下室收不到 GPS，手機打卡要靠 Wi-Fi）· 柵欄機 / 車牌辨識 ${ft.gates} 埠 · PoE 監視器 ${ft.cams} 台 · ${mi}`
+          : `${ft.name}樓層 · 編制 ${U.num(f.staff)} 人 · 有線座位約 ${U.pct(ft.wired)} · ${mi}`)),
       h('div', { class: 'row wrap' }, UI.toggle3d('floor'), h('span', { class: 'chip' }, `主幹距離 B1 ${G.BLD.riserLength(f.id)} m`), G.BLD.riserLength(f.id) > 100 ? h('span', { class: 'chip warn' }, '超過 100m：銅纜無法使用') : null)));
 
     const left = h('div', { class: 'col', style: { gap: '10px' } });
     V.right = h('div', { class: 'col', style: { gap: '10px' } });
     el.appendChild(h('div', { class: 'split' }, left, V.right));
 
-    /* 工具列 */
+    /* 工具列（自己布線進行中時多一個「布線」工具，而且預設就是它） */
+    const diy = G.Diy.job(V.fid);
+    if (diy && V.diyFloor !== V.fid) { V.diyFloor = V.fid; V.tool = 'cable'; }
+    if (!diy && V.tool === 'cable') V.tool = 'select';
     const toolSeg = h('div', { class: 'seg' },
       h('button', { class: V.tool === 'select' ? 'on' : '', onclick: () => { V.tool = 'select'; UI.refresh(); } }, '選取 / 拖曳'),
-      h('button', { class: V.tool === 'place' ? 'on' : '', onclick: () => { V.tool = 'place'; UI.refresh(); } }, '放置 AP'));
+      h('button', { class: V.tool === 'place' ? 'on' : '', 'data-hint': 'ap-place@' + V.fid, onclick: () => { V.tool = 'place'; UI.refresh(); } }, '放置 AP'),
+      diy ? h('button', { class: V.tool === 'cable' ? 'on' : '', 'data-hint': 'diy-tool@' + V.fid, onclick: () => { V.tool = 'cable'; UI.refresh(); } }, '布線') : null);
     const modelSel = h('select', { id: 'ap-model', onchange: (e) => { V.apModel = e.target.value; } },
       Object.entries(CAT.aps).map(([id, m]) => h('option', { value: id, selected: id === V.apModel || null, disabled: !Q.unlocked(m) || null }, `${m.name} · ${U.money(m.price + CAT.apInstallFee)}${Q.unlocked(m) ? '' : '（第 ' + m.unlock + ' 章）'}`)));
     const layerSeg = h('div', { class: 'seg' }, [['rssi', '訊號'], ['load', 'AP 負載'], ['cci', '同頻干擾'], ['none', '平面']].map(([k, t]) =>
@@ -56,11 +63,14 @@
     if (use3d) {
       V.canvas = null;
       V.tip = null;
-      left.appendChild(h('div', { class: 'plan-wrap' }, tools, floor3d(),
+      left.appendChild(h('div', { class: 'plan-wrap' }, tools,
+        diy ? h('div', { class: 'note info small', style: { marginBottom: '8px' } }, '自己布線要在 2D 平面圖上畫走線路徑。', h('button', { class: 'btn xs primary', style: { marginLeft: '6px' }, onclick: () => { UI.pref3d('floor', false); V.tool = 'cable'; UI.refresh(); } }, '切到 2D 布線')) : null,
+        floor3d(),
         h('div', { class: 'small muted', style: { marginTop: '6px' } }, V.tool === 'place' ? '「放置 AP」：點地板就會在正上方的天花板安裝 AP（不能裝在牆上或核心筒）。' : '點 AP 看詳情；滑過地板可以看到那個位置的訊號強度。牆越厚，訊號衰減越多。')));
     } else {
-      V.canvas = h('canvas', { style: { aspectRatio: '2 / 1' }, 'aria-label': `${f.id} 平面圖` });
-      V.tip = h('div', { class: 'small mono muted', style: { minHeight: '18px', marginTop: '6px' } }, V.tool === 'place' ? '點擊平面圖放置 AP（天花板安裝，不能裝在牆上或核心筒）' : '點選 AP 查看詳情，拖曳可移動位置');
+      V.canvas = h('canvas', { style: { aspectRatio: '2 / 1', touchAction: V.tool === 'cable' ? 'none' : null }, 'aria-label': `${f.id} 平面圖`, 'data-hint': V.tool === 'cable' ? 'diy-canvas@' + V.fid : null });
+      V.tip = h('div', { class: 'small mono muted', style: { minHeight: '18px', marginTop: '6px' } }, V.tool === 'cable' ? '從 IDF（綠色圓圈）按住拖曳到編號的配線區，放開就開始拉線。紅色虛線是電力線槽：不要跟它平行走（垂直穿過沒關係）。'
+        : V.tool === 'place' ? '點擊平面圖放置 AP（天花板安裝，不能裝在牆上或核心筒）' : '點選 AP 查看詳情，拖曳可移動位置');
       left.appendChild(h('div', { class: 'plan-wrap' }, tools, V.canvas, V.tip, legend()));
       bindCanvas();
       requestAnimationFrame(() => V.draw());
@@ -117,17 +127,22 @@
     col[T.OPEN] = tk.floor; col[T.DESK] = tk.desk; col[T.MEET] = tk.room; col[T.OFFICE] = tk.room; col[T.LAB] = tk.room; col[T.CAFE] = tk.room; col[T.LOBBY] = tk.floor;
     col[T.CORE] = tk.core; col[T.IDF] = tk.core; col[T.WALL] = tk.wall; col[T.GLASS] = tk.glass; col[T.EXT] = tk.line2;
     col[T.KITCHEN] = tk.kitchen; col[T.SERVE] = tk.serve; col[T.DINE] = tk.dine; col[T.COLD] = tk.cold;
+    col[T.RAMP] = tk.ramp; col[T.PARK] = tk.park; col[T.MOTO] = tk.moto; col[T.PILLAR] = tk.pillar;
     for (let y = 0; y < L.H; y++) {
       for (let x = 0; x < L.W; x++) {
         const t = L.type[y * L.W + x];
-        ctx.fillStyle = col[t];
+        ctx.fillStyle = col[t] || tk.floor;
         ctx.fillRect(x * cs, y * cs, cs + 0.6, cs + 0.6);
         if (t === T.DESK && cs >= 6) { ctx.fillStyle = tk.bg3; ctx.fillRect(x * cs + cs * 0.18, y * cs + cs * 0.22, cs * 0.64, cs * 0.5); }
         /* 用餐區：每 3 × 3 格一張桌子 */
         if (t === T.DINE && cs >= 5 && x % 3 === 1 && y % 3 === 1) { ctx.fillStyle = tk.serve; ctx.fillRect(x * cs - cs * 0.3, y * cs + cs * 0.1, cs * 1.6, cs * 0.8); }
+        /* 機車格：一台台機車 */
+        if (t === T.MOTO && cs >= 5) { ctx.fillStyle = tk.text3; ctx.fillRect(x * cs + cs * 0.32, y * cs + cs * 0.1, cs * 0.36, cs * 0.8); }
       }
     }
-    if (V.layer === 'rssi' || V.layer === 'load') {
+    /* 停車場：停車格的白線、車道箭頭、柵欄機、充電樁 */
+    if (L.spaces) drawParking(ctx, L, cs, tk);
+    if ((V.layer === 'rssi' || V.layer === 'load') && V.tool !== 'cable') {
       for (let y = 0; y < L.H; y++) {
         for (let x = 0; x < L.W; x++) {
           const i = y * L.W + x;
@@ -196,7 +211,112 @@
       ctx.beginPath(); ctx.arc((V.hover.x + 0.5) * cs, (V.hover.y + 0.5) * cs, R, 0, Math.PI * 2);
       ctx.strokeStyle = tk.accent; ctx.setLineDash([3, 3]); ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
     }
+    if (V.tool === 'cable') drawDiy(ctx, L, cs, tk);
   };
+
+  /* ---------- 自己布線：配線區、電力線槽、已畫好的走線、正在畫的路徑 ---------- */
+  function drawDiy(ctx, L, cs, tk) {
+    const job = G.Diy.job(V.fid);
+    if (!job) return;
+    const f = G.BLD.byId[V.fid], zs = G.Diy.zones(f.type), drops = G.Diy.drops(V.fid), t = G.S.time;
+    ctx.save();
+    const py = (G.Diy.POWER_Y + 0.5) * cs;
+    ctx.strokeStyle = tk.bad; ctx.lineWidth = Math.max(2, cs * 0.35); ctx.setLineDash([cs * 1.2, cs * 0.7]);
+    ctx.beginPath(); ctx.moveTo(cs, py); ctx.lineTo(28 * cs, py); ctx.moveTo(44 * cs, py); ctx.lineTo(71 * cs, py); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = tk.bad; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom'; ctx.font = `600 ${Math.max(9, cs * 0.85)}px ${tk.sans}`;
+    ctx.fillText('電力線槽（220V）', 1.5 * cs, py - cs * 0.5);
+    const resOf = (zid) => (job.results ? job.results.find((r) => r.zid === zid) : null);
+    const line = (path, col, w, dash) => {
+      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.setLineDash(dash || []); ctx.lineJoin = 'round';
+      ctx.beginPath(); path.forEach(([x, y], i) => { const X = (x + 0.5) * cs, Y = (y + 0.5) * cs; if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y); }); ctx.stroke();
+      ctx.setLineDash([]);
+    };
+    for (const z of zs) {
+      const zr = job.zones[z.id], res = resOf(z.id);
+      const col = res ? (res.pass ? tk.ok : tk.bad) : zr.path ? (t >= zr.pullAt ? tk.accent : tk.info) : tk.warn;
+      ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.setLineDash([4, 3]);
+      ctx.strokeRect(z.x0 * cs + 2, z.y0 * cs + 2, (z.x1 - z.x0 + 1) * cs - 4, (z.y1 - z.y0 + 1) * cs - 4);
+      ctx.setLineDash([]);
+      ctx.fillStyle = col; ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.font = `700 ${Math.max(9, cs * 0.95)}px ${tk.sans}`;
+      ctx.fillText(`配線區 ${z.n} · ${drops[z.id]} 點${res ? (res.pass ? ' ✓ PASS' : ' ✗ FAIL') : zr.path ? (t >= zr.pullAt ? ' ✓ 已拉好' : ' 拉線中') : ''}`, z.x0 * cs + 5, z.y0 * cs + 5);
+      ctx.beginPath(); ctx.arc((z.tx + 0.5) * cs, (z.ty + 0.5) * cs, Math.max(4, cs * 0.6), 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+    }
+    for (const z of zs) {
+      const zr = job.zones[z.id], res = resOf(z.id);
+      if (!zr.path) continue;
+      const bad = res ? !res.pass : zr.emi >= 5 || zr.len > 90;
+      line(zr.path, bad ? tk.bad : t >= zr.pullAt ? tk.accent : tk.info, Math.max(2, cs * 0.32), t >= zr.pullAt ? null : [cs * 0.6, cs * 0.4]);
+    }
+    if (V.cdrag) line(V.cdrag.path, tk.warn, Math.max(3, cs * 0.42));
+    ctx.beginPath(); ctx.arc((L.idf.x + 0.5) * cs, (L.idf.y + 0.5) * cs, Math.max(7, cs * 1.5), 0, Math.PI * 2);
+    ctx.strokeStyle = tk.ok; ctx.lineWidth = 3; ctx.stroke();
+    ctx.restore();
+  }
+  /* 拖曳畫線：從 IDF 開始，游標經過的格子依序加進路徑（往回拖可以收回），放開時落在哪個配線區就拉到那裡 */
+  function cableDown(e) {
+    const L = G.Layout.get(G.BLD.byId[V.fid].type), c = cellAt(e);
+    if (Math.abs(c.x - L.idf.x) > 2 || Math.abs(c.y - L.idf.y) > 2) { V.tip.textContent = '要從 IDF（綠色圓圈）開始拖曳：每條線都是從 IDF 的配線架拉出去的。'; return; }
+    V.cdrag = { path: [[L.idf.x, L.idf.y]] };
+    try { V.canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    V.draw();
+  }
+  function cableMove(e) {
+    const f = G.BLD.byId[V.fid], L = G.Layout.get(f.type), c = cellAt(e), P = V.cdrag.path;
+    const last = P[P.length - 1];
+    if (c.x === last[0] && c.y === last[1]) return;
+    const k = P.findIndex((p) => p[0] === c.x && p[1] === c.y);
+    if (k >= 0) P.length = k + 1;
+    else {
+      /* 游標經過的格子：相鄰就直接接上；跳太快或擋到核心筒時，自動沿著可以走線的格子補上最短的一段 */
+      const avoid = new Set(P.map((p) => p[1] * L.W + p[0]));
+      const seg = G.Diy.bridge(L, last, [c.x, c.y], avoid);
+      if (seg) for (const q of seg) P.push(q);
+    }
+    const end = P[P.length - 1], et = L.type[end[1] * L.W + end[0]];
+    const z = et === L.T.CORE || et === L.T.IDF ? null : G.Diy.zones(f.type).find((q) => end[0] >= q.x0 && end[0] <= q.x1 && end[1] >= q.y0 && end[1] <= q.y1);
+    const a = G.Diy.analyze(V.fid, z ? z.id : null, P);
+    V.tip.textContent = `路徑 ${P.length - 1} m${z ? ` → 配線區 ${z.n}（最遠的插座約 ${a.len} m${a.lenOk ? '' : '，超過 90 m！'}）` : ''}${a.emi ? `　與電力線槽平行 ${a.emi} m${a.emiOk ? '' : ' ⚠ 會有串音干擾'}` : ''}`;
+    V.draw();
+  }
+  function cableUp() {
+    const P = V.cdrag.path;
+    V.cdrag = null;
+    const zs = G.Diy.zones(G.BLD.byId[V.fid].type), end = P[P.length - 1];
+    const z = zs.find((q) => end[0] >= q.x0 && end[0] <= q.x1 && end[1] >= q.y0 && end[1] <= q.y1);
+    if (!z || P.length < 2) { V.draw(); V.tip.textContent = '要拖曳到某一個配線區（虛線框）裡才算數。'; return; }
+    UI.res(G.Diy.setRoute(V.fid, z.id, P));
+  }
+
+  /** 停車場的標線：停車格白線、充電位、車道方向、柵欄機與車牌辨識攝影機 */
+  function drawParking(ctx, L, cs, tk) {
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.strokeStyle = U.isDark() ? 'rgba(235,240,243,0.5)' : 'rgba(40,52,60,0.45)';
+    ctx.lineWidth = Math.max(1, cs * 0.08);
+    for (const sp of L.spaces) {
+      const x0 = sp.x0 * cs, x1 = (sp.x1 + 1) * cs, y0 = sp.y0 * cs, y1 = (sp.y1 + 1) * cs;
+      ctx.beginPath();
+      ctx.moveTo(x0, y0); ctx.lineTo(x0, y1); ctx.moveTo(x1, y0); ctx.lineTo(x1, y1);
+      const yb = sp.dir === 'N' ? y0 : y1;
+      ctx.moveTo(x0, yb); ctx.lineTo(x1, yb);
+      ctx.stroke();
+      if (sp.ev && cs >= 5) { ctx.fillStyle = tk.ok; ctx.font = `bold ${Math.max(8, cs * 1.1)}px ${tk.sans}`; ctx.fillText('⚡', (x0 + x1) / 2, (y0 + y1) / 2); }
+    }
+    ctx.fillStyle = tk.text3;
+    ctx.font = `bold ${Math.max(8, cs * 1.1)}px ${tk.sans}`;
+    for (let x = 3; x <= 11; x += 4) { ctx.fillText('→', (x + 0.5) * cs, 2.5 * cs); ctx.fillText('←', (x + 0.5) * cs, 4.5 * cs); }
+    for (const g of L.gates) {
+      const gx = (g.x + 0.5) * cs, gy = (g.y + 0.5) * cs;
+      ctx.strokeStyle = tk.warn; ctx.lineWidth = Math.max(2, cs * 0.28);
+      ctx.beginPath(); ctx.moveTo(gx, gy - cs * 0.95); ctx.lineTo(gx, gy + cs * 0.95); ctx.stroke();
+      ctx.fillStyle = tk.accent;
+      ctx.beginPath(); ctx.arc(gx + cs * 0.85, gy - cs * 0.85, Math.max(2, cs * 0.32), 0, Math.PI * 2); ctx.fill();
+    }
+    if (cs >= 6) { ctx.fillStyle = tk.warn; ctx.font = `600 ${Math.max(8, cs * 0.8)}px ${tk.sans}`; ctx.fillText('柵欄機', (L.gates[0].x + 0.5) * cs, 0.5 * cs + 1); }
+    ctx.restore();
+  }
 
   function cellAt(e) {
     const f = G.BLD.byId[V.fid];
@@ -217,6 +337,7 @@
   function bindCanvas() {
     const cv = V.canvas;
     cv.addEventListener('pointerdown', (e) => {
+      if (V.tool === 'cable') { cableDown(e); return; }
       const c = cellAt(e);
       if (V.tool === 'place') {
         const r = G.Act.placeAp(V.fid, c.x, c.y, V.apModel);
@@ -234,6 +355,8 @@
       V.renderSide();
     });
     cv.addEventListener('pointermove', (e) => {
+      if (V.cdrag) { cableMove(e); return; }
+      if (V.tool === 'cable') { V.hover = cellAt(e); return; }
       const c = cellAt(e);
       V.hover = c;
       if (V.drag) {
@@ -247,6 +370,7 @@
       V.tip.textContent = r > -110 ? `(${c.x}, ${c.y}) m　訊號 ${r.toFixed(0)} dBm${wr.bestIdx[i] >= 0 ? '' : ''}` : `(${c.x}, ${c.y}) m　沒有訊號`;
     });
     const end = () => {
+      if (V.cdrag) { cableUp(); return; }
       if (V.drag) {
         const d = V.drag;
         V.drag = null;
@@ -276,8 +400,11 @@
     R.appendChild(h('div', { class: 'card' },
       h('div', { class: 'card-h' }, h('h3', {}, '樓層狀態'), h('span', { class: 'chip ' + G.Views.building.floorStatus(V.fid).c }, G.Views.building.floorStatus(V.fid).t)),
       h('div', { class: 'kv' },
-        h('span', { class: 'k' }, ft.dine ? '餐廳人員（進駐 / 編制）' : '已進駐 / 編制'), h('span', { class: 'v mono' }, `${U.num(fs.movedIn)} / ${U.num(f.staff)}`),
-        h('span', { class: 'k' }, ft.dine ? '用餐人數' : '目前在座'), h('span', { class: 'v mono' }, live(() => { const x = st(); if (!x) return '—'; if (ft.dine) return `${U.num(Math.round(x.diners || 0))} 人（尖峰約 ${U.num(ft.diners)}）`; return U.num(Math.round(x.present)) + ' 人' + (x.guests > 1 ? `＋訪客 ${Math.round(x.guests)}` : ''); })),
+        h('span', { class: 'k' }, ft.dine ? '餐廳人員（進駐 / 編制）' : ft.park ? '管理員（到職 / 編制）' : '已進駐 / 編制'), h('span', { class: 'v mono' }, `${U.num(fs.movedIn)} / ${U.num(f.staff)}`),
+        h('span', { class: 'k' }, ft.dine ? '用餐人數' : ft.park ? '停車場人潮' : '目前在座'), h('span', { class: 'v mono' }, live(() => { const x = st(); if (!x) return '—'; if (ft.dine) return `${U.num(Math.round(x.diners || 0))} 人（尖峰約 ${U.num(ft.diners)}）`; if (ft.park) return `${U.num(Math.round(x.parkers || 0))} 人（上班尖峰約 ${U.num(ft.parkPeak)}）`; return U.num(Math.round(x.present)) + ' 人' + (x.guests > 1 ? `＋訪客 ${Math.round(x.guests)}` : ''); })),
+        ft.park ? h('span', { class: 'k' }, '手機打卡成功率') : null, ft.park ? h('span', { class: 'v mono' }, live(() => { const x = st(); if (!x || !fs.movedIn) return '—'; if (!x.up) return '0%（整層沒有網路）'; return `${U.pct(x.clockOk)}${x.parkers > 5 ? '' : '（離峰）'}`; })) : null,
+        ft.gates ? h('span', { class: 'k' }, '柵欄機 / 車牌辨識') : null, ft.gates ? h('span', { class: 'v mono' }, live(() => { const x = st(); return !x ? '—' : x.gateOk ? '連線中' : '連不上系統'; })) : null,
+        ft.cams ? h('span', { class: 'k' }, `監視器（${ft.cams} 台）`) : null, ft.cams ? h('span', { class: 'v mono' }, live(() => { const x = st(); return !x ? '—' : `${Math.round((x.camOk || 0) * ft.cams)} / ${ft.cams} 台有畫面`; })) : null,
         ft.dine ? h('span', { class: 'k' }, '用餐 Wi-Fi 容量') : null, ft.dine ? h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.diners > 5 ? U.pct(x.dinerRatio) : '—（非用餐時間）'; })) : null,
         ft.pos ? h('span', { class: 'k' }, `收銀 POS（${ft.pos} 台）`) : null, ft.pos ? h('span', { class: 'v mono' }, live(() => { const x = st(); return !x || !fs.movedIn ? '—' : x.posOk ? '可刷卡' : '無法連線'; })) : null,
         h('span', { class: 'k' }, '可連線比例'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? U.pct(x.conn) : '—'; })),
@@ -291,18 +418,29 @@
       const drops = G.Act.floorDrops(V.fid);
       const seg = h('div', { class: 'seg' }, Object.entries(CAT.horizontal).map(([k, hz]) => h('button', { class: V.cabStd === k ? 'on' : '', onclick: () => { V.cabStd = k; V.renderSide(); } }, hz.name)));
       const hz = CAT.horizontal[V.cabStd];
+      const diyCost = G.Diy.cost(V.fid, V.cabStd);
       cab.append(seg,
         h('p', { class: 'small muted', style: { margin: '8px 0' } }, hz.desc),
         h('div', { class: 'kv' },
-          h('span', { class: 'k' }, '資訊點'), h('span', { class: 'v mono' }, `${drops} 個（座位 + 印表機 + 40 個 AP 點）`),
-          h('span', { class: 'k' }, '費用'), h('span', { class: 'v mono' }, U.money(drops * hz.perDrop)),
-          h('span', { class: 'k' }, '工期'), h('span', { class: 'v mono' }, U.dur(hz.buildMin))),
-        h('button', { class: 'btn primary', style: { marginTop: '10px', width: '100%' }, onclick: () => UI.res(G.Act.startCabling(V.fid, V.cabStd)) }, '發包施工'));
+          h('span', { class: 'k' }, '資訊點'), h('span', { class: 'v mono' }, `${drops} 個（座位 + 印表機 + 40 個 AP 點${ft.gates ? ' + 車道設備與監視器' : ft.pos ? ' + 收銀機' : ''}）`)),
+        h('div', { class: 'grid c2', style: { marginTop: '10px', gap: '8px' } },
+          h('div', { class: 'col', style: { gap: '4px' } },
+            h('b', { class: 'small' }, '發包施工'),
+            h('span', { class: 'tiny muted' }, `${U.money(drops * hz.perDrop)} · 約 ${U.dur(hz.buildMin)}`),
+            h('span', { class: 'tiny dim' }, '廠商負責拉線、打線、測試，等完工就好'),
+            h('button', { class: 'btn primary sm', 'data-hint': 'cabling@' + V.fid, onclick: () => UI.res(G.Act.startCabling(V.fid, V.cabStd)) }, '發包施工')),
+          h('div', { class: 'col', style: { gap: '4px' } },
+            h('b', { class: 'small' }, '自己布線'),
+            h('span', { class: 'tiny muted' }, `${U.money(diyCost)}${G.Diy.kitOwned() ? '（材料費）' : `（含工具組 ${U.money(CAT.diyKit)}）`}`),
+            h('span', { class: 'tiny dim' }, '自己畫走線路徑、依色序打線、用測試儀驗證'),
+            h('button', { class: 'btn sm', 'data-hint': 'cabling-diy@' + V.fid, onclick: () => { const r = UI.res(G.Diy.start(V.fid, V.cabStd)); if (r.ok) { V.tool = 'cable'; V.diyFloor = V.fid; if (UI.pref3d('floor')) UI.pref3d('floor', false); UI.refresh(); } } }, '自己布線'))));
+    } else if (fs.cabling.status === 'diy') {
+      diyPanel(cab);
     } else if (fs.cabling.status === 'building') {
       const tot = CAT.horizontal[fs.cabling.std].buildMin;
       cab.append(h('div', { class: 'row between small' }, h('span', {}, `${CAT.horizontal[fs.cabling.std].name} 施工中`), live(() => `剩 ${U.dur(fs.cabling.readyAt - G.S.time)}`, 'mono')),
         h('div', { class: 'bar', style: { marginTop: '6px' } }, h('i', { style: { width: U.clamp(100 - ((fs.cabling.readyAt - s.time) / tot) * 100, 0, 100) + '%' } })));
-    } else cab.appendChild(h('div', { class: 'note ok' }, `✓ ${CAT.horizontal[fs.cabling.std].name}完成（${G.Act.floorDrops(V.fid)} 個資訊點）`));
+    } else cab.appendChild(h('div', { class: 'note ok' }, `✓ ${CAT.horizontal[fs.cabling.std].name}完成（${G.Act.floorDrops(V.fid)} 個資訊點${fs.cabling.self ? '，自己布線、全部通過認證測試' : ''}）`));
     R.appendChild(cab);
 
     /* ② IDF 接入交換器 */
@@ -324,11 +462,11 @@
           h('button', { onclick: () => { stg.count = Math.max(0, stg.count - 1); V.renderSide(); }, 'aria-label': '減少' }, '−'),
           h('span', { class: 'n' }, String(stg.count)),
           h('button', { onclick: () => { stg.count = Math.min(16, stg.count + 1); V.renderSide(); }, 'aria-label': '增加' }, '+')),
-        h('button', { class: 'btn sm', onclick: () => { stg.count = Math.max(1, Math.ceil((need.seats + need.printers + Math.max(need.aps, 20)) * 1.1 / am.ports)); V.renderSide(); } }, '建議數量')),
-      barRow('埠數', portsAvail, need.total, `座位 ${need.seats} + AP ${need.aps} + 印表機 ${need.printers}${need.pos ? ` + 收銀機 ${need.pos}` : ''}`),
-      barRow('PoE', budget, poe.used, poe.phones ? `IP 電話 ${poe.phones}W + AP ${poe.aps}W` : `AP ${poe.aps}W`, 'W'),
+        h('button', { class: 'btn sm', 'data-hint': 'idf-suggest@' + V.fid, onclick: () => { stg.count = Math.max(1, Math.ceil((need.total - need.aps + Math.max(need.aps, 20)) * 1.1 / am.ports)); V.renderSide(); } }, '建議數量')),
+      barRow('埠數', portsAvail, need.total, `座位 ${need.seats} + AP ${need.aps} + 印表機 ${need.printers}${need.pos ? ` + 收銀機 ${need.pos}` : ''}${need.gates ? ` + 柵欄機 / 車牌辨識 ${need.gates}` : ''}${need.cams ? ` + 監視器 ${need.cams}` : ''}`),
+      barRow('PoE', budget, poe.used, [poe.phones ? `IP 電話 ${poe.phones}W` : '', poe.cams ? `監視器 ${poe.cams}W` : '', `AP ${poe.aps}W`].filter(Boolean).join(' + '), 'W'),
       h('div', { class: 'small muted mono' }, `上行埠：${stg.count * am.uplinks} 個（≤${U.speed(am.uplinkMax)}）　AP 上行：${U.bw(Math.min(am.portSpeed, fs.cabling.std ? CAT.horizontal[fs.cabling.std].maxSpeed : 1000))}`),
-      changed ? h('button', { class: 'btn primary', onclick: () => { const r = UI.res(G.Act.setAccess(V.fid, stg.model, stg.count)); if (!r.ok) { V.stage = null; } } }, delta >= 0 ? `套用（${U.money(delta)}）` : `套用（回收 ${U.money(-delta)}）`) : null,
+      changed ? h('button', { class: 'btn primary', 'data-hint': 'idf-apply@' + V.fid, onclick: () => { const r = UI.res(G.Act.setAccess(V.fid, stg.model, stg.count)); if (!r.ok) { V.stage = null; } } }, delta >= 0 ? `套用（${U.money(delta)}）` : `套用（回收 ${U.money(-delta)}）`) : null,
       h('label', { class: 'row small' }, h('input', { type: 'checkbox', id: 'idf-ups', checked: fs.idf.ups, onchange: (e) => UI.res(G.Act.setIdfUps(V.fid, e.target.checked)) }), `IDF 小型 UPS（${U.money(45000)}，停電可撐 30 分鐘）`));
     R.appendChild(idf);
 
@@ -347,7 +485,7 @@
           h('button', { class: 'btn xs', onclick: () => UI.linkDialog(l.a, l.b, l.id) }, '編輯'),
           h('button', { class: 'btn xs danger', onclick: () => UI.confirm('拆除上行', `拆除 ${V.fid} → ${Q.nodeName(other)} 的線路？（不退費）`, '拆除', () => UI.res(G.Act.deleteLink(l.id)), 'danger') }, '拆除'))));
     }
-    upl.appendChild(h('button', { class: 'btn primary', disabled: fs.idf.count === 0 || null, onclick: () => UI.pickTarget('F:' + V.fid, (d) => CAT.devices[d.model].cat === 'switch', `${V.fid} 上行到哪台交換器？`) }, fs.idf.count === 0 ? '先安裝接入交換器' : '新增上行'));
+    upl.appendChild(h('button', { class: 'btn primary', 'data-hint': 'uplink@' + V.fid, disabled: fs.idf.count === 0 || null, onclick: () => UI.pickTarget('F:' + V.fid, (d) => CAT.devices[d.model].cat === 'switch', `${V.fid} 上行到哪台交換器？`) }, fs.idf.count === 0 ? '先安裝接入交換器' : '新增上行'));
     R.appendChild(upl);
 
     /* ④ Wi-Fi */
@@ -367,9 +505,9 @@
         h('span', { class: 'k' }, '容量滿足率'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? U.pct(x.capRatio) : '—'; })),
         h('span', { class: 'k' }, '管理方式'), h('span', { class: 'v' }, wlc ? '無線控制器（自動頻道）' : '獨立式 AP（手動頻道）')),
       h('div', { class: 'row wrap' },
-        h('button', { class: 'btn sm', onclick: () => autoPlanDialog() }, '自動規劃 AP'),
-        h('button', { class: 'btn sm', onclick: () => UI.res(G.Act.autoChannels(V.fid)) }, 'WLC 自動頻道'),
-        h('button', { class: 'btn sm', onclick: () => copyDialog() }, '複製此樓層設計…')));
+        h('button', { class: 'btn sm', 'data-hint': 'autoplan@' + V.fid, onclick: () => autoPlanDialog() }, '自動規劃 AP'),
+        h('button', { class: 'btn sm', 'data-hint': 'autochan@' + V.fid, onclick: () => UI.res(G.Act.autoChannels(V.fid)) }, 'WLC 自動頻道'),
+        h('button', { class: 'btn sm', 'data-hint': 'copy-floor@' + V.fid, onclick: () => copyDialog() }, '複製此樓層設計…')));
     R.appendChild(wifi);
 
     /* AP 詳情 */
@@ -398,6 +536,95 @@
       }
     }
   };
+
+  /* ---------- 自己布線：三個步驟（拉線 → 端接打線 → 認證測試） ---------- */
+  function diyPanel(cab) {
+    const s = G.S, fs = s.floors[V.fid], job = G.Diy.job(V.fid), p = G.Diy.progress(V.fid);
+    const f = G.BLD.byId[V.fid], zs = G.Diy.zones(f.type), drops = G.Diy.drops(V.fid);
+    const stepH = (n, title, done, cur) => h('div', { class: 'row between', style: { marginTop: '10px' } },
+      h('b', { class: 'small' + (done ? ' ok-t' : cur ? ' accent-t' : ' muted') }, `${done ? '✓' : n} ${title}`));
+    cab.appendChild(h('div', { class: 'row between small' }, h('span', { class: 'muted' }, `${CAT.horizontal[fs.cabling.std].name} · 自己布線 · ${p.total} 個配線區、${G.Act.floorDrops(V.fid)} 個資訊點`), h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-diy') }, '怎麼自己布線？')));
+    /* ① 拉線 */
+    cab.appendChild(stepH('1', `拉線：從 IDF 拉到每個配線區（${p.pulled}/${p.total}）`, p.pulled === p.total, p.pulled < p.total));
+    cab.appendChild(h('div', { class: 'bar', style: { margin: '4px 0' } }, h('i', { style: { width: (p.pulled / p.total) * 100 + '%' } })));
+    const rows = h('div', { class: 'col', style: { gap: '2px' } });
+    for (const z of zs) {
+      const zr = job.zones[z.id];
+      const st = !zr.path ? h('span', { class: 'warn-t' }, '還沒畫路徑') : s.time < zr.pullAt ? live(() => `拉線中（${U.dur(Math.max(0, zr.pullAt - G.S.time))}）`, 'muted') : h('span', { class: 'ok-t' }, '✓ 已拉好');
+      rows.appendChild(h('div', { class: 'row between tiny' },
+        h('span', {}, h('b', {}, `配線區 ${z.n}`), h('span', { class: 'dim' }, `　${drops[z.id]} 點${zr.path ? ` · ${zr.len} m${zr.emi >= 5 ? ` · ⚠ 與電力線平行 ${zr.emi} m` : ''}` : ''}`)),
+        h('span', { class: 'row' }, st, zr.path ? h('button', { class: 'btn ghost xs', onclick: () => UI.res(G.Diy.redoZone(V.fid, z.id)) }, '重拉') : null)));
+    }
+    cab.appendChild(rows);
+    if (p.routed < p.total) cab.appendChild(h('div', { class: 'row wrap', style: { marginTop: '4px' } },
+      h('span', { class: 'tiny dim grow' }, '在左邊平面圖上，從 IDF 按住拖曳到配線區；紅色虛線是電力線槽，網路線不要跟它平行走。'),
+      h('button', { class: 'btn xs', 'data-hint': 'diy-auto@' + V.fid, onclick: () => UI.res(G.Diy.autoAll(V.fid)) }, '其餘自動規劃')));
+    /* ② 端接打線 */
+    const pulled = p.pulled === p.total;
+    cab.appendChild(stepH('2', '端接打線：資訊插座與配線架（T568B）', !!job.term, pulled && !job.term));
+    cab.appendChild(h('div', { class: 'row between tiny' },
+      h('span', { class: 'dim' }, job.term ? '打線完成（測試時才知道色序對不對）' : pulled ? '所有的線都拉好了，開始打線' : '線全部拉好才能打線'),
+      h('button', { class: 'btn xs' + (pulled && !job.term ? ' primary' : ''), 'data-hint': 'diy-term@' + V.fid, disabled: !pulled || null, onclick: () => termDialog() }, job.term ? '重新打線' : '開始打線')));
+    /* ③ 認證測試 */
+    cab.appendChild(stepH('3', '認證測試：接線圖、長度、串音全部 PASS', false, !!job.term));
+    cab.appendChild(h('div', { class: 'row between tiny' },
+      h('span', { class: 'dim' }, job.results ? `上次測試：${job.results.filter((r) => r.pass).length}/${job.results.length} 區 PASS` : '用認證測試儀測每一個配線區'),
+      h('button', { class: 'btn xs' + (job.term ? ' primary' : ''), 'data-hint': 'diy-test@' + V.fid, disabled: !job.term || null, onclick: () => { const r = G.Diy.test(V.fid); if (r.ok) testDialog(r); else UI.res(r); } }, '測試')));
+    if (job.results) cab.appendChild(h('button', { class: 'btn ghost xs', style: { alignSelf: 'flex-start' }, onclick: () => testDialog({ results: job.results, pass: false }) }, '看測試報告'));
+    cab.appendChild(h('div', { class: 'row between tiny', style: { marginTop: '10px' } },
+      h('span', { class: 'dim' }, '做不完？剩下的可以交給廠商'),
+      h('button', { class: 'btn ghost xs', onclick: () => UI.confirm('交給廠商', '剩下的布線交給廠商施工？會依還沒完成的部分計價與計算工期。', '交給廠商', () => UI.res(G.Diy.toContract(V.fid))) }, '交給廠商')));
+  }
+  /** 打線小遊戲：把 8 條芯線依 T568B 色序排進資訊插座的 1～8 號 */
+  const wireChip = (id, big) => {
+    const c = G.Diy.COLORS[id];
+    const bg = c.length === 2 ? `repeating-linear-gradient(135deg, ${c[0]} 0 5px, ${c[1]} 5px 10px)` : c[0];
+    return h('span', { class: 'wire-chip' + (big ? ' big' : ''), style: { background: bg }, title: G.Diy.WIRES[id] });
+  };
+  function termDialog() {
+    const ids = Object.keys(G.Diy.WIRES);
+    const pool = ids.slice().sort(() => Math.random() - 0.5);
+    const order = [];
+    let hint = false, m = null;
+    const body = h('div', { class: 'col' });
+    const render = () => {
+      U.clear(body);
+      body.append(
+        h('p', { class: 'small muted' }, '網路線裡有 4 對、8 條芯線。依 T568B 色序，從 1 號到 8 號排進資訊插座（配線架那一端也用一樣的色序，兩端一致才是直通線）。點下面的芯線就會放進下一個位置，點上面的位置可以拿出來。'),
+        h('div', { class: 'jack' }, Array.from({ length: 8 }, (_, i) => h('button', { class: 'jack-slot' + (order[i] ? ' on' : ''), onclick: () => { if (order[i]) { order.splice(i, 1); render(); } } },
+          h('span', { class: 'n mono' }, String(i + 1)), order[i] ? wireChip(order[i], true) : h('span', { class: 'empty-slot' }), h('span', { class: 'tiny' }, order[i] ? G.Diy.WIRES[order[i]] : '')))),
+        h('div', { class: 'row wrap', style: { justifyContent: 'center', gap: '8px' } }, pool.filter((id) => !order.includes(id)).map((id) =>
+          h('button', { class: 'wire-btn', onclick: () => { if (order.length < 8) { order.push(id); render(); } } }, wireChip(id, true), h('span', { class: 'tiny' }, G.Diy.WIRES[id])))),
+        hint ? h('div', { class: 'note info small' }, 'T568B：白橙、橙、白綠、藍、白藍、綠、白棕、棕。記法：「橙、綠、藍、棕」每一對白色的在前；第 3、6 號是綠色這一對，中間夾著藍色那一對。') : null,
+        h('div', { class: 'row between' },
+          h('button', { class: 'btn ghost sm', onclick: () => { hint = !hint; render(); } }, hint ? '隱藏提示' : '看色序提示'),
+          h('div', { class: 'row' },
+            h('button', { class: 'btn ghost sm', onclick: () => { order.length = 0; render(); } }, '清除'),
+            h('button', { class: 'btn primary sm', disabled: order.length < 8 || null, onclick: () => { const r = UI.res(G.Diy.terminate(V.fid, order.slice())); if (r.ok) m.close(); } }, '打線完成'))));
+    };
+    m = UI.modal({ kicker: `${V.fid} 自己布線`, title: '端接打線（T568B）', body, blocking: true });
+    render();
+  }
+  /** 認證測試報告：每個配線區的接線圖、長度、串音 */
+  function testDialog(r) {
+    const job = G.Diy.job(V.fid);
+    const res = r.results || (job && job.results) || [];
+    const ok = (b) => h('span', { class: b ? 'ok-t' : 'bad-t' }, b ? '✓' : '✗');
+    const body = h('div', { class: 'col' },
+      h('div', { class: 'note ' + (r.pass ? 'ok' : res.every((x) => x.pass) ? 'ok' : 'warn') }, r.pass ? '全部 PASS：水平布線完工！每條線兩端都已貼上編號標籤，竣工圖也更新了。' : '有配線區 FAIL：依原因修正後再測一次。'),
+      h('div', { class: 'table-wrap' }, h('table', { class: 't' },
+        h('thead', {}, h('tr', {}, ['配線區', '接線圖', '長度（≤ 90 m）', '串音 NEXT', '結果', ''].map((x) => h('th', {}, x)))),
+        h('tbody', {}, res.map((x) => h('tr', {},
+          h('td', { class: 'mono' }, String(x.n)),
+          h('td', {}, ok(x.map), x.map ? '' : h('div', { class: 'tiny muted' }, x.why)),
+          h('td', { class: 'mono small' }, ok(x.lenOk), ` ${x.len} m`),
+          h('td', { class: 'small' }, ok(x.emiOk), x.emiOk ? '' : h('div', { class: 'tiny muted' }, `與電力線平行 ${x.emi} m`)),
+          h('td', { class: 'mono ' + (x.pass ? 'ok-t' : 'bad-t') }, x.pass ? 'PASS' : 'FAIL'),
+          h('td', {}, x.pass || !job ? null : !x.lenOk || !x.emiOk ? h('button', { class: 'btn xs', onclick: () => { UI.res(G.Diy.redoZone(V.fid, x.zid)); mm.close(); } }, '重拉這一區')
+            : job.term !== 'ok' ? h('button', { class: 'btn xs', onclick: () => { mm.close(); termDialog(); } }, '重新打線') : h('button', { class: 'btn xs', onclick: () => { UI.res(G.Diy.reterm(V.fid, x.zid)); mm.close(); } }, '重新端接'))))))),
+      h('p', { class: 'tiny dim' }, '接線圖（wire map）：8 芯有沒有接對位置、有沒有斷線或交叉。長度：永久鏈路最長 90 m（加上兩端跳線共 100 m）。串音：網路線和電力線平行太長會被干擾，要保持距離或垂直交叉。'));
+    const mm = UI.modal({ kicker: `${V.fid} 自己布線`, title: '認證測試報告', wide: true, body });
+  }
 
   function barRow(label, avail, need, sub, unit) {
     const u = avail > 0 ? need / avail : need > 0 ? 2 : 0;
@@ -428,7 +655,7 @@
         h('p', { class: 'muted' }, '無線網路顧問會依這層樓的人數、流量與格局，計算需要的 AP 數量並平均佈點，同時完成頻道規劃。現有的 AP 會被替換（回收 30%）。'),
         h('select', { id: 'autoplan-model', onchange: (e) => { model = e.target.value; render(); } }, Object.entries(CAT.aps).map(([id, mm]) => h('option', { value: id, selected: id === model || null, disabled: !Q.unlocked(mm) || null }, mm.name))),
         h('div', { class: 'kv' }, h('span', { class: 'k' }, '規劃數量'), h('span', { class: 'v mono' }, `${pos.length} 台`), h('span', { class: 'k' }, '費用（含顧問費 3 萬）'), h('span', { class: 'v mono' }, U.money(cost))),
-        h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn ghost', onclick: () => m.close() }, '取消'), h('button', { class: 'btn primary', onclick: () => { const r = UI.res(G.Act.autoPlan(V.fid, model)); if (r.ok) m.close(); } }, '執行規劃')));
+        h('div', { class: 'row', style: { justifyContent: 'flex-end' } }, h('button', { class: 'btn ghost', onclick: () => m.close() }, '取消'), h('button', { class: 'btn primary', 'data-hint': 'autoplan-ok', onclick: () => { const r = UI.res(G.Act.autoPlan(V.fid, model)); if (r.ok) m.close(); } }, '執行規劃')));
     };
     m = UI.modal({ title: `${V.fid} 自動規劃 AP`, body, blocking: true });
     render();

@@ -131,7 +131,7 @@
     V.svg = U.s('svg', { viewBox: `${V.vb.x} ${V.vb.y} ${V.vb.w} ${V.vb.h}`, class: V.connecting ? 'connecting' : '', role: 'img', 'aria-label': '網路拓撲圖' });
     V.hint = h('div', { class: 'topo-hint' + (V.connecting ? '' : ' hidden') }, hintText());
     const tools = h('div', { class: 'topo-tools' },
-      h('button', { class: 'btn sm ' + (V.connecting ? 'primary' : ''), onclick: () => { if (V.connecting) V.stopConnect(); else V.startConnect(V.sel && V.sel.type === 'node' ? V.sel.id : null); UI.refresh(); } }, V.connecting ? '取消連線' : '連線'),
+      h('button', { class: 'btn sm ' + (V.connecting ? 'primary' : ''), 'data-hint': 'topo-link', onclick: () => { if (V.connecting) V.stopConnect(); else V.startConnect(V.sel && V.sel.type === 'node' ? V.sel.id : null); UI.refresh(); } }, V.connecting ? '取消連線' : '連線'),
       h('button', { class: 'btn sm ' + (V.journey ? 'primary' : ''), title: '跟著封包一站一站走，看路由與防火牆的判斷', onclick: () => { if (V.journey) V.stopJourney(); else { V.startJourney(); UI.refresh(); } } }, V.journey ? '結束封包旅程' : '封包旅程'),
       h('button', { class: 'btn sm', onclick: () => zoom(0.8) }, '＋'),
       h('button', { class: 'btn sm', onclick: () => zoom(1.25) }, '－'),
@@ -360,7 +360,7 @@
 
   function mkNode(id, P) {
     const s = G.S;
-    const g = U.s('g', { class: 'node' + (V.sel && V.sel.id === id ? ' sel' : '') + (V.connecting && V.from && V.from !== id && canTarget(V.from, id) ? ' target' : '') });
+    const g = U.s('g', { class: 'node' + (V.sel && V.sel.id === id ? ' sel' : '') + (V.connecting && V.from && V.from !== id && canTarget(V.from, id) ? ' target' : ''), 'data-hint': 'node:' + id });
     const x = P.x - P.w / 2, y = P.y - P.h / 2;
     const body = U.s('rect', { class: 'body', x, y, width: P.w, height: P.h, rx: P.kind === 'floor' ? 5 : 7, fill: 'var(--bg-3)', stroke: 'var(--line-2)', 'stroke-width': 1.3 });
     g.appendChild(body);

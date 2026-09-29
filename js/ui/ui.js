@@ -114,7 +114,7 @@
       h('div', { class: 'top-actions' }, els.themeBtn, els.missionBtn, h('button', { class: 'btn sm', onclick: () => UI.menu(), 'aria-label': '選單' }, '選單')));
     els.rail = h('nav', { class: 'rail', 'aria-label': '主要功能' }, h('div', { class: 'plate' }, 'NX-CORE 48P'));
     NAV.forEach((n, i) => {
-      const b = h('button', { class: 'port', onclick: () => UI.go(n.id), title: n.label },
+      const b = h('button', { class: 'port', 'data-hint': 'nav:' + n.id, onclick: () => UI.go(n.id), title: n.label },
         h('span', { class: 'pn' }, U.pad2(i + 1)),
         h('span', { class: 'leds' }, h('i', { class: 'led link' }), h('i', { class: 'led act' })),
         jack(),
@@ -189,9 +189,9 @@
     const s = G.S;
     for (const sp of G.Engine.SPEEDS) {
       const on = sp.v === 0 ? s.speed === 0 : s.speed === sp.v;
-      els.speed.appendChild(h('button', { class: (sp.v === 0 ? 'pause ' : '') + (on ? 'on' : ''), title: `${sp.label}（鍵盤 ${sp.key}）`, onclick: () => G.Engine.setSpeed(sp.v) }, sp.v === 0 ? '❚❚' : sp.label));
+      els.speed.appendChild(h('button', { class: (sp.v === 0 ? 'pause ' : '') + (on ? 'on' : ''), 'data-hint': 'speed:' + sp.v, title: `${sp.label}（鍵盤 ${sp.key}）`, onclick: () => G.Engine.setSpeed(sp.v) }, sp.v === 0 ? '❚❚' : sp.label));
     }
-    els.speed.appendChild(h('button', { class: s.skipUntil ? 'on' : '', title: '快轉到下一個早上 08:00', onclick: () => {
+    els.speed.appendChild(h('button', { class: s.skipUntil ? 'on' : '', 'data-hint': 'speed-skip', title: '快轉到下一個早上 08:00', onclick: () => {
       const d = U.dayOf(s.time);
       let t = U.at(d, 8);
       if (t <= s.time) t = U.at(d + 1, 8);
@@ -291,7 +291,8 @@
       );
       let curShown = false;
       for (const o of ch.objectives) {
-        const isDone = !!s.obj[o.id];
+        /* 條件已經達成、但遊戲暫停中還沒結算的任務：先打勾（時間一走就會正式完成） */
+        const isDone = !!s.obj[o.id] || G.Campaign.ready(o);
         const isCur = !isDone && !curShown;
         if (isCur) curShown = true;
         const pg = G.Campaign.objectiveProgress(o);
@@ -301,8 +302,9 @@
             h('div', { class: 't' }, o.text),
             pg ? h('div', { class: 'pg' }, pg) : null,
             isCur ? h('div', { class: 'hint' }, o.hint) : null,
+            isCur && G.Hint ? G.Hint.card(o) : null,
             isCur ? h('div', { class: 'acts' },
-              o.goto ? h('button', { class: 'btn primary sm', onclick: () => UI.go(o.goto) }, '前往') : null,
+              o.goto && (!G.Hint || G.Hint.mode() === 'off') ? h('button', { class: 'btn primary sm', onclick: () => UI.go(o.goto) }, '前往') : null,
               o.kb ? h('button', { class: 'btn sm', onclick: () => UI.openKb(o.kb) }, '相關知識') : null) : null));
         if (!isCur && !isDone) node.addEventListener('click', () => { if (o.goto) UI.go(o.goto); });
         wrap.appendChild(node);
@@ -311,7 +313,8 @@
     } else {
       wrap.append(h('div', { class: 'row between' }, h('span', { class: 'label' }, '沙盒模式'), closeBtn),
         h('div', { class: 'ch-title' }, '自由建設'),
-        h('p', { class: 'muted small', style: { margin: '6px 0 10px' } }, '預算充足、全部設備解鎖。依進駐時程完成所有樓層，並撐過隨機的維運與資安事件。'));
+        h('p', { class: 'muted small', style: { margin: '6px 0 10px' } }, '預算充足、全部設備解鎖。依進駐時程完成所有樓層，並撐過隨機的維運與資安事件。'),
+        G.Hint ? G.Hint.card({ id: '__sandbox' }) : null);
     }
     const up = G.BLD.floors.filter((f) => { const fs = s.floors[f.id]; return fs.moveInAt !== null && fs.movedIn < f.staff; }).sort((a, b) => s.floors[a.id].moveInAt - s.floors[b.id].moveInAt);
     if (up.length) {
@@ -359,7 +362,7 @@
     if (opt.actions && opt.actions.length) {
       const foot = h('div', { class: 'm-f' });
       for (const a of opt.actions) {
-        foot.appendChild(h('button', { class: 'btn ' + (a.kind || ''), disabled: a.disabled || null, onclick: () => { const r = a.onClick ? a.onClick(close) : undefined; if (a.close !== false && r !== false) close(); } }, a.label));
+        foot.appendChild(h('button', { class: 'btn ' + (a.kind || ''), 'data-hint': a.hint || null, disabled: a.disabled || null, onclick: () => { const r = a.onClick ? a.onClick(close) : undefined; if (a.close !== false && r !== false) close(); } }, a.label));
       }
       m.appendChild(foot);
     }
@@ -373,7 +376,7 @@
   };
   UI.confirm = (title, text, okLabel, onOk, kind) => UI.modal({
     title, body: text, blocking: true,
-    actions: [{ label: '取消', kind: 'ghost' }, { label: okLabel || '確定', kind: kind || 'primary', onClick: onOk }],
+    actions: [{ label: '取消', kind: 'ghost' }, { label: okLabel || '確定', kind: kind || 'primary', onClick: onOk, hint: 'confirm-ok' }],
   });
   UI.closeTop = () => { const m = modals[modals.length - 1]; if (m && m.dismissible) m.close(); };
 
@@ -495,6 +498,7 @@
           h('button', { class: 'btn', onclick: () => { close(); UI.go('noc'); UI.showLog(); } }, '營運日誌'),
           h('button', { class: 'btn danger', onclick: () => { close(); UI.confirm('回到標題畫面', '目前進度會先自動存檔。', '回到標題', () => { G.State.save(); UI.title(); }); } }, '回到標題')),
         h('div', { class: 'row wrap', style: { marginTop: '4px' } }, h('span', {}, '畫面外觀'), UI.themeSeg()),
+        G.Hint ? h('div', { class: 'row wrap', style: { marginTop: '4px' } }, h('span', {}, '提示'), (() => { const seg = h('div', { class: 'seg', role: 'group', 'aria-label': '提示' }); const draw = () => { U.clear(seg); for (const [k, t] of G.Hint.MODES) seg.appendChild(h('button', { class: G.Hint.mode() === k ? 'on' : '', onclick: () => { G.Hint.setMode(k); draw(); } }, t)); }; draw(); return seg; })()) : null,
         h('label', { class: 'row', style: { marginTop: '4px' } }, h('input', { type: 'checkbox', id: 'opt-autopause', checked: s.settings.autoPause, onchange: (e) => { s.settings.autoPause = e.target.checked; } }), '重大事件發生時自動暫停'),
         h('p', { class: 'small dim' }, '存檔保存在這個瀏覽器中；換裝置或清除瀏覽資料前，請先匯出存檔。'),
       ],
@@ -611,7 +615,7 @@
   UI.hideTitle = () => { const t = document.getElementById('title'); if (t) t.remove(); };
   UI.sandboxIntro = () => UI.modal({
     kicker: '沙盒模式', title: '自由建設', dismissible: false,
-    body: [h('p', {}, '你有 1.5 億預算、所有設備都已解鎖。員工會在第 3～6 天分批進駐全部 21 層辦公樓層（22F、23F 員工餐廳同時開張），官網於第 4 天上線，第 5～7 天台中、高雄、越南、東京四個據點陸續開幕；週一起客服中心要有自己的電話交換機。維運與資安事件會隨機發生。'), h('p', { class: 'muted' }, '目標：讓一萬人的網路又快又穩又安全。')],
+    body: [h('p', {}, '你有 1.5 億預算、所有設備都已解鎖。員工會在第 3～6 天分批進駐全部 21 層辦公樓層（B2 員工停車場第 3 天一早啟用，22F、23F 員工餐廳同時開張），官網於第 4 天上線，第 5～7 天台中、高雄、越南、東京四個據點陸續開幕；週一起客服中心要有自己的電話交換機。維運與資安事件會隨機發生。'), h('p', { class: 'muted' }, '目標：讓一萬人的網路又快又穩又安全。')],
     actions: [{ label: '開始', kind: 'primary' }],
   });
 
@@ -625,6 +629,7 @@
       dirty = true;
       requestAnimationFrame(() => { dirty = false; UI.refresh(); });
     });
+    G.bus.on('hint', () => { sideDirty = true; });
     G.bus.on('notice', (n) => UI.toast(n.text, n.kind || 'info', { goto: n.goto }));
     G.bus.on('alert', (a) => { if (a.sev === 'crit') UI.toast('告警：' + a.text, 'bad', { goto: 'noc' }); });
     G.bus.on('ticket', (t) => {

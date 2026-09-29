@@ -266,9 +266,26 @@
     if (!ft.dine || fs.movedIn <= 0) return 0;
     return ft.diners * Net.dinerCurve(t) * Math.min(1, Q.officeStaff() / 8000) * Math.min(1, fs.movedIn / f.staff);
   };
+  /** 停車場人潮（0～1）：上班尖峰 8:30、下班尖峰 18:10，午餐有人開車出去；週末只剩加班的人 */
+  Net.parkCurve = (t) => {
+    const h = U.hourOf(t);
+    const b = (c, w, a) => a * Math.exp(-((h - c) * (h - c)) / (2 * w * w));
+    const v = Math.min(1, b(8.45, 0.42, 1) + b(12.6, 0.5, 0.12) + b(18.15, 0.6, 0.78) + b(20.8, 0.8, 0.12));
+    return U.isWeekend(t) ? v * 0.06 : v;
+  };
+  /** B2 此刻在停車場裡的人（剛停好車走向電梯、下班取車）：跟著進駐的員工人數成長 */
+  Net.parkers = (fid, t) => {
+    const f = G.BLD.byId[fid], ft = G.FT[f.type], fs = G.S.floors[fid];
+    if (!ft.park || fs.movedIn <= 0) return 0;
+    return ft.parkPeak * Net.parkCurve(t) * Math.min(1, Q.officeStaff() / 8000);
+  };
+  /** 現在是不是上下班打卡的時段（停車場的打卡最集中） */
+  Net.clockWindow = (t) => { if (U.isWeekend(t)) return false; const h = U.hourOf(t); return (h >= 7.5 && h < 10) || (h >= 17 && h < 20); };
   Net.presence = (t, type) => {
     const ft0 = G.FT[type];
     if (ft0 && ft0.dine) return curve(CREW, t) * (U.isWeekend(t) ? 0.08 : 1);
+    /* 停車場管理員：一早開門到晚上，週末也有人值班 */
+    if (ft0 && ft0.park) return curve(CREW, t) * (U.isWeekend(t) ? 0.35 : 1);
     let p = curve(PRES, t);
     const wk = U.isWeekend(t);
     if (wk) p *= 0.06;
@@ -360,13 +377,18 @@
       const powered = G.Wifi.powered(f.id, up);
       const wr = G.Wifi.get(f.id, powered);
       const guests = (s.fw.guestWifi && ft.guestPeak && fs.movedIn > 0) ? ft.guestPeak * Net.guestCurve(t) * dhcpGuest : 0;
-      /* 餐廳：用餐的員工拿手機連員工 Wi-Fi（和訪客一樣分布在用餐區） */
+      /* 餐廳：用餐的員工拿手機連員工 Wi-Fi（和訪客一樣分布在用餐區）；
+       * 停車場：上下班的人潮打開 App 打卡、回訊息（用量小，但一定要連得上） */
       const diners = ft.dine ? Net.diners(f.id, t) * dhcpWifi : 0;
+      const parkers = ft.park ? Net.parkers(f.id, t) * dhcpWifi : 0;
+      const crowd = diners + parkers, crowdMbps = ft.park ? 0.3 : 1.5;
       const am = CAT.access[fs.idf.model];
       const ports = up ? fs.idf.count * am.ports : 0;
       const printers = Math.ceil(fs.movedIn / 40);
       const seats = fs.movedIn * ft.wired;
-      const seatPorts = Math.max(0, ports - fs.aps.length - printers - (ft.pos || 0));
+      /* 交換器埠：AP 先接，再來是收銀機、柵欄機、監視器，剩下的給座位 */
+      const devPorts = (ft.pos || 0) + (ft.gates || 0) + (ft.cams || 0);
+      const seatPorts = Math.max(0, ports - fs.aps.length - printers - devPorts);
       const portFrac = seats > 0 ? Math.min(1, seatPorts / seats) : 1;
       const wiredNeed = Math.ceil(seats * portFrac + printers);
       const dhcpWired = wiredNeed > 0 ? Math.min(1, wiredPool / wiredNeed) : 1;
@@ -376,13 +398,19 @@
       const mN = inten.intra * noise;
       const dI = ft.inet[0] * mI, uI = ft.inet[1] * mI, dN = ft.intra[0] * mN, uN = ft.intra[1] * mN;
 
+      /* 停車場的設備：柵欄機 / 車牌辨識要有交換器埠；監視器要有埠也要有 PoE */
+      const devLeft = Math.max(0, ports - fs.aps.length - (ft.pos || 0));
+      const gateOk = !ft.gates || (up && devLeft >= ft.gates);
+      const camPorts = ft.cams ? U.clamp((devLeft - (ft.gates || 0)) / ft.cams, 0, 1) : 1;
+      const poeF = ft.cams && up ? (() => { const p = Q.floorPoe(f.id); return p.cams > 0 ? U.clamp((p.budget - p.phones) / p.cams, 0, 1) : 1; })() : 1;
       const st = {
-        fid: f.id, up, present: pres + diners, crew: pres, diners, guests, wifi: wr, powered: powered.size, ports, portFrac, seats, printers,
+        fid: f.id, up, present: pres + crowd, crew: pres, diners, parkers, guests, wifi: wr, powered: powered.size, ports, portFrac, seats, printers,
         dhcpWired, dhcpWifi, conn: 0, thr: 1, lat: 0, loss: 0, sat: null, demand: 0, delivered: 0, intended: 0, connU: 0, wifiShare: 0,
         uplink: 0, apStats: {}, capRatio: 1, guestRatio: 1, dinerRatio: 1, posOk: up, adOk: false, dnsOk: false, blocked: null, flows: [],
+        clockOk: ft.park ? 0 : 1, gateOk: ft.gates ? gateOk : true, camOk: ft.cams ? (up ? Math.min(camPorts, poeF) : 0) : 1,
       };
       floorSt[f.id] = st;
-      if (!up || (pres < 0.5 && guests < 0.5 && diners < 0.5)) continue;
+      if (!up || (pres < 0.5 && guests < 0.5 && crowd < 0.5)) continue;
 
       const wiredU = pres * ft.wired * portFrac * dhcpWired;
       const wifiU = pres * (1 - ft.wired) * dhcpWifi;
@@ -391,14 +419,14 @@
       const perUser = dI + uI + dN * (required.length ? 1 : 0) + uN * (required.length ? 1 : 0);
       const staffWifiDem = wifiU * cover * perUser + phonesU * cover * 0.13;
       const guestDem = guests * gcover * 1.4;
-      /* 用餐時滑手機看影片：每人約 1.5 Mbps（下行 1.3、上行 0.2） */
-      const dinerDem = diners * gcover * 1.5;
+      /* 用餐時滑手機看影片：每人約 1.5 Mbps（下行 1.3、上行 0.2）；停車場的人只是打卡、回訊息：每人約 0.3 Mbps */
+      const dinerDem = crowd * gcover * crowdMbps;
       let servedS = 0, servedG = 0, servedD = 0;
       wr.aps.forEach((ap) => {
         const w = cover > 0 ? ap.w / cover : 0;
         const gw = gcover > 0 ? ap.gw / gcover : 0;
         const dS = staffWifiDem * w, dG = guestDem * gw, dD = dinerDem * gw;
-        const cl = (wifiU + phonesU) * cover * w + (guests + diners) * gcover * gw;
+        const cl = (wifiU + phonesU) * cover * w + (guests + crowd) * gcover * gw;
         const clientF = cl > ap.maxClients ? ap.maxClients / cl : 1;
         const cap = Math.min(ap.capEff * clientF, ap.backhaul);
         const dem = dS + dG + dD;
@@ -414,9 +442,9 @@
       st.capRatio = capRatio; st.guestRatio = guestRatio; st.dinerRatio = dinerRatio;
       const effU = wiredU + wifiU * cover * staffRatio;
       const phonesEff = phonesU * cover * staffRatio;
-      const dinerU = diners * gcover;
+      const dinerU = crowd * gcover;
       st.connU = wiredU + wifiU * cover + dinerU;
-      st.conn = pres + diners > 0 ? st.connU / (pres + diners) : 1;
+      st.conn = pres + crowd > 0 ? st.connU / (pres + crowd) : 1;
       st.wifiShare = st.connU > 0 ? (wifiU * cover + dinerU) / st.connU : 0;
       st.intended = (wiredU + wifiU * cover) * perUser + phonesU * cover * 0.13 + dinerDem;
 
@@ -432,7 +460,7 @@
       /* 上網流量（餐廳的收銀機刷卡也走這條：連到金流閘道） */
       const dinerEff = dinerU * dinerRatio;
       const inet = { id: nid + '>INET', stage: 2, kind: 'inet', floor: f.id, src: nid, dst: 'INET',
-        fwd: effU * (uI + 0.08 * saas) + phonesEff * 0.03 + dinerEff * 0.2 + (ft.pos ? 0.3 : 0), rev: effU * (dI + 0.25 * saas) + phonesEff * 0.1 + dinerEff * 1.3 + (ft.pos ? 0.3 : 0), zs: 'LAN', zd: 'INTERNET', svc: ['WEB'], needDns: true };
+        fwd: effU * (uI + 0.08 * saas) + phonesEff * 0.03 + dinerEff * (ft.park ? 0.1 : 0.2) + (ft.pos ? 0.3 : 0) + (ft.gates ? 0.2 : 0), rev: effU * (dI + 0.25 * saas) + phonesEff * 0.1 + dinerEff * (ft.park ? 0.2 : 1.3) + (ft.pos ? 0.3 : 0) + (ft.gates ? 0.2 : 0), zs: 'LAN', zd: 'INTERNET', svc: ['WEB'], needDns: true };
       if (saas) st.intended += effU * 0.33;
       /* 作業系統更新：沒有內部快取 → 每台電腦各自從網際網路下載；有快取 → 從機房的更新伺服器下載
        * （不算進樓層的需求，但會佔頻寬、把其他流量擠慢） */
@@ -710,6 +738,8 @@
       const inetFl = st.flows.find((x) => x.kind === 'inet');
       st.dnsOk = inetFl ? inetFl.blocked !== 'dns' : false;
       st.posOk = !!inetFl && !inetFl.blocked;
+      /* 停車場：地下室收不到 GPS，打卡 App 要連上公司 Wi-Fi（停車格與電梯廳要有訊號）、再連到雲端的人資系統 */
+      if (ft.park) st.clockOk = st.posOk ? U.clamp(st.wifi.gusable || 0, 0, 1) : 0;
       st.delivered = delivered;
       st.demand = st.intended;
       const thr = st.intended > 0 ? U.clamp(delivered / st.intended, 0, 1) : 1;
@@ -731,6 +761,11 @@
       if (!wlcManaged && fs.aps.length > 3) q *= 0.97;
       /* 收銀機不能刷卡：大排長龍 */
       if (ft.pos && st.diners > 30 && !st.posOk) q *= 0.5;
+      /* 停車場：打卡失敗會被記遲到；柵欄機連不上系統，車子一路回堵到馬路上 */
+      if (ft.park && st.parkers > 5) {
+        q *= 0.3 + 0.7 * st.clockOk;
+        if (!st.gateOk) q *= 0.5;
+      }
       /* 檔案伺服器的空間滿了：存不了檔 */
       if (G.R.stor && G.R.stor.fileFull && required.includes('file')) q *= 0.88;
       if (mods.floorPenalty && mods.floorPenalty[f.id]) q *= mods.floorPenalty[f.id];

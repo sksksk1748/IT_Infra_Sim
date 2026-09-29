@@ -29,8 +29,8 @@
         h('div', { class: 'm mono ' + (down ? 'bad-t' : '') }, fr ? `${fr.used}U · ${(fr.load / 1000).toFixed(1)}${r.type === 'ai' ? ' / ' + (fr.limit / 1000).toFixed(0) : ''} kW${down ? ' ⚡' : ''}` : '')));
     }
     if (s.racks.length < CAT.rack.maxRacks) {
-      tabs.appendChild(h('button', { class: 'rack-tab', onclick: () => { const r = UI.res(G.Act.buyRack()); if (r.ok) V.rack = r.id; } }, h('div', { class: 'n' }, '＋ 機櫃'), h('div', { class: 'm mono' }, U.money(CAT.rack.price))));
-      if (Q.unlocked(CAT.rack.ai) && s.racks.filter((r) => r.type === 'ai').length < CAT.rack.ai.max) tabs.appendChild(h('button', { class: 'rack-tab ai', onclick: () => { const r = UI.res(G.Act.buyRack('ai')); if (r.ok) V.rack = r.id; } }, h('div', { class: 'n' }, '＋ AI 機櫃'), h('div', { class: 'm mono' }, U.money(CAT.rack.ai.price))));
+      tabs.appendChild(h('button', { class: 'rack-tab', 'data-hint': 'buy:rack', onclick: () => { const r = UI.res(G.Act.buyRack()); if (r.ok) V.rack = r.id; } }, h('div', { class: 'n' }, '＋ 機櫃'), h('div', { class: 'm mono' }, U.money(CAT.rack.price))));
+      if (Q.unlocked(CAT.rack.ai) && s.racks.filter((r) => r.type === 'ai').length < CAT.rack.ai.max) tabs.appendChild(h('button', { class: 'rack-tab ai', 'data-hint': 'buy:rackai', onclick: () => { const r = UI.res(G.Act.buyRack('ai')); if (r.ok) V.rack = r.id; } }, h('div', { class: 'n' }, '＋ AI 機櫃'), h('div', { class: 'm mono' }, U.money(CAT.rack.ai.price))));
     }
     el.appendChild(tabs);
     const left = h('div', { class: 'card' + (use3d ? ' card-3d' : '') });
@@ -38,7 +38,7 @@
     el.appendChild(h('div', { class: 'rack-layout' + (use3d ? ' r3d' : '') }, left, right));
     V.svgWrap = null;
     if (use3d) left.appendChild(room3d());
-    else if (!V.rack) left.appendChild(h('div', { class: 'empty' }, h('p', {}, '機房裡還沒有機櫃。'), h('button', { class: 'btn primary', style: { marginTop: '10px' }, onclick: () => { const r = UI.res(G.Act.buyRack()); if (r.ok) V.rack = r.id; } }, `採購 42U 機櫃（${U.money(CAT.rack.price)}）`)));
+    else if (!V.rack) left.appendChild(h('div', { class: 'empty' }, h('p', {}, '機房裡還沒有機櫃。'), h('button', { class: 'btn primary', 'data-hint': 'buy:rack', style: { marginTop: '10px' }, onclick: () => { const r = UI.res(G.Act.buyRack()); if (r.ok) V.rack = r.id; } }, `採購 42U 機櫃（${U.money(CAT.rack.price)}）`)));
     else { V.svgWrap = h('div', {}); left.appendChild(V.svgWrap); V.drawRack(); }
     /* 倉庫 */
     const inv = Object.values(s.devices).filter((d) => !d.rack && !d.host);
@@ -46,11 +46,11 @@
     if (!inv.length) invCard.appendChild(h('div', { class: 'small dim' }, '買來的設備會先放在這裡，點選後再點機櫃空位安裝。'));
     for (const d of inv) {
       const m = CAT.devices[d.model];
-      invCard.appendChild(h('div', { class: 'inv-item' + (V.armed === d.id ? ' armed' : ''), onclick: () => { V.armed = V.armed === d.id ? null : d.id; V.sel = d.id; UI.refresh(); } },
+      invCard.appendChild(h('div', { class: 'inv-item' + (V.armed === d.id ? ' armed' : ''), 'data-hint': 'inv:' + d.id, onclick: () => { V.armed = V.armed === d.id ? null : d.id; V.sel = d.id; UI.refresh(); } },
         h('span', { class: 'dot', style: { background: CAT.categories[m.cat].color } }),
         h('span', { class: 'grow' }, h('b', {}, d.name), h('span', { class: 'small muted' }, '　' + m.name)),
         h('span', { class: 'mono small' }, `${m.u}U`),
-        h('button', { class: 'btn xs', onclick: (e) => { e.stopPropagation(); UI.res(G.Act.autoInstall(d.id)); } }, '自動上架')));
+        h('button', { class: 'btn xs', 'data-hint': 'install:' + m.cat, onclick: (e) => { e.stopPropagation(); UI.res(G.Act.autoInstall(d.id)); } }, '自動上架')));
     }
     if (V.armed) {
       const am = CAT.devices[s.devices[V.armed].model];
@@ -61,9 +61,37 @@
     }
     right.appendChild(invCard);
     if (V.sel && s.devices[V.sel]) right.appendChild(UI.deviceCard(V.sel, { onConnect: (id) => { G.Views.topo.startConnect(id); UI.go('topo'); } }));
+    right.appendChild(accessCard());
     right.appendChild(roomCard());
     V.renderBar();
   };
+
+  /** 機房門禁：門禁系統等級、各類人員的權限（最小權限）、權限盤點、門禁紀錄 */
+  function accessCard() {
+    const s = G.S, lv = G.Acc.level();
+    const card = h('div', { class: 'card col', style: { gap: '8px' } },
+      h('div', { class: 'card-h', style: { marginBottom: '2px' } }, h('h3', {}, '機房門禁'), h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-access') }, '實體安全')));
+    card.appendChild(h('div', { class: 'row between small' }, h('span', { class: 'muted' }, '門禁系統'),
+      h('span', { class: 'row' }, h('span', { class: lv === 0 ? 'warn-t' : lv === 2 ? 'ok-t' : '' }, G.Acc.LEVEL[lv]),
+        lv < 2 ? h('button', { class: 'btn xs' + (lv === 0 ? ' primary' : ''), 'data-hint': 'buy-access', onclick: () => UI.go('shop:facility') }, lv === 0 ? '安裝門禁' : '升級') : null)));
+    if (lv === 0) card.appendChild(h('div', { class: 'note warn small' }, '只有一把鑰匙：下面的權限設定無法落實（拿到鑰匙就進得去），也沒有任何進出紀錄。'));
+    for (const g of G.Acc.GROUPS) {
+      const v = s.access.list[g.id], good = g.best.includes(v);
+      card.appendChild(h('div', { class: 'row between small' },
+        h('span', {}, h('b', {}, g.name), h('span', { class: 'dim' }, '　' + g.desc)),
+        g.fixed ? h('span', { class: 'chip ok' }, '常駐權限')
+          : h('select', { 'aria-label': `${g.name}的機房權限`, 'data-hint': 'acl:' + g.id, style: { borderColor: good ? null : 'var(--warn)' }, onchange: (e) => UI.res(G.Acc.set(g.id, e.target.value)) },
+            G.Acc.OPTS.map(([k, t]) => h('option', { value: k, selected: k === v || null }, t)))));
+    }
+    const due = G.Acc.reviewDue();
+    card.appendChild(h('div', { class: 'row between small' },
+      h('span', { class: due ? 'warn-t' : 'muted' }, `權限盤點：${s.access.reviewAt === null ? '從來沒做過' : `${U.stamp(s.access.reviewAt)}${due ? '（超過 90 天）' : ''}`}`),
+      h('button', { class: 'btn xs', 'data-hint': 'acl-review', disabled: lv === 0 || null, onclick: () => UI.res(G.Acc.review()) }, '進行權限盤點')));
+    const log = s.access.log.slice(-6).reverse();
+    if (log.length) card.appendChild(h('div', { class: 'col', style: { gap: '2px' } }, h('div', { class: 'label' }, '門禁紀錄'),
+      log.map((x) => h('div', { class: 'tiny mono ' + (x.bad ? 'warn-t' : 'dim') }, `${U.stamp(x.t)} ${x.text}`))));
+    return card;
+  }
 
   /** 3D 機房：畫面重繪時沿用同一個場景（不重建 WebGL、不重設視角） */
   function room3d() {
@@ -153,7 +181,7 @@
     const units = CAT.rack.units;
     const y = TOP + (units - (d.u + m.u - 1)) * UH;
     const hgt = m.u * UH;
-    const g = U.s('g', { class: 'dev' });
+    const g = U.s('g', { class: 'dev', 'data-hint': 'dev:' + d.id });
     g.addEventListener('click', () => { V.sel = d.id; V.armed = null; UI.refresh(); });
     const cc = CAT.categories[m.cat].color;
     g.appendChild(U.s('rect', { x: LEFT + 1, y: y + 0.5, width: RW - 2, height: hgt - 1, rx: 1.5, fill: 'var(--bg-3)', stroke: V.sel === d.id ? 'var(--accent)' : 'var(--line-2)', 'stroke-width': V.sel === d.id ? 2 : 0.8 }));
@@ -194,7 +222,7 @@
   function roomCard() {
     const s = G.S, f = G.R.fac || {};
     const card = h('div', { class: 'card col', style: { gap: '8px' } }, h('div', { class: 'card-h', style: { marginBottom: '2px' } }, h('h3', {}, '機房設施'), h('button', { class: 'btn ghost xs', onclick: () => UI.go('shop:facility') }, '採購設施')));
-    const SPEC = (m) => ({ cooling: `冷卻 ${m.coolKW} kW`, ups: `UPS ${((m.capW || 0) / 1000).toFixed(0)} kW · ${m.runtime} 分`, generator: '發電機', fire: '消防', ems: '環控', contain: '冷卻效率 +20%', cdu: `液冷 ${m.coolKW} kW` }[m.kind] || '');
+    const SPEC = (m) => ({ cooling: `冷卻 ${m.coolKW} kW`, ups: `UPS ${((m.capW || 0) / 1000).toFixed(0)} kW · ${m.runtime} 分`, generator: '發電機', fire: '消防', ems: '環控', contain: '冷卻效率 +20%', cdu: `液冷 ${m.coolKW} kW`, access: '門禁' }[m.kind] || '');
     for (const r of s.room) {
       const m = CAT.room[r.model];
       const building = s.time < (r.readyAt || 0);

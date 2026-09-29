@@ -15,7 +15,7 @@
     el.appendChild(h('div', { class: 'view-h' },
       h('div', {}, h('h2', {}, '採購'), h('div', { class: 'desc' }, '點圖片可以 360° 旋轉查看設備的 3D 模型與零件說明。機房設備買來後先放在倉庫，要到「機房」上架才能通電；樓層的接入交換器與 AP 在「樓層」頁面配置。')),
       h('div', { class: 'row wrap' }, h('span', { class: 'chip' }, `預算 ${U.money(G.S.money)}`), inv ? h('button', { class: 'btn primary sm', onclick: () => UI.go('rack') }, `倉庫有 ${inv} 台未上架 →`) : null)));
-    el.appendChild(h('div', { class: 'tabs' }, TABS.map(([k, t]) => h('button', { class: V.tab === k ? 'on' : '', onclick: () => { V.tab = k; UI.refresh(); } }, t))));
+    el.appendChild(h('div', { class: 'tabs' }, TABS.map(([k, t]) => h('button', { class: V.tab === k ? 'on' : '', 'data-hint': 'tab:shop:' + k, onclick: () => { V.tab = k; UI.refresh(); } }, t))));
     const grid = h('div', { class: 'shop-grid' });
     const kbRow = (ids) => el.appendChild(h('div', { class: 'row wrap', style: { marginBottom: '10px' } }, ids.map((k) => h('button', { class: 'btn ghost xs', onclick: () => UI.openKb(k) }, G.KB.byId[k].title))));
     if (V.tab === 'net') {
@@ -39,11 +39,11 @@
       for (const [id, m] of Object.entries(CAT.aps)) grid.appendChild(infoCard(id, m.name, m.desc, [['容量', U.bw(m.cap)], ['建議連線數', m.maxClients + ' 台'], ['PoE', m.poe + ' W'], ['頻段', m.band === 'ext' ? '5 GHz + 6 GHz' : '5 GHz']], m.price + CAT.apInstallFee, m));
       for (const [id, m] of Object.entries(CAT.access)) grid.appendChild(infoCard(id, m.name, m.desc, [['接入埠', `${m.ports} × ${U.speed(m.portSpeed)}`], ['PoE 預算', m.poe + ' W'], ['上行', `${m.uplinks} × ${U.speed(m.uplinkMax)}`]], m.price, m));
     } else if (V.tab === 'facility') {
-      kbRow(['k-rack', 'k-power', 'k-cooling', 'k-fire', 'k-ems', 'k-ha']);
+      kbRow(['k-rack', 'k-power', 'k-cooling', 'k-fire', 'k-ems', 'k-access', 'k-ha']);
       const rk = CAT.rack;
       grid.appendChild(h('div', { class: 'card prod' }, thumb('rack42', '42U 標準機櫃'), h('span', { class: 'label' }, '機櫃'), h('b', {}, '標準 42U 機櫃（含雙 PDU）'), h('p', { class: 'small muted' }, `19 吋標準機櫃，${rk.units}U，PDU 電力上限 ${rk.powerLimit / 1000} kW。機房最多 ${rk.maxRacks} 座。`),
         h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(rk.price)), h('span', { class: 'small muted' }, `已有 ${G.S.racks.length} 座`)),
-        h('button', { class: 'btn primary sm', onclick: () => UI.res(G.Act.buyRack()) }, '購買')));
+        h('button', { class: 'btn primary sm', 'data-hint': 'buy:rack', onclick: () => UI.res(G.Act.buyRack()) }, '購買')));
       for (const [id, m] of Object.entries(CAT.devices)) if (m.cat === 'ups') grid.appendChild(devCard(id, m));
       for (const [id, m] of Object.entries(CAT.room)) if (m.buyable !== false && m.kind !== 'cdu') grid.appendChild(roomCard(id, m));
     } else if (V.tab === 'cable') cableTab(el, grid, kbRow);
@@ -86,7 +86,7 @@
     const ra = CAT.rack.ai, have = G.S.racks.filter((r) => r.type === 'ai').length;
     grid.appendChild(h('div', { class: 'card prod' + (locked ? ' locked-item' : '') }, thumb('rackai', ra.name), h('span', { class: 'label' }, 'AI 機櫃'), h('b', {}, ra.name), h('p', { class: 'small muted' }, ra.desc),
       specGrid([['電力', '由電源櫃決定（每台 PS-33 = 33 kW）'], ['備援電力', 'BBU（不接中央 UPS）'], ['散熱', '液冷歧管 + 空調'], ['數量上限', `${ra.max} 座（已有 ${have}）`]]),
-      h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(ra.price)), h('button', { class: 'btn primary sm', disabled: locked || null, onclick: () => UI.res(G.Act.buyRack('ai')) }, '購買'))));
+      h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(ra.price)), h('button', { class: 'btn primary sm', 'data-hint': 'buy:rackai', disabled: locked || null, onclick: () => UI.res(G.Act.buyRack('ai')) }, '購買'))));
     for (const [id, m] of Object.entries(CAT.devices)) if (m.ai) grid.appendChild(devCard(id, m));
     for (const [id, m] of Object.entries(CAT.room)) if (m.kind === 'cdu') grid.appendChild(roomCard(id, m));
   }
@@ -100,7 +100,7 @@
       h('div', { class: 'row between' }, h('span', { class: 'label' }, CAT.categories[m.cat].name), locked ? h('span', { class: 'chip' }, `第 ${m.unlock} 章解鎖`) : owned.length ? h('span', { class: 'chip accent' }, `擁有 ${owned.length}`) : null),
       h('b', {}, m.name), h('p', { class: 'small muted' }, m.desc), specGrid(specs(m)),
       h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(m.price)),
-        h('button', { class: 'btn primary sm', disabled: locked || null, onclick: () => UI.res(G.Act.buyDevice(id, 1)) }, '購買')));
+        h('button', { class: 'btn primary sm', 'data-hint': 'buy:' + id, disabled: locked || null, onclick: () => UI.res(G.Act.buyDevice(id, 1)) }, '購買')));
   }
   function infoCard(id, name, desc, rows, price, m) {
     const locked = !Q.unlocked(m);
@@ -119,6 +119,7 @@
       fire: [['用途', { VESDA: '極早期偵測（冒煙階段）', PREACT: '灑水（兩段式觸發）', 'GAS-FS': '滅火（不泡水）' }[id] || '消防']],
       ems: [['監測', '溫濕度、漏水、煙霧、門禁']],
       contain: [['效果', '冷卻能力 +20%、PUE 下降']],
+      access: [['門禁', m.level === 2 ? '感應卡 + 指紋、兩道互鎖的門' : '感應卡 + 電磁鎖'], ['紀錄', '每次進出都有紀錄、可調閱']],
       cdu: [['液冷能力', `${m.coolKW} kW`], ['耗電', `${m.powerKW} kW`]],
     };
     const rows = (ROWS[m.kind] || []).slice();
@@ -126,9 +127,9 @@
     rows.push(['安裝工期', U.dur(m.buildMin || 0)]);
     return h('div', { class: 'card prod' + (locked ? ' locked-item' : '') },
       thumb(id, m.name),
-      h('div', { class: 'row between' }, h('span', { class: 'label' }, { cooling: '冷卻', ups: '電力', generator: '電力', fire: '消防', ems: '環控', contain: '冷卻', cdu: '液冷' }[m.kind]), locked ? h('span', { class: 'chip' }, `第 ${m.unlock} 章解鎖`) : have ? h('span', { class: 'chip accent' }, `已有 ${have}`) : null),
+      h('div', { class: 'row between' }, h('span', { class: 'label' }, { cooling: '冷卻', ups: '電力', generator: '電力', fire: '消防', ems: '環控', contain: '冷卻', cdu: '液冷', access: '門禁' }[m.kind]), locked ? h('span', { class: 'chip' }, `第 ${m.unlock} 章解鎖`) : have ? h('span', { class: 'chip accent' }, `已有 ${have}`) : null),
       h('b', {}, m.name), h('p', { class: 'small muted' }, m.desc), specGrid(rows),
-      h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(m.price)), h('button', { class: 'btn primary sm', disabled: locked || null, onclick: () => UI.res(G.Act.buyRoom(id)) }, '購買')));
+      h('div', { class: 'row between' }, h('span', { class: 'price' }, U.money(m.price)), h('button', { class: 'btn primary sm', 'data-hint': 'buy:' + id, disabled: locked || null, onclick: () => UI.res(G.Act.buyRoom(id)) }, '購買')));
   }
 
   /* 線材與光模組：拉線時自動計價，這裡說明規格與外觀 */
@@ -167,7 +168,7 @@
         h('span', { class: 'label' }, CAT.isp.providers[V.provider].name + ' 企業專線'),
         h('b', { style: { fontSize: '20px', fontFamily: 'var(--font-display)' } }, id),
         specGrid([['頻寬', `上下行對稱 ${U.bw(p.bw)}`], ['月租', U.money(p.monthly)], ['開通費', U.money(p.setup)], ['開通時間', U.dur(p.lead)], ['約可支撐', `${U.num(Math.round(p.bw / 1.3 / 50) * 50)} 人尖峰上網`]]),
-        h('button', { class: 'btn primary sm', disabled: locked || null, onclick: () => UI.res(G.Act.orderIsp(V.provider, id)) }, '申請')));
+        h('button', { class: 'btn primary sm', 'data-hint': 'isp:' + id, disabled: locked || null, onclick: () => UI.res(G.Act.orderIsp(V.provider, id)) }, '申請')));
     }
     if (s.isp.length) {
       const cur = h('div', { class: 'grid c2', style: { marginTop: '14px' } }, s.isp.map((c) => UI.ispCard(c)));

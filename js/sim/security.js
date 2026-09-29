@@ -214,6 +214,18 @@
       if (G.R.stor && G.R.stor.worst >= 0.9) add('med', '儲存空間超過 90%', '再成長一點就會滿：檔案存不了、SAN 上的 VM 會被迫暫停。', '擴充容量或把舊資料封存到磁帶 / 雲端。', 'k-san');
     }
 
+    /* 第八章起（ISO 27001 稽核）：機房的實體安全 */
+    if (ch >= 8 && s.racks.length) {
+      const lv = G.Acc.level();
+      if (lv === 0) add('high', '機房沒有門禁系統', '只有一把鑰匙：誰拿到鑰匙都能進出，也沒有任何進出紀錄。', '到「採購 → 機房設施」安裝感應卡門禁（或雙因子 + 防尾隨雙門），再到「機房 → 機房門禁」設定權限。', 'k-access');
+      else {
+        const over = G.Acc.overPriv();
+        if (over.length) add('med', '機房常駐權限太多', `${over.map((x) => x.name).join('、')} 可以自己進出機房。`, '最小權限：清潔人員與廠商改成「需 IT 陪同」，主管不需要機房權限。', 'k-access');
+        if (lv < 2) add('low', '機房沒有防尾隨', '一張卡刷開門，後面可以跟好幾個人進去。', '升級雙因子門禁 + 防尾隨雙門（mantrap）。', 'k-access');
+        if (G.Acc.reviewDue()) add('low', '門禁權限超過 90 天沒有盤點', '離職、調職人員的卡片可能還能刷進機房。', '到「機房 → 機房門禁」做一次權限盤點。', 'k-access');
+      }
+    }
+
     const W = { crit: 30, high: 15, med: 7, low: 3, info: 0 };
     const score = U.clamp(100 - U.sum(F, (f) => W[f.sev]), 0, 100);
     const grade = score >= 90 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score >= 40 ? 'D' : 'F';
