@@ -343,6 +343,8 @@ table.t td.r, table.t th.r { text-align: right; }
   font-family: var(--font-mono); font-size: 12px; color: var(--text-2); display: flex; align-items: center; gap: 5px; white-space: nowrap;
 }
 .floor-pick button.on { border-color: var(--accent); color: var(--text); background: var(--accent-soft); }
+.floor-pick button.b1 { border-style: dashed; }
+.floor-pick button.b1 .go { font-family: var(--font-sans); font-size: 10.5px; color: var(--accent); }
 .plan-wrap { position: relative; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 10px; }
 .plan-wrap canvas { width: 100%; height: auto; display: block; touch-action: none; border-radius: 4px; }
 .plan-tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }

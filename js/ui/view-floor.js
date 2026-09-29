@@ -25,11 +25,21 @@
     V.live = [];
 
     const pick = h('div', { class: 'floor-pick', role: 'tablist' });
+    /* B1 是主機房（MDF），沒有座位與 Wi-Fi 平面圖：在 1F 與 B2 之間放一個捷徑，點了到「機房」 */
+    const b1Btn = () => {
+      const failed = Object.values(s.devices).some((d) => d.rack && !d.host && d.status !== 'ok');
+      const c = failed || s.temp >= 35 ? 'bad' : s.temp >= 28 ? 'warn' : s.racks.length ? 'ok' : '';
+      return h('button', { class: 'b1', 'data-hint': 'floor:B1', title: 'B1 是主機房（MDF）：機櫃、核心設備與實體接線都在「機房」頁面', onclick: () => UI.go('rack') },
+        h('span', { class: 'dot ' + c }), 'B1', h('span', { class: 'go' }, '機房 ↗'));
+    };
+    let b1Done = false;
     for (const x of G.BLD.floors.slice().reverse()) {
+      if (!b1Done && x.level < 0) { pick.appendChild(b1Btn()); b1Done = true; }
       const stt = G.Views.building.floorStatus(x.id);
       pick.appendChild(h('button', { class: x.id === V.fid ? 'on' : '', 'data-hint': 'floor:' + x.id, onclick: () => { if (x.id !== V.fid) { V.fid = x.id; V.selAp = null; V.stage = null; UI.refresh(); } } },
         h('span', { class: 'dot ' + stt.c }), x.id));
     }
+    if (!b1Done) pick.appendChild(b1Btn());
     el.appendChild(pick);
     const open = ft.park ? '啟用' : '進駐';
     const mi = fs.moveInAt !== null && fs.movedIn < f.staff ? (fs.moveInAt > s.time ? `預計 ${U.stamp(fs.moveInAt)} ${open}（${U.dur(fs.moveInAt - s.time)} 後）` : `${open}中`) : fs.movedIn ? `已${open}` : `尚未排定${open}`;
