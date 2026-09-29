@@ -43,6 +43,8 @@
     /** 這台伺服器有 400G 連到 AI 交換器 */
     aiLink: (d) => Q.linksOf(d.id).some((l) => { const o = G.S.devices[Q.other(l, d.id)]; return l.speed >= 400000 && !!o && CAT.devices[o.model].ai && CAT.devices[o.model].cat === 'switch'; }),
     range: (a, b) => { const out = []; for (let i = a; i <= b; i++) out.push(i + 'F'); return out; },
+    /** 已進駐樓層都裝了智慧廁所，而且感測器連得到 IoT 平台 */
+    iotAll: () => { const fl = G.Rest.occupied(); return fl.length > 0 && fl.every((f) => G.Rest.iotOk(f.id)); },
   };
 
   const C2F = H.range(3, 8), C4F = H.range(9, 21);
@@ -96,9 +98,10 @@
         '3F 到 8F 的六個部門將在接下來三個工作天陸續進駐，總人數將超過 3,600 人。',
         '研發部要求共用的檔案伺服器；客服中心有上百支 IP 電話；行銷設計部天天傳大檔案。',
         'B2 員工停車場也要啟用了：地下室收不到 GPS 和手機訊號，開車、騎車來的同事一停好車就要用 App 打卡。',
+        '總務部也提醒你：人一多，廁所髒得快、衛生紙用得快——清潔排班跟網路一樣，都是讓大家好好上班的基礎設施。',
         '人一多，Wi-Fi 頻道、IP 位址、ISP 頻寬……所有你還沒想到的問題都會冒出來。',
       ],
-      learn: ['檔案伺服器與內部流量', '網管監控 NMS', 'ISP 頻寬規劃', '頻道規劃與無線控制器', 'IP 子網路規劃', 'PoE 預算', '地下停車場的 Wi-Fi 與手機打卡'],
+      learn: ['檔案伺服器與內部流量', '網管監控 NMS', 'ISP 頻寬規劃', '頻道規劃與無線控制器', 'IP 子網路規劃', 'PoE 預算', '地下停車場的 Wi-Fi 與手機打卡', '廁所與清潔排班'],
       moveIns: [
         /* B2 員工停車場：第一批同事上班那天一早啟用（開車、騎車來的人一進停車場就要打卡） */
         { floor: 'B2', at: (t0) => U.nextWeekdayAt(t0, 7, 1) },
@@ -107,7 +110,7 @@
         { floor: '7F', at: (t0) => U.nextWeekdayAt(U.nextWeekdayAt(U.nextWeekdayAt(t0, 9, 1), 9, 1), 9, 1) }, { floor: '8F', at: (t0) => U.nextWeekdayAt(U.nextWeekdayAt(U.nextWeekdayAt(t0, 9, 1), 9, 1), 9, 1) },
       ],
       events: [{ type: 'allhands', at: (t0) => U.nextWeekdayAt(U.nextWeekdayAt(U.nextWeekdayAt(t0, 10, 1), 10, 1), 10, 1) + 60 }],
-      kb: ['k-optics', 'k-poe', 'k-channel', 'k-wlc', 'k-ip', 'k-nms', 'k-oversub', 'k-lacp', 'k-vlan', 'k-parking'],
+      kb: ['k-optics', 'k-poe', 'k-channel', 'k-wlc', 'k-ip', 'k-nms', 'k-oversub', 'k-lacp', 'k-vlan', 'k-parking', 'k-iot'],
       objectives: [
         { id: 'c2-file', text: '部署檔案伺服器（ST-4U，角色：檔案）並接上核心', hint: '內部流量大部分是存取共用資料夾。儲存伺服器有 25G 網卡，建議用 25G 或多條線路連接核心。', goto: 'shop:srv', kb: 'k-oversub',
           check: () => H.roleUp('file') },
@@ -125,6 +128,15 @@
           check: () => Q.employees() >= 3000 && H.dhcpOk() },
         { id: 'c2-sat', text: '全公司 3,000 人以上時，滿意度 ≥ 80% 累積 6 小時', hint: '用監控中心找出瓶頸：WAN、樓層上行、Wi-Fi 容量、防火牆效能都可能是問題。', goto: 'noc', kb: 'k-bandwidth',
           sustain: 360, cond: () => G.R.sim && G.R.sim.users > 1500 && Q.employees() >= 3000 && G.R.sim.sat >= 0.8 },
+        { id: 'c2-rest', text: '全公司 3,000 人以上時，一整個工作天（09:00～18:00）每間廁所都有衛生紙、整潔 ≥ 60%', hint: '早上廁所都是夜班整理好的，下午才見真章：一位清潔人員巡不完八層樓、24 間廁所。到任一樓層頁的「⑤ 廁所與清潔」，把白班清潔人員加到建議人數（外包合約按月計費）。', goto: 'floor', kb: 'k-iot',
+          check: (s) => !!(s.rest.lastDay && s.rest.lastDay.ok && s.rest.lastDay.pop >= 3000),
+          progress: () => {
+            const R = G.S.rest, d = R.day, L = R.lastDay;
+            if (d && d.first) return `今天 ${U.stamp(d.first.t).slice(-5)} ${d.first.fid} ${G.Rest.RM[d.first.k].name}${d.first.why}，明天再試`;
+            if (d) return `今天目前都合格（${U.dur(d.mins)} / 9 小時）`;
+            if (L && !L.ok && L.first) return `上一個工作天 ${L.first.fid} ${G.Rest.RM[L.first.k].name}${L.first.why}`;
+            return '平日 09:00～18:00 計算';
+          } },
       ],
       outro: ['八個樓層、將近 3,700 人穩定上線。你開始在監控中心看見每天規律起伏的流量曲線。', '行銷部提醒你：官網與客戶入口即將上線，一樓大廳也要開放訪客了。'],
     },
@@ -134,8 +146,9 @@
         '集團的全新官網與客戶入口明天上線，一樓大廳也將開放訪客與提供訪客 Wi-Fi。',
         '「對外服務」代表網際網路上的任何人都能連到你的伺服器 —— 包括駭客。',
         '你需要清楚劃分外網、DMZ 與內網，並讓防火牆只開放必要的服務。',
+        '總務部也要導入「智慧廁所」：衛生紙快沒了、地板漏水，感測器會自動通報、清潔人員照需要派工。只是這些 IoT 裝置很少更新韌體，一旦被駭就是闖進內網的跳板。',
       ],
-      learn: ['外網 / 內網 / DMZ', 'NAT 與對外服務', '訪客網路隔離', 'VLAN', 'IPS / WAF', '掃描、暴力破解、SQL Injection'],
+      learn: ['外網 / 內網 / DMZ', 'NAT 與對外服務', '訪客網路隔離', 'VLAN', 'IPS / WAF', '掃描、暴力破解、SQL Injection', 'IoT 裝置獨立網段與 MQTT'],
       moveIns: [{ floor: '1F', at: (t0) => U.nextWeekdayAt(t0, 8, 1) }],
       flags: (t0) => ({ websiteAt: U.nextWeekdayAt(t0, 9, 1) }),
       events: [
@@ -162,6 +175,9 @@
             const extraDs = S.allowedSvcs('DMZ', 'SERVERS').filter((x) => !['SQL', 'DNS', 'NTP'].includes(x));
             return !extraIn.length && !extraDs.length && !S.allowedSvcs('DMZ', 'LAN').length && !S.allowedSvcs('INTERNET', 'LAN').length;
           } },
+        { id: 'c3-iot', text: '智慧廁所：已進駐的樓層都裝好感測器並連上 IoT 管理平台；IoT 裝置放在獨立網段，只開 IOT → SERVERS：MQTT', hint: '三件事：① 每層樓的「⑤ 廁所與清潔」按「安裝智慧廁所」；② 一台伺服器設成 IoT 管理平台並接上核心；③「防火牆 → 網段規劃」啟用 IoT 獨立網段，再新增 IOT → SERVERS：MQTT。IoT 網段不能連到 LAN、網際網路或其他區域。', goto: 'floor', kb: 'k-iot',
+          check: (s) => H.iotAll() && s.fw.iotVlan && G.Sec.allows('IOT', 'SERVERS', 'MQTT') && G.Sec.posture().iotIsolated,
+          progress: () => { const fl = G.Rest.occupied(); return `${fl.filter((f) => G.Rest.iotOk(f.id)).length}/${fl.length} 層`; } },
         { id: 'c3-audit', text: '資安健檢評分達到 B 以上', hint: '到「防火牆 → 資安健檢」逐項修正問題。', goto: 'fw:audit', kb: 'k-rules',
           check: () => G.Sec.gradeRank(G.Sec.audit().grade) >= 3 },
         { id: 'c3-web', text: '官網上線後，可用率 ≥ 98% 累積 12 小時', hint: '官網流量在晚上最高。WEB 伺服器、DB 伺服器、DMZ 規則、ISP 頻寬缺一不可。', goto: 'noc', kb: 'k-ddos',

@@ -61,6 +61,8 @@
       fs.moveInAt = null;
       fs.movedIn = floors.includes(f.id) ? f.staff : 0;
     }
+    /* 清潔人員給足：情境不考廁所 */
+    if (s.rest) s.rest.staff = G.Rest.recommend();
     s.log = [];
     G.R.topoVer++;
     return { rtr, fws, cores, srv, sts };

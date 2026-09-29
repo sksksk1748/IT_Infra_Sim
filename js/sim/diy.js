@@ -52,7 +52,7 @@
         const px = x + dx, py = y + dy;
         if (px < x0 || px > x1 || py < y0 || py > y1) continue;
         const t = L.type[py * L.W + px];
-        if (t !== L.T.WALL && t !== L.T.GLASS && t !== L.T.CORE && t !== L.T.IDF && t !== L.T.EXT && t !== L.T.PILLAR && t !== L.T.COLD) return { x: px, y: py };
+        if (t !== L.T.WALL && t !== L.T.GLASS && t !== L.T.CORE && t !== L.T.IDF && t !== L.T.EXT && t !== L.T.PILLAR && t !== L.T.COLD && t !== L.T.WC) return { x: px, y: py };
       }
     }
     return { x, y };
@@ -74,10 +74,10 @@
   Diy.passable = (L, x, y) => {
     if (x < 0 || y < 0 || x >= L.W || y >= L.H) return false;
     const T = L.T, t = L.type[y * L.W + x];
-    if (t === T.EXT) return false;
+    if (t === T.EXT || t === T.WC) return false;
     if (t === T.CORE) {
       const nb = (dx, dy) => { const nx = x + dx, ny = y + dy; return nx < 0 || ny < 0 || nx >= L.W || ny >= L.H ? T.EXT : L.type[ny * L.W + nx]; };
-      return N4.some(([dx, dy]) => nb(dx, dy) === T.IDF) && N4.some(([dx, dy]) => { const q = nb(dx, dy); return q !== T.CORE && q !== T.IDF && q !== T.EXT; });
+      return N4.some(([dx, dy]) => nb(dx, dy) === T.IDF) && N4.some(([dx, dy]) => { const q = nb(dx, dy); return q !== T.CORE && q !== T.IDF && q !== T.EXT && q !== T.WC; });
     }
     return true;
   };
@@ -178,7 +178,7 @@
     const [ex, ey] = path[path.length - 1];
     if (ex < z.x0 || ex > z.x1 || ey < z.y0 || ey > z.y1) return { ok: false, msg: `路徑要拉到配線區 ${z.n} 裡面` };
     const et = L.type[ey * L.W + ex];
-    if (et === L.T.CORE || et === L.T.IDF) return { ok: false, msg: '線還在核心筒裡：從 IDF 的西側或南側牆面出線，再拉到配線區' };
+    if (et === L.T.CORE || et === L.T.IDF || et === L.T.WC) return { ok: false, msg: '線還在核心筒裡：從 IDF 的西側或南側牆面出線，再拉到配線區' };
     const a = Diy.analyze(fid, zid, path);
     const zr = job.zones[zid];
     const queueEnd = Math.max(s.time, ...Object.values(job.zones).map((q) => q.pullAt || 0));

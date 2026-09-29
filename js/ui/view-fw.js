@@ -62,6 +62,7 @@
       ['據點 DNS', { src: 'WAN', dst: 'SERVERS', svc: 'DNS', action: 'allow' }],
       ['據點分機', { src: 'WAN', dst: 'SERVERS', svc: 'SIP', action: 'allow' }],
       ['分機註冊', { src: 'LAN', dst: 'SERVERS', svc: 'SIP', action: 'allow' }],
+      ['智慧廁所感測器', { src: 'IOT', dst: 'SERVERS', svc: 'MQTT', action: 'allow' }],
     ];
     const form = h('div', { class: 'card col', style: { gap: '10px' } },
       h('h3', {}, '新增規則'),
@@ -114,6 +115,9 @@
       { k: 'servers', name: '內部伺服器區', vlan: '10', net: (p) => `10.0.10.0/${p}`, need: srvN, sub: '', opts: [26, 25, 24] },
       { k: 'dmz', name: 'DMZ', vlan: '20', net: (p) => `10.0.20.0/${p}`, need: dmzN, sub: '對外透過靜態 NAT', opts: [29, 28, 27] },
     ];
+    /* IoT 獨立網段：智慧廁所的閘道器（感測器用 LoRaWAN / BLE 連到閘道器，不佔 IP） */
+    const iotN = G.BLD.floors.filter((f) => G.Rest.hasIot(f.id)).length;
+    if (s.fw.iotVlan) segs.push({ k: 'iot', name: 'IoT 裝置（智慧廁所閘道器）', vlan: '600', net: (p) => `10.60.0.0/${p}`, need: iotN, sub: '閘道設在防火牆（IOT 區域）', opts: [28, 27, 26, 25] });
     const toggles = h('div', { class: 'grid c2', style: { marginBottom: '12px' } },
       h('div', { class: 'card col', style: { gap: '8px' } },
         h('div', { class: 'row between' }, h('h3', {}, '訪客 Wi-Fi（Guest SSID）'), h('button', { class: 'btn ' + (s.fw.guestWifi ? 'on' : 'primary'), 'data-hint': 'guest-wifi', onclick: () => UI.res(G.Act.setGuestWifi(!s.fw.guestWifi)) }, s.fw.guestWifi ? '已啟用 · 關閉' : '啟用')),
@@ -125,7 +129,11 @@
           else UI.res(G.Act.setSegmentation(false));
         } }, s.fw.segmentation ? '已啟用 · 關閉' : '啟用')),
         h('p', { class: 'small muted' }, '讓勒索軟體無法從員工電腦直接橫向攻擊伺服器。代價是防火牆要承擔大量內部流量（流量會繞經防火牆再回到核心）。'),
-        h('button', { class: 'btn ghost xs', style: { alignSelf: 'flex-start' }, onclick: () => UI.openKb('k-segment') }, '內部網段分割')));
+        h('button', { class: 'btn ghost xs', style: { alignSelf: 'flex-start' }, onclick: () => UI.openKb('k-segment') }, '內部網段分割')),
+      h('div', { class: 'card col', style: { gap: '8px' } },
+        h('div', { class: 'row between' }, h('h3', {}, 'IoT 獨立網段（VLAN 600）'), h('button', { class: 'btn ' + (s.fw.iotVlan ? 'on' : ''), 'data-hint': 'iot-vlan', onclick: () => UI.res(G.Act.setIotVlan(!s.fw.iotVlan)) }, s.fw.iotVlan ? '已啟用 · 關閉' : '啟用')),
+        h('p', { class: 'small muted' }, '智慧廁所的 IoT 閘道器與感測器韌體很少更新，常被駭客當成跳板。把它們放在獨立網段、閘道設在防火牆，只放行 IOT → SERVERS：MQTT（到 IoT 管理平台）。'),
+        h('button', { class: 'btn ghost xs', style: { alignSelf: 'flex-start' }, onclick: () => UI.openKb('k-iot') }, 'IoT 與智慧建築')));
     el.appendChild(toggles);
     const rows = segs.map((g) => {
       const p = s.subnets[g.k];

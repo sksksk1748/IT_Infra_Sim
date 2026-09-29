@@ -69,10 +69,10 @@
 
     /* 伺服器（角色在安裝後設定） */
     'SV-1U': { cat: 'server', name: 'SV-1U 通用伺服器', price: 220000, u: 1, watts: 350,
-      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'pbx', 'vscan', 'upd'], unlock: 1,
+      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'pbx', 'vscan', 'upd', 'iot'], unlock: 1,
       desc: '1U 雙路伺服器，2 × 10G 網卡。可擔任 AD/DNS/DHCP、網站、網管、資料庫，以及電話交換機、弱點掃描、更新派送。' },
     'SV-2U': { cat: 'server', name: 'SV-2U 高效能伺服器', price: 520000, u: 2, watts: 750,
-      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'siem', 'vscan', 'upd'], unlock: 1,
+      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'siem', 'vscan', 'upd', 'iot'], unlock: 1,
       desc: '2U 高效能伺服器，2 × 25G 網卡。可擔任 SIEM 等重負載角色。' },
     'ST-4U': { cat: 'server', name: 'ST-4U 儲存伺服器', price: 980000, u: 4, watts: 900, rawTB: 192,
       ports: { rj45: 2, sfp: 4, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['file', 'backup'], unlock: 2,
@@ -129,7 +129,7 @@
       ports: { rj45: 2, sfp: 4, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: [], unlock: 8,
       desc: '雙路 64 核、1 TB 記憶體、4 × 25G 網卡。裝好 Hypervisor 就能同時跑十幾台虛擬機（VM）；兩台以上組成叢集、搭配共用儲存（SAN），主機故障時 VM 會自動在別台重啟（HA）。' },
     'VM': { cat: 'server', virtual: true, name: '虛擬機（VM）', price: 0, u: 0, watts: 0,
-      ports: { rj45: 0, sfp: 0, qsfp: 0 }, sfpMax: 0, qsfpMax: 0, roles: ['ad', 'web', 'db', 'nms', 'siem', 'file', 'backup', 'pbx', 'sbc', 'sdwan', 'vscan', 'upd'], unlock: 8,
+      ports: { rj45: 0, sfp: 0, qsfp: 0 }, sfpMax: 0, qsfpMax: 0, roles: ['ad', 'web', 'db', 'nms', 'siem', 'file', 'backup', 'pbx', 'sbc', 'sdwan', 'vscan', 'upd', 'iot'], unlock: 8,
       desc: '跑在虛擬化主機上的伺服器：幾分鐘就能建好一台，不佔機櫃、不用另外買硬體。' },
     'SAN-5K': { cat: 'storage', san: true, sys: true, name: 'SAN-5K 全快閃儲存陣列', price: 5200000, u: 2, watts: 800, rawTB: 92, flash: true,
       ports: { rj45: 2, sfp: 8, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, unlock: 8,
@@ -273,6 +273,15 @@
   /** 實體接線每個動作要花的遊戲時間（分鐘）：割接的維護窗口內會真的扣時間 */
   CAT.physMin = { plug: 1, unplug: 1, module: 1, flip: 1, label: 1, trace: 5, config: 2 };
 
+  /* ---------- 廁所與清潔（js/sim/restroom.js） ----------
+   * 清潔人員是外包合約（白班 07:00–22:00，夜班由清潔公司負責）；衛生紙與洗手乳依使用次數計費。
+   * 智慧廁所：每層一台 IoT 閘道器（LoRaWAN / BLE 感測器 → 乙太網路，PoE 供電）+ 每間廁所一組感測器 */
+  CAT.rest = {
+    wage: 38000, maxStaff: 40, usePrice: 0.35, unlock: 2,
+    iotGw: { name: 'IoT 閘道器（PoE）', price: 12000, poe: 8 },
+    iotKit: { name: '智慧廁所感測器組（門口人流計數、衛生紙 / 洗手乳存量、異味、漏水）', price: 9000 },
+  };
+
   /* ---------- 水平布線（IDF → 座位 / AP） ---------- */
   CAT.horizontal = {
     cat6:  { name: 'Cat6 水平布線', perDrop: 2200, diyPerDrop: 900, buildMin: 8 * 60, maxSpeed: 5000,
@@ -325,6 +334,8 @@
       desc: '定期掃描所有伺服器、網路設備與電腦，找出沒修補的已知漏洞（CVE），依嚴重程度（CVSS）排出修補順序。' },
     upd:    { name: '更新派送（WSUS / 快取）', short: 'UPD',
       desc: '在內網快取作業系統與軟體更新：更新只從網際網路下載一次，一萬台電腦再從內網取得，不會塞爆對外頻寬。' },
+    iot:    { name: 'IoT 管理平台', short: 'IOT',
+      desc: '收集智慧廁所等 IoT 感測器的資料（MQTT）：衛生紙快用完、太髒、漏水時自動派工給清潔人員並告警。IoT 裝置應放在獨立網段，只能連到這台平台。' },
     sbc:    { name: '語音邊界控制器（SBC）', short: 'SBC',
       desc: '語音的防火牆：放在 DMZ 對接電信業者的 SIP 中繼，內部的電話交換機不直接暴露在網際網路上。' },
     sdwan:  { name: 'SD-WAN 集中器', short: 'SDW',

@@ -109,7 +109,9 @@
     if (V.layer === 'rssi') return h('div', { class: 'legend' }, [['rgba(70,209,127,0.8)', '≥ −60 極佳'], ['rgba(160,214,80,0.8)', '≥ −67 良好（語音 / 視訊）'], ['rgba(240,190,58,0.8)', '≥ −72 普通'], ['rgba(240,130,58,0.8)', '≥ −75 偏弱'], ['rgba(242,80,80,0.8)', '≥ −78 很弱'], ['rgba(110,120,130,0.6)', '無法連線']].map(([c, t]) => h('span', {}, h('i', { style: { background: c } }), t)));
     if (V.layer === 'load') return h('div', { class: 'legend' }, [['rgba(70,209,127,0.8)', 'AP 負載 < 70%'], ['rgba(240,166,58,0.8)', '70～100%'], ['rgba(242,95,92,0.8)', '超載']].map(([c, t]) => h('span', {}, h('i', { style: { background: c } }), t)), h('span', { class: 'dim' }, '（依目前在座人數計算）'));
     if (V.layer === 'cci') return h('div', { class: 'legend' }, h('span', {}, h('i', { style: { background: 'var(--bad)' } }), '紅色虛線：兩台 AP 使用相同頻道且互相聽得到（同頻干擾）'));
-    return h('div', { class: 'legend' }, h('span', { class: 'dim' }, '灰色格：座位區　深色：核心筒（電梯 / 樓梯，訊號幾乎無法穿透）'));
+    return h('div', { class: 'legend' }, h('span', { class: 'dim' }, '灰色格：座位區　深色：核心筒（電梯 / 樓梯，訊號幾乎無法穿透）　藍灰：廁所（磁磚牆與水管）'),
+      G.Rest.hasIot(V.fid) ? h('span', {}, h('i', { style: { background: 'var(--ok)' } }), '廁所外框：感測器回報的狀況（綠好 / 橘該補 / 紅很糟）') : null,
+      h('span', {}, h('i', { style: { background: 'var(--info)', borderRadius: '50%' } }), '清潔人員'));
   }
 
   function wifiNow() {
@@ -137,7 +139,7 @@
     col[T.OPEN] = tk.floor; col[T.DESK] = tk.desk; col[T.MEET] = tk.room; col[T.OFFICE] = tk.room; col[T.LAB] = tk.room; col[T.CAFE] = tk.room; col[T.LOBBY] = tk.floor;
     col[T.CORE] = tk.core; col[T.IDF] = tk.core; col[T.WALL] = tk.wall; col[T.GLASS] = tk.glass; col[T.EXT] = tk.line2;
     col[T.KITCHEN] = tk.kitchen; col[T.SERVE] = tk.serve; col[T.DINE] = tk.dine; col[T.COLD] = tk.cold;
-    col[T.RAMP] = tk.ramp; col[T.PARK] = tk.park; col[T.MOTO] = tk.moto; col[T.PILLAR] = tk.pillar;
+    col[T.RAMP] = tk.ramp; col[T.PARK] = tk.park; col[T.MOTO] = tk.moto; col[T.PILLAR] = tk.pillar; col[T.WC] = tk.wc;
     for (let y = 0; y < L.H; y++) {
       for (let x = 0; x < L.W; x++) {
         const t = L.type[y * L.W + x];
@@ -157,7 +159,7 @@
         for (let x = 0; x < L.W; x++) {
           const i = y * L.W + x;
           const t = L.type[i];
-          if (t === T.WALL || t === T.GLASS || t === T.CORE || t === T.IDF || t === T.EXT) continue;
+          if (t === T.WALL || t === T.GLASS || t === T.CORE || t === T.IDF || t === T.EXT || t === T.WC) continue;
           const r = wr.best[i];
           if (V.layer === 'rssi') ctx.fillStyle = heat(r);
           else {
@@ -177,10 +179,12 @@
     if (cs >= 5) {
       for (const r of L.rooms) {
         const wpx = (r.x1 - r.x0) * cs;
-        if (wpx < 40) continue;
-        ctx.fillText(r.label, ((r.x0 + r.x1 + 1) / 2) * cs, ((r.y0 + r.y1 + 1) / 2) * cs);
+        if (wpx < 40 || r.wc) continue;
+        /* 核心筒的字放在廁所與 IDF 中間那一排 */
+        ctx.fillText(r.label, ((r.x0 + r.x1 + 1) / 2) * cs, r.kind === T.CORE ? 18.5 * cs : ((r.y0 + r.y1 + 1) / 2) * cs);
       }
     }
+    drawWc(ctx, L, cs, tk);
     ctx.fillStyle = tk.accent;
     ctx.font = `bold ${Math.max(9, cs * 0.9)}px ${tk.mono}`;
     ctx.fillText('IDF', (L.idf.x + 0.5) * cs, (L.idf.y + 0.5) * cs);
@@ -223,6 +227,50 @@
     }
     if (V.tool === 'cable') drawDiy(ctx, L, cs, tk);
   };
+
+  /* ---------- 廁所：男 / 女 / 無障礙的標示；有智慧廁所時外框顏色＝狀況（綠好、橘要補、紅很糟），清潔人員是門口的小圓點 ---------- */
+  function drawWc(ctx, L, cs, tk) {
+    if (!L.wc) return;
+    const fid = V.fid, ok = G.Rest.iotOk(fid), crew = G.Rest.crewAt(fid), t = G.S.time;
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const w of L.wc) {
+      const r = G.Rest.room(fid, w.k);
+      const x0 = w.x0 * cs, y0 = w.y0 * cs, ww = (w.x1 - w.x0 + 1) * cs, hh = (w.y1 - w.y0 + 1) * cs;
+      const cx = x0 + ww / 2, cy = y0 + hh / 2;
+      ctx.fillStyle = tk.text2;
+      ctx.font = `700 ${Math.max(9, Math.min(15, cs * 1.3))}px ${tk.sans}`;
+      ctx.fillText(w.k === 'M' ? '男' : w.k === 'F' ? '女' : '♿', cx, cy - (cs >= 8 && w.k !== 'A' ? cs * 0.45 : 0));
+      if (cs >= 8 && w.k !== 'A') { ctx.font = `${Math.max(8, cs * 0.75)}px ${tk.sans}`; ctx.fillStyle = tk.text3; ctx.fillText('廁所', cx, cy + cs * 0.75); }
+      /* 狀況外框：只有感測器連得到平台時才知道 */
+      if (ok) {
+        const q = G.Rest.roomQ(r), n = G.Rest.need(r);
+        ctx.strokeStyle = r.leak || r.clog || q < 0.7 ? tk.bad : n >= 200 ? tk.warn : tk.ok;
+        ctx.lineWidth = Math.max(1.5, cs * 0.22);
+        ctx.strokeRect(x0 + 1.5, y0 + 1.5, ww - 3, hh - 3);
+        if (r.leak && cs >= 5) { ctx.font = `${Math.max(9, cs * 1.1)}px ${tk.sans}`; ctx.fillText('💧', x0 + ww - cs * 0.7, y0 + cs * 0.7); }
+      } else if (G.Rest.hasIot(fid)) {
+        ctx.strokeStyle = tk.text3; ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
+        ctx.strokeRect(x0 + 1.5, y0 + 1.5, ww - 3, hh - 3); ctx.setLineDash([]);
+      }
+      /* 清潔人員（在門口推清潔車 / 在裡面打掃） */
+      const c = crew.find((q) => q.k === w.k);
+      if (c) {
+        const inside = t >= c.start;
+        const px = inside ? x0 + ww - cs * 0.75 : (w.door[0] + 0.5) * cs, py = inside ? y0 + hh - cs * 0.75 : (w.door[1] + 0.5) * cs;
+        ctx.beginPath(); ctx.arc(px, py, Math.max(3, cs * 0.45), 0, Math.PI * 2);
+        ctx.fillStyle = tk.info; ctx.fill(); ctx.lineWidth = 1.5; ctx.strokeStyle = tk.bg; ctx.stroke();
+      }
+    }
+    /* IoT 閘道器：IDF 裡的小方塊（綠：連得到平台） */
+    if (G.Rest.hasIot(fid)) {
+      const gx = (L.idf.x - 0.5) * cs, gy = (L.idf.y + 1.5) * cs;
+      ctx.fillStyle = ok ? tk.ok : tk.bad;
+      ctx.fillRect(gx - cs * 0.3, gy - cs * 0.3, cs * 0.6, cs * 0.6);
+      if (cs >= 7) { ctx.font = `600 ${Math.max(8, cs * 0.7)}px ${tk.mono}`; ctx.fillStyle = tk.text2; ctx.textAlign = 'left'; ctx.fillText('IoT', gx + cs * 0.5, gy); }
+    }
+    ctx.restore();
+  }
 
   /* ---------- 自己布線：配線區、電力線槽、已畫好的走線、正在畫的路徑 ---------- */
   function drawDiy(ctx, L, cs, tk) {
@@ -284,7 +332,7 @@
       if (seg) for (const q of seg) P.push(q);
     }
     const end = P[P.length - 1], et = L.type[end[1] * L.W + end[0]];
-    const z = et === L.T.CORE || et === L.T.IDF ? null : G.Diy.zones(f.type).find((q) => end[0] >= q.x0 && end[0] <= q.x1 && end[1] >= q.y0 && end[1] <= q.y1);
+    const z = et === L.T.CORE || et === L.T.IDF || et === L.T.WC ? null : G.Diy.zones(f.type).find((q) => end[0] >= q.x0 && end[0] <= q.x1 && end[1] >= q.y0 && end[1] <= q.y1);
     const a = G.Diy.analyze(V.fid, z ? z.id : null, P);
     V.tip.textContent = `路徑 ${P.length - 1} m${z ? ` → 配線區 ${z.n}（最遠的插座約 ${a.len} m${a.lenOk ? '' : '，超過 90 m！'}）` : ''}${a.emi ? `　與電力線槽平行 ${a.emi} m${a.emiOk ? '' : ' ⚠ 會有串音干擾'}` : ''}`;
     V.draw();
@@ -377,7 +425,8 @@
       const wr = wifiPlan();
       const i = c.y * L.W + c.x;
       const r = wr.best[i];
-      V.tip.textContent = r > -110 ? `(${c.x}, ${c.y}) m　訊號 ${r.toFixed(0)} dBm${wr.bestIdx[i] >= 0 ? '' : ''}` : `(${c.x}, ${c.y}) m　沒有訊號`;
+      const wc = L.type[i] === T.WC && L.wc ? L.wc.find((q) => c.x >= q.x0 && c.x <= q.x1 && c.y >= q.y0 && c.y <= q.y1) : null;
+      V.tip.textContent = `(${c.x}, ${c.y}) m　${wc ? wc.name + '　' : ''}${r > -110 ? `訊號 ${r.toFixed(0)} dBm` : '沒有訊號'}${wc ? '（廁所裡不裝 AP，靠走道的 AP 蓋進來）' : ''}`;
     });
     const end = () => {
       if (V.cdrag) { cableUp(); return; }
@@ -473,8 +522,8 @@
           h('span', { class: 'n' }, String(stg.count)),
           h('button', { onclick: () => { stg.count = Math.min(16, stg.count + 1); V.renderSide(); }, 'aria-label': '增加' }, '+')),
         h('button', { class: 'btn sm', 'data-hint': 'idf-suggest@' + V.fid, onclick: () => { stg.count = Math.max(1, Math.ceil((need.total - need.aps + Math.max(need.aps, 20)) * 1.1 / am.ports)); V.renderSide(); } }, '建議數量')),
-      barRow('埠數', portsAvail, need.total, `座位 ${need.seats} + AP ${need.aps} + 印表機 ${need.printers}${need.pos ? ` + 收銀機 ${need.pos}` : ''}${need.gates ? ` + 柵欄機 / 車牌辨識 ${need.gates}` : ''}${need.cams ? ` + 監視器 ${need.cams}` : ''}`),
-      barRow('PoE', budget, poe.used, [poe.phones ? `IP 電話 ${poe.phones}W` : '', poe.cams ? `監視器 ${poe.cams}W` : '', `AP ${poe.aps}W`].filter(Boolean).join(' + '), 'W'),
+      barRow('埠數', portsAvail, need.total, `座位 ${need.seats} + AP ${need.aps} + 印表機 ${need.printers}${need.pos ? ` + 收銀機 ${need.pos}` : ''}${need.gates ? ` + 柵欄機 / 車牌辨識 ${need.gates}` : ''}${need.cams ? ` + 監視器 ${need.cams}` : ''}${need.iot ? ` + IoT 閘道器 ${need.iot}` : ''}`),
+      barRow('PoE', budget, poe.used, [poe.phones ? `IP 電話 ${poe.phones}W` : '', poe.cams ? `監視器 ${poe.cams}W` : '', poe.iot ? `IoT 閘道器 ${poe.iot}W` : '', `AP ${poe.aps}W`].filter(Boolean).join(' + '), 'W'),
       h('div', { class: 'small muted mono' }, `上行埠：${stg.count * am.uplinks} 個（≤${U.speed(am.uplinkMax)}）　AP 上行：${U.bw(Math.min(am.portSpeed, fs.cabling.std ? CAT.horizontal[fs.cabling.std].maxSpeed : 1000))}`),
       changed ? h('button', { class: 'btn primary', 'data-hint': 'idf-apply@' + V.fid, onclick: () => { const r = UI.res(G.Act.setAccess(V.fid, stg.model, stg.count)); if (!r.ok) { V.stage = null; } } }, delta >= 0 ? `套用（${U.money(delta)}）` : `套用（回收 ${U.money(-delta)}）`) : null,
       h('label', { class: 'row small' }, h('input', { type: 'checkbox', id: 'idf-ups', checked: fs.idf.ups, onchange: (e) => UI.res(G.Act.setIdfUps(V.fid, e.target.checked)) }), `IDF 小型 UPS（${U.money(45000)}，停電可撐 30 分鐘）`));
@@ -519,6 +568,7 @@
         h('button', { class: 'btn sm', 'data-hint': 'autochan@' + V.fid, onclick: () => UI.res(G.Act.autoChannels(V.fid)) }, 'WLC 自動頻道'),
         h('button', { class: 'btn sm', 'data-hint': 'copy-floor@' + V.fid, onclick: () => copyDialog() }, '複製此樓層設計…')));
     R.appendChild(wifi);
+    R.appendChild(restCard());
 
     /* AP 詳情 */
     if (V.selAp) {
@@ -546,6 +596,60 @@
       }
     }
   };
+
+  /* ---------- ⑤ 廁所與清潔：清潔人員（全大樓）、智慧廁所（本層）、三間廁所的狀況 ---------- */
+  function restCard() {
+    const s = G.S, fid = V.fid, R = s.rest, Rest = G.Rest;
+    const rs = Rest.rooms(fid);
+    const has = Rest.hasIot(fid);
+    const unlocked = Q.unlocked({ unlock: CAT.rest.unlock });
+    const card = h('div', { class: 'card col', style: { gap: '8px' } },
+      h('div', { class: 'card-h', style: { marginBottom: '0' } }, h('h3', {}, '⑤ 廁所與清潔'), h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-iot') }, '智慧廁所與 IoT')));
+    /* 清潔人員（全大樓共用） */
+    card.appendChild(h('div', { class: 'row between wrap' },
+      h('span', { class: 'small' }, '白班清潔人員（全大樓）', h('span', { class: 'dim' }, live(() => `　建議 ${Rest.recommend()} 人`))),
+      h('div', { class: 'stepper' },
+        h('button', { 'data-hint': 'rest-sub', onclick: () => UI.res(Rest.setStaff(R.staff - 1)), 'aria-label': '減少清潔人員' }, '−'),
+        h('span', { class: 'n' }, String(R.staff)),
+        h('button', { 'data-hint': 'rest-add', onclick: () => UI.res(Rest.setStaff(R.staff + 1)), 'aria-label': '增加清潔人員' }, '+'))));
+    card.appendChild(h('div', { class: 'tiny dim' }, `外包合約：每人每月 ${U.money(CAT.rest.wage)}；衛生紙與洗手乳每次約 ${CAT.rest.usePrice} 元。22:00 以後由夜班清潔公司整理、清晨補滿耗材。`));
+    /* 智慧廁所（本層） */
+    if (has) {
+      card.appendChild(h('div', { class: 'row between wrap' },
+        live(() => (Rest.iotOk(fid) ? '✓ 智慧廁所運作中：感測器資料即時送到 IoT 管理平台，依需要派工' : `⚠ 連不到 IoT 管理平台：${Rest.iotWhy(fid)}`), 'small'),
+        h('button', { class: 'btn ghost xs', onclick: () => UI.confirm('拆除智慧廁所', `拆除 ${fid} 的 IoT 閘道器與感測器？回收 30%。`, '拆除', () => UI.res(Rest.removeIot(fid)), 'danger') }, '拆除')));
+      card.appendChild(h('div', { class: 'tiny dim' }, `IoT 閘道器接在 IDF 的接入交換器（佔 1 個埠、PoE ${CAT.rest.iotGw.poe} W），用 MQTT 回報到 IoT 管理平台（伺服器角色 IoT）。${s.fw.iotVlan ? '目前在 IoT 獨立網段（IOT 區域）。' : '目前在員工內網（LAN）：建議到「防火牆 → 網段規劃」開啟 IoT 獨立網段。'}`));
+    } else {
+      card.appendChild(h('div', { class: 'row between wrap' },
+        h('span', { class: 'small muted' }, '沒有感測器：看不到衛生紙還剩多少，清潔人員只能照固定路線一間一間巡。'),
+        h('button', { class: 'btn sm' + (unlocked ? ' primary' : ''), 'data-hint': 'rest-iot@' + fid, disabled: !unlocked || null, onclick: () => UI.res(Rest.installIot(fid)) },
+          unlocked ? `安裝智慧廁所（${U.money(Rest.iotCost())}）` : `第 ${CAT.rest.unlock} 章解鎖`)));
+    }
+    /* 三間廁所：有感測器才看得到即時數字；沒有的話只知道上次打掃的時間與有人報修的問題 */
+    const list = h('div', { class: 'col', style: { gap: '4px' } });
+    for (const r of rs) {
+      const nm = Rest.RM[r.k].name;
+      list.appendChild(h('div', { class: 'row between small wc-row' },
+        h('b', {}, nm),
+        live(() => {
+          const x = Rest.room(fid, r.k);
+          const crew = Rest.crewAt(fid).find((c) => c.k === r.k);
+          const doing = crew ? (G.S.time < crew.start ? '・清潔人員前往中' : '・清潔中') : '';
+          const flags = `${x.leak && Rest.iotOk(fid) ? '・⚠ 漏水' : ''}${x.clog ? '・馬桶堵住' : ''}`;
+          if (Rest.iotOk(fid)) return `整潔 ${Math.round(x.clean)}%・衛生紙 ${Math.round(x.paper)}%・洗手乳 ${Math.round(x.soap)}%${flags}${doing}`;
+          const ago = x.last ? `上次打掃 ${U.dur(G.S.time - x.last)}前` : '還沒打掃過';
+          const heard = x.paper <= 0 ? '・有人報修：沒衛生紙' : x.clean < 35 ? '・有人報修：很髒' : '';
+          return `${ago}${heard}${flags}${doing}`;
+        }, 'mono tiny')));
+    }
+    card.appendChild(list);
+    card.appendChild(h('div', { class: 'tiny dim' }, live(() => {
+      const c = Rest.crewAt(fid).length;
+      const day = Rest.dayShift(G.S.time);
+      return `${day ? `這層樓現在有 ${c} 位清潔人員` : '夜班清潔公司整理中'}。廁所裡不裝 AP 與監視器；人流計數器裝在門口外側，只算人數。`;
+    })));
+    return card;
+  }
 
   /* ---------- 自己布線：三個步驟（拉線 → 端接打線 → 認證測試） ---------- */
   function diyPanel(cab) {

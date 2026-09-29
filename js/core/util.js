@@ -141,12 +141,12 @@
     const cs = getComputedStyle(document.documentElement);
     const g = (n) => cs.getPropertyValue(n).trim();
     return {
-      bg: g('--bg'), bg2: g('--bg-2'), bg3: g('--bg-3'), line: g('--line'), line2: g('--line-2'),
+      bg: g('--bg'), bg2: g('--bg-2'), bg3: g('--bg-3'), bg4: g('--bg-4'), line: g('--line'), line2: g('--line-2'),
       text: g('--text'), text2: g('--text-2'), text3: g('--text-3'),
       accent: g('--accent'), accent2: g('--accent-2'), ok: g('--ok'), warn: g('--warn'), bad: g('--bad'), info: g('--info'),
       floor: g('--floor'), desk: g('--desk'), room: g('--room'), core: g('--core'), wall: g('--wall'), glass: g('--glass'),
       kitchen: g('--kitchen'), serve: g('--serve'), dine: g('--dine'), cold: g('--cold'),
-      park: g('--park'), moto: g('--moto'), ramp: g('--ramp'), pillar: g('--pillar'),
+      park: g('--park'), moto: g('--moto'), ramp: g('--ramp'), pillar: g('--pillar'), wc: g('--wc'),
       mono: g('--font-mono'), sans: g('--font-sans'),
     };
   };

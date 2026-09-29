@@ -68,7 +68,7 @@
     }, done });
   /** 防火牆規則：用快速範本新增 */
   const TPL = { 'LAN>INTERNET:WEB': '員工上網', 'LAN>INTERNET:DNS': '員工 DNS', 'SERVERS>INTERNET:DNS': 'AD 轉送 DNS', 'INTERNET>DMZ:WEB': '客戶連官網', 'DMZ>SERVERS:SQL': '官網查資料庫',
-    'GUEST>INTERNET:WEB': '訪客上網', 'GUEST>INTERNET:DNS': '訪客 DNS', 'WAN>SERVERS:SQL': '據點連 ERP', 'WAN>SERVERS:SMB': '據點檔案', 'WAN>SERVERS:LDAP': '據點登入', 'WAN>SERVERS:DNS': '據點 DNS', 'WAN>SERVERS:SIP': '據點分機', 'LAN>SERVERS:SIP': '分機註冊' };
+    'GUEST>INTERNET:WEB': '訪客上網', 'GUEST>INTERNET:DNS': '訪客 DNS', 'IOT>SERVERS:MQTT': '智慧廁所感測器', 'WAN>SERVERS:SQL': '據點連 ERP', 'WAN>SERVERS:SMB': '據點檔案', 'WAN>SERVERS:LDAP': '據點登入', 'WAN>SERVERS:DNS': '據點 DNS', 'WAN>SERVERS:SIP': '據點分機', 'LAN>SERVERS:SIP': '分機註冊' };
   const rule = (src, dst, svc) => {
     const k = `${src}>${dst}:${svc}`, t = TPL[k];
     return { text: t ? `到「防火牆」按快速範本「${t}」，新增允許 ${src} → ${dst}：${svc}` : `到「防火牆」選來源 ${src}、目的 ${dst}、服務 ${svc}、動作「允許」，按「加到最下方」`,
@@ -177,6 +177,12 @@
     if (f) return [look('兩台防火牆都滿載：HA 的兩台都要換成更大的型號（採購 → 網路設備）', 'shop:net', () => false)];
     if (sim.wan.cap > 0 && sim.wan.in >= sim.wan.cap * 0.9) return [{ text: 'ISP 頻寬不夠：到「採購 → ISP 專線」再申請一條（路由器要支援 BGP 才能同時用兩條）', short: '再申請一條專線', go: 'shop:isp', path: ['nav:shop', 'tab:shop:isp', 'isp:10G'], done: () => false }];
     const tk = G.S.tickets.find((t) => !t.resolvedAt && (t.sev === 'crit' || t.sev === 'high')) || G.S.tickets.find((t) => !t.resolvedAt);
+    /* 廁所的報修：清潔人員不夠就加人；夠了就等清潔人員巡到 */
+    if (tk && /^wc/.test(tk.kind)) {
+      return G.S.rest.staff < G.Rest.recommend()
+        ? [{ text: `報修：${tk.text}。清潔人員巡不過來：到「樓層」頁的「⑤ 廁所與清潔」把白班清潔人員加到建議人數`, short: '清潔人員加到建議人數', go: 'floor:' + tk.fid, path: ['nav:floor', 'floor:' + tk.fid, 'rest-add'], done: () => !!tk.resolvedAt || G.S.rest.staff >= G.Rest.recommend() }]
+        : [skip(`報修：${tk.text}。清潔人員正在巡，等他們處理（可以按 ⏭ 快轉）`, () => !!tk.resolvedAt)];
+    }
     if (tk) return [{ text: `報修：${tk.text}。${tk.hint}`, short: tk.text, go: tk.goto, path: G.Hint ? G.Hint.defaultPath(tk.goto) : [], done: () => !!tk.resolvedAt }];
     return [];
   };
@@ -184,6 +190,8 @@
   const H = {};
   G.HINTS = H;
   H.diagnose = diagnose;
+  /** 一層樓的佈建步驟（緊急報修「整層斷線」時用） */
+  H.floorFix = (fid) => floorSteps(fid, G.FT[G.BLD.byId[fid].type].park ? 0.9 : 0.85);
 
   /* ---------- 第一章 ---------- */
   H['c1-rack'] = () => [{ text: '到「機房」按「＋ 機櫃」買一座 42U 機櫃（網路設備都要裝在機櫃裡才能通電）', short: '買一座機櫃', go: 'rack', path: ['nav:rack', 'buy:rack'], done: () => S().racks.length > 0 }];
@@ -215,6 +223,10 @@
   H['c2-dhcp'] = () => [{ text: '到「防火牆 → 網段規劃」把「員工無線」網段調大（例如 /20），讓每支手機、筆電都拿得到 IP', short: '把員工無線調大', go: 'fw:net', path: ['nav:fw', 'tab:fw:net', 'subnet:wifi'], done: () => !G.R.sim || Q.hosts(S().subnets.wifi) - 1 >= G.R.sim.dhcp.wifi.need },
     { text: '「員工有線」網段也要夠大（每層樓一個 VLAN）', short: '調整員工有線', go: 'fw:net', path: ['nav:fw', 'tab:fw:net', 'subnet:wired'], done: () => !G.R.sim || Q.hosts(S().subnets.wired) - 1 >= G.R.sim.dhcp.wired.worst }];
   H['c2-sat'] = () => [...diagnose(), look('到「監控」找出瓶頸：WAN、樓層上行、Wi-Fi 容量或防火牆效能', 'noc', () => false)];
+  H['c2-rest'] = () => [
+    { text: '到「樓層」頁的「⑤ 廁所與清潔」按「＋」，把白班清潔人員加到建議人數（樓層越多，要巡的廁所越多）', short: '清潔人員加到建議人數', go: 'floor', path: ['nav:floor', 'rest-add'], done: () => S().rest.staff >= G.Rest.recommend() },
+    skip('等 3,000 人以上進駐後，撐過一整個工作天（09:00～18:00）：每間廁所都要有衛生紙、整潔 ≥ 60%（可以按 ⏭ 快轉）', () => false),
+  ];
 
   /* ---------- 第三章 ---------- */
   H['c3-lobby'] = () => floorSteps('1F', 0.9);
@@ -227,6 +239,19 @@
   ].concat(serverRole('web', 'SV-1U', '官網伺服器', 1, (o) => catIs('switch')(o) && !Q.isL3(o)));
   H['c3-db'] = () => serverRole('db', 'SV-1U', '資料庫要放在內部伺服器區');
   H['c3-rules'] = () => [rule('INTERNET', 'DMZ', 'WEB'), rule('DMZ', 'SERVERS', 'SQL')];
+  H['c3-iot'] = () => {
+    const fid = G.Rest.occupied().map((f) => f.id).find((id) => !G.Rest.hasIot(id));
+    const steps = [];
+    /* IoT 閘道器要佔 IDF 交換器的一個埠：埠數剛好用完的樓層，先多加一台交換器 */
+    if (fid && Q.floorPorts(fid) < Q.floorPortNeed(fid).total + 1) steps.push({ id: 'idf', text: `${fid} 的接入交換器沒有空的埠給 IoT 閘道器：在「② IDF 接入交換器」按「建議數量」再「套用」`, short: '按「建議數量」再「套用」', go: 'floor:' + fid, path: ['nav:floor', 'floor:' + fid, 'idf-suggest@' + fid, 'idf-apply@' + fid], done: () => Q.floorPorts(fid) >= Q.floorPortNeed(fid).total + 1 });
+    if (fid) steps.push({ text: `到「樓層 → ${fid}」的「⑤ 廁所與清潔」按「安裝智慧廁所」（IoT 閘道器接在 IDF 的交換器上，每間廁所裝感測器）`, short: '安裝智慧廁所', go: 'floor:' + fid, path: ['nav:floor', 'floor:' + fid, 'rest-iot@' + fid], done: () => G.Rest.hasIot(fid) });
+    return steps.concat(serverRole('iot', 'SV-1U', 'IoT 管理平台'), [
+      { text: '到「防火牆 → 網段規劃」啟用「IoT 獨立網段」（VLAN 600）：IoT 裝置不要和員工電腦放在同一個網段', short: '啟用 IoT 獨立網段', go: 'fw:net', path: ['nav:fw', 'tab:fw:net', 'iot-vlan'], done: () => S().fw.iotVlan },
+      rule('IOT', 'SERVERS', 'MQTT'),
+      look('IoT 網段只能連到 IoT 管理平台：到「防火牆」刪掉 IOT 連到 LAN、網際網路或其他區域的規則', 'fw:rules', () => G.Sec.posture().iotIsolated),
+      look('到「樓層」頁確認每層樓的智慧廁所都連得上 IoT 平台', 'floor', () => false),
+    ]);
+  };
   H['c3-audit'] = () => [look('到「防火牆 → 資安健檢」照著每一項的建議修正', 'fw:audit', () => false)];
   H['c3-web'] = () => [...diagnose(), look('到「監控」看官網的可用率：WEB、DB、DMZ 規則與 ISP 頻寬缺一不可', 'noc', () => false)];
 

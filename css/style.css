@@ -38,6 +38,7 @@
   --moto: #202a31;
   --ramp: #2a3238;
   --pillar: #6b7780;
+  --wc: #1f3a47;
   --jack: #04080b;
   --pin: #c9a441;
   --shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
@@ -55,7 +56,7 @@
     --accent: #0c8c81; --accent-soft: rgba(12, 140, 129, 0.12); --accent-ink: #ffffff; --accent-2: #a87400;
     --ok: #1d9650; --warn: #bf7100; --bad: #d23835; --info: #2a70c2;
     --ok-soft: rgba(29, 150, 80, 0.12); --warn-soft: rgba(191, 113, 0, 0.13); --bad-soft: rgba(210, 56, 53, 0.12); --info-soft: rgba(42, 112, 194, 0.12);
-    --floor: #f3f6f7; --desk: #dfe8ec; --room: #e8eff2; --core: #8e9ea7; --wall: #5d7280; --glass: #7db1be; --kitchen: #d3dadd; --serve: #ecdcc4; --dine: #f7f1e8; --cold: #cfe6f0; --park: #d9dee1; --moto: #e3e8eb; --ramp: #c8cfd3; --pillar: #8a969d;
+    --floor: #f3f6f7; --desk: #dfe8ec; --room: #e8eff2; --core: #8e9ea7; --wall: #5d7280; --glass: #7db1be; --kitchen: #d3dadd; --serve: #ecdcc4; --dine: #f7f1e8; --cold: #cfe6f0; --park: #d9dee1; --moto: #e3e8eb; --ramp: #c8cfd3; --pillar: #8a969d; --wc: #cfe3ec;
     --jack: #1a232a; --pin: #b08a1e;
     --shadow: 0 12px 32px rgba(20, 40, 50, 0.16);
   }
@@ -68,7 +69,7 @@
   --accent: #0c8c81; --accent-soft: rgba(12, 140, 129, 0.12); --accent-ink: #ffffff; --accent-2: #a87400;
   --ok: #1d9650; --warn: #bf7100; --bad: #d23835; --info: #2a70c2;
   --ok-soft: rgba(29, 150, 80, 0.12); --warn-soft: rgba(191, 113, 0, 0.13); --bad-soft: rgba(210, 56, 53, 0.12); --info-soft: rgba(42, 112, 194, 0.12);
-  --floor: #f3f6f7; --desk: #dfe8ec; --room: #e8eff2; --core: #8e9ea7; --wall: #5d7280; --glass: #7db1be; --kitchen: #d3dadd; --serve: #ecdcc4; --dine: #f7f1e8; --cold: #cfe6f0; --park: #d9dee1; --moto: #e3e8eb; --ramp: #c8cfd3; --pillar: #8a969d;
+  --floor: #f3f6f7; --desk: #dfe8ec; --room: #e8eff2; --core: #8e9ea7; --wall: #5d7280; --glass: #7db1be; --kitchen: #d3dadd; --serve: #ecdcc4; --dine: #f7f1e8; --cold: #cfe6f0; --park: #d9dee1; --moto: #e3e8eb; --ramp: #c8cfd3; --pillar: #8a969d; --wc: #cfe3ec;
   --jack: #1a232a; --pin: #b08a1e;
   --shadow: 0 12px 32px rgba(20, 40, 50, 0.16);
 }

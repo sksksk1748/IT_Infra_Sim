@@ -724,6 +724,13 @@
     changed('fw');
     return ok(on ? '內部分段已啟用：LAN → SERVERS 流量現在要經過防火牆檢查' : '內部分段已關閉');
   };
+  /** IoT 獨立網段：智慧廁所的閘道器改到 VLAN 600，閘道設在防火牆（IOT 區域） */
+  Act.setIotVlan = (on) => {
+    G.S.fw.iotVlan = !!on;
+    G.R.topoVer++;
+    changed('fw');
+    return ok(on ? 'IoT 獨立網段已啟用：智慧廁所的閘道器改到 IOT 區域，記得新增 IOT → SERVERS：MQTT' : 'IoT 獨立網段已關閉：IoT 裝置回到員工內網');
+  };
 
   /* ---------- 服務訂閱 ---------- */
   Act.subscribe = (id) => {

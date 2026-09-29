@@ -87,6 +87,9 @@
     clockin:   { sev: 'high', text: (f) => `${f}：停車場手機打卡失敗，好多人被記遲到`, hint: '地下室收不到 GPS、手機訊號也很差，打卡 App 要靠公司 Wi-Fi 確認位置。在停車場佈建 AP：停車格、走道和電梯廳都要有訊號（混凝土柱會擋訊號）；這層樓也要能上網（LAN → INTERNET：WEB）。' },
     gate:      { sev: 'high', text: (f) => `${f}：車道柵欄機連不上系統，車子回堵到馬路上`, hint: '車牌辨識攝影機與柵欄機要接有線網路：IDF 的接入交換器要留足埠數，而且這層樓要有上行主幹。' },
     cam:       { sev: 'med', text: (f) => `${f}：保全反映停車場的監視器畫面中斷`, hint: '監視器用 PoE 供電：接入交換器的埠數與 PoE 預算都要夠（每台約 7 W）。PoE 不夠時，AP 也會跟著沒電。' },
+    wcpaper:   { sev: 'med', text: (f) => `${f}：廁所沒有衛生紙了`, hint: '清潔人員還沒巡到這一間。到這層樓的「廁所與清潔」加派清潔人員；或導入智慧廁所：感測器在快用完時就通知清潔人員先補。' },
+    wcdirty:   { sev: 'med', text: (f) => `${f}：廁所很髒、有異味`, hint: '用的人太多、清潔人員巡不過來。加派清潔人員，或導入智慧廁所依人流與異味派工。' },
+    wcclog:    { sev: 'med', text: (f) => `${f}：廁所馬桶堵住了`, hint: '堵住的那一間暫停使用，要等清潔人員來處理。智慧廁所的感測器會立刻通知清潔人員。' },
   };
   Ops.TK = TK;
 
@@ -138,6 +141,14 @@
       if (ft.dine && st.diners > 60 && (st.dinerRatio < 0.8 || st.wifi.gcover < 0.85)) flag('dinewifi');
       else if (st.wifiShare > 0.05 && st.capRatio < 0.8) flag('wificap');
       if (ft.pos && st.diners > 30 && !st.posOk) flag('pos');
+      /* 廁所：沒衛生紙、太髒、馬桶堵住（有人在用的時段才會有人報修） */
+      if (s.rest && s.rest.rooms[f.id]) {
+        const rs = s.rest.rooms[f.id];
+        const tail = G.Rest.hasIot(f.id) && !G.Rest.iotOk(f.id) ? `這層樓的智慧廁所連不到 IoT 管理平台（${G.Rest.iotWhy(f.id)}）：感測器的資料送不出去，清潔人員只能照固定路線巡。` : null;
+        if (rs.some((r) => r.paper <= 0)) flag('wcpaper', tail);
+        if (rs.some((r) => r.clean < 35)) flag('wcdirty', tail);
+        if (rs.some((r) => r.clog)) flag('wcclog', tail);
+      }
       const vr = G.R.voice;
       if (vr && vr.active && ft.voip) {
         if (!vr.pbxUp) flag('pbxdown');

@@ -58,7 +58,16 @@
     const inc = G.Ev.visible().find((i) => i.status === 'active' && (i.sev === 'crit' || i.sev === 'high'));
     if (inc) return { text: `緊急：${inc.title}——到「事件」看事件紀錄，選擇應變行動`, short: '先處理這個事件', go: 'inc:' + inc.id, path: ['nav:inc'], done: () => inc.status !== 'active' };
     const tk = s.tickets.find((t) => !t.resolvedAt && t.sev === 'crit');
-    if (tk) return { text: `緊急報修：${tk.text}。${tk.hint}`, short: tk.text, go: tk.goto, path: Hint.defaultPath(tk.goto), done: () => !!tk.resolvedAt };
+    if (tk) {
+      /* 整層斷線、而且是這層樓還沒佈建好（員工先搬進來了）：直接帶著做佈建的下一步 */
+      if (tk.kind === 'down' && tk.fid && G.HINTS.floorFix) {
+        const fs = s.floors[tk.fid];
+        const built = fs && fs.cabling.status === 'done' && fs.idf.count > 0 && G.Q.linksOf('F:' + tk.fid).length > 0;
+        const step = built ? null : G.HINTS.floorFix(tk.fid).find((x) => !safe(x.done));
+        if (step) return Object.assign({}, step, { text: `緊急報修：${tk.text}（這層樓還沒佈建好）。${step.text}` });
+      }
+      return { text: `緊急報修：${tk.text}。${tk.hint}`, short: tk.text, go: tk.goto, path: Hint.defaultPath(tk.goto), done: () => !!tk.resolvedAt };
+    }
     if (s.temp >= 30 && s.racks.length) return { text: `機房 ${s.temp.toFixed(1)}°C 過熱：到「採購 → 機房設施」加裝精密空調`, short: '加裝精密空調', go: 'shop:facility', path: ['nav:shop', 'tab:shop:facility', 'buy:CRAC-25'], done: () => G.S.temp < 29 };
     return null;
   }

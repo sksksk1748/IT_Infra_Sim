@@ -11,6 +11,7 @@
     SERVERS: { name: '內部伺服器區', short: 'SERVERS' },
     DMZ: { name: 'DMZ 非軍事區', short: 'DMZ' },
     WAN: { name: '分支據點 / 雲端（專線、VPN、SD-WAN）', short: 'WAN' },
+    IOT: { name: 'IoT 裝置網段（智慧廁所感測器）', short: 'IOT' },
   };
   G.SVC = {
     ANY:  { name: '任何服務', port: '*' },
@@ -25,8 +26,9 @@
     NTP:  { name: 'NTP 校時', port: 'UDP 123' },
     ICMP: { name: 'ICMP (ping)', port: '—' },
     SIP:  { name: 'SIP 語音', port: 'UDP 5060 / TLS 5061 + RTP' },
+    MQTT: { name: 'MQTT 物聯網', port: 'TCP 1883 / TLS 8883' },
   };
-  const CONCRETE = ['WEB', 'DNS', 'SMB', 'LDAP', 'SQL', 'RDP', 'SSH', 'SMTP', 'NTP', 'ICMP', 'SIP'];
+  const CONCRETE = ['WEB', 'DNS', 'SMB', 'LDAP', 'SQL', 'RDP', 'SSH', 'SMTP', 'NTP', 'ICMP', 'SIP', 'MQTT'];
 
   const Sec = {};
   G.Sec = Sec;
@@ -98,6 +100,11 @@
     if (G.Ep.active() && Q.roleServers('upd').some((d) => d.rack)) {
       if (s.fw.segmentation) out.push({ id: 'seg-upd', text: '內部分段：電腦從更新快取下載', rule: 'LAN → SERVERS : WEB', need: true, ok: ok('LAN', 'SERVERS', 'WEB') });
       out.push({ id: 'upd-inet', text: '更新快取向微軟下載更新', rule: 'SERVERS → INTERNET : WEB', need: true, ok: ok('SERVERS', 'INTERNET', 'WEB') });
+    }
+    /* 智慧廁所：IoT 閘道器 → IoT 管理平台（有經過防火牆時才需要規則） */
+    if (G.Rest && G.BLD.floors.some((f) => G.Rest.hasIot(f.id)) && (s.fw.iotVlan || s.fw.segmentation)) {
+      const z = s.fw.iotVlan ? 'IOT' : 'LAN';
+      out.push({ id: 'iot-mqtt', text: '智慧廁所感測器回報 IoT 管理平台', rule: `${z} → SERVERS : MQTT`, need: true, ok: ok(z, 'SERVERS', 'MQTT') });
     }
     /* 電話：分機註冊到 PBX、外線經 SBC（DMZ）對接電信業者 */
     if (G.Voice.active() && Q.roleServers('pbx').some((d) => d.rack)) {
@@ -176,6 +183,18 @@
     for (const { d, zone } of Sec.serverZones('db')) {
       if (zone === 'DMZ') add('med', `${d.name} 資料庫放在 DMZ`, '資料庫存放最敏感的資料，不應放在對外區域。', '把資料庫移到內部伺服器區，只開放 DMZ → SERVERS：SQL。', 'k-zones');
     }
+    /* 智慧廁所的 IoT 裝置：韌體很少更新、常被當成跳板，要放在獨立網段、只能連到 IoT 管理平台 */
+    const iotFloors = G.Rest ? G.BLD.floors.filter((f) => G.Rest.hasIot(f.id)) : [];
+    if (iotFloors.length && ch >= 3) {
+      if (!s.fw.iotVlan) add('med', 'IoT 裝置和員工電腦在同一個網段', `${iotFloors.length} 層樓的智慧廁所閘道器接在員工內網（LAN）。IoT 裝置很少更新韌體，一旦被入侵，就能直接攻擊員工電腦。`, '到「防火牆 → 網段規劃」開啟 IoT 獨立網段，只放行 IOT → SERVERS：MQTT。', 'k-iot');
+      else if (fw) {
+        const leak = [];
+        for (const z of ['LAN', 'INTERNET', 'DMZ', 'GUEST']) { const a = Sec.allowedSvcs('IOT', z); if (a.length) leak.push(`${z}（${a.join('、')}）`); }
+        if (leak.length) add('high', 'IoT 網段可以連到其他區域', `允許 IOT → ${leak.join('；')}`, 'IoT 裝置只需要連到 IoT 管理平台：只保留 IOT → SERVERS：MQTT。', 'k-iot');
+        const extra = Sec.allowedSvcs('IOT', 'SERVERS').filter((x) => !['MQTT', 'DNS', 'NTP'].includes(x));
+        if (extra.length) add('med', 'IoT 網段到伺服器區開太多', `允許 IOT → SERVERS：${extra.join('、')}`, '只保留 IOT → SERVERS：MQTT（必要時 DNS、NTP）。', 'k-iot');
+      }
+    }
     if (ch >= 3 && fw && !Q.hasService('ips')) add('low', '沒有啟用 IPS', '防火牆只看埠號，無法辨識夾帶在允許流量中的攻擊。', '訂閱 IPS 入侵防禦（注意吞吐量下降）。', 'k-ips');
     if (ch >= 5 && !s.fw.segmentation) add('med', '內網沒有分段', '員工電腦可以直接存取所有伺服器，勒索軟體可以任意擴散。', '在防火牆頁面啟用「內部分段」，並補上 LAN → SERVERS 的必要規則。', 'k-segment');
     if (ch >= 5 && !Q.roleServers('backup').some((d) => d.rack)) add('med', '沒有備份伺服器', '遭勒索軟體加密時將無法復原。', '部署儲存伺服器並設為備份角色，並啟用不可變備份。', 'k-ransom');
@@ -243,11 +262,12 @@
     const mgmt = [];
     for (const z of ['LAN', 'SERVERS', 'DMZ']) for (const svc of ['RDP', 'SSH']) if (!fw || Sec.allows('INTERNET', z, svc)) mgmt.push(`${z}:${svc}`);
     const guestLeak = fw ? ['LAN', 'SERVERS', 'DMZ'].some((z) => Sec.allowedSvcs('GUEST', z).length > 0) : true;
+    const iotLeak = !s.fw.iotVlan || !fw || ['LAN', 'INTERNET', 'DMZ', 'GUEST'].some((z) => Sec.allowedSvcs('IOT', z).length > 0);
     const webZones = Sec.serverZones('web').map((x) => x.zone);
     return {
       fw, mgmtExposed: mgmt.length > 0, mgmt,
       lanExposed: !fw || Sec.allowedSvcs('INTERNET', 'LAN').length > 0,
-      guestIsolated: !guestLeak,
+      guestIsolated: !guestLeak, iotIsolated: !iotLeak,
       webInDmz: webZones.length > 0 && webZones.every((z) => z === 'DMZ'),
       segmentation: !!(s.fw.segmentation && fw),
       smbToServers: !s.fw.segmentation || Sec.allows('LAN', 'SERVERS', 'SMB'),

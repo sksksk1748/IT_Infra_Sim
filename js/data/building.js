@@ -76,7 +76,14 @@
   const W = 72, H = 36;
   /* KITCHEN 廚房、DINE 用餐區、SERVE 餐檯 / 收銀台、COLD 冷藏冷凍庫（金屬牆，Wi-Fi 幾乎穿不透）
    * RAMP 車道、PARK 汽車停車格、MOTO 機車停車格、PILLAR 結構柱（鋼筋混凝土，擋訊號） */
-  const T = { OPEN: 0, DESK: 1, MEET: 2, CORE: 3, IDF: 4, OFFICE: 5, LAB: 6, LOBBY: 7, CAFE: 8, WALL: 9, GLASS: 10, EXT: 11, KITCHEN: 12, DINE: 13, SERVE: 14, COLD: 15, RAMP: 16, PARK: 17, MOTO: 18, PILLAR: 19 };
+  const T = { OPEN: 0, DESK: 1, MEET: 2, CORE: 3, IDF: 4, OFFICE: 5, LAB: 6, LOBBY: 7, CAFE: 8, WALL: 9, GLASS: 10, EXT: 11, KITCHEN: 12, DINE: 13, SERVE: 14, COLD: 15, RAMP: 16, PARK: 17, MOTO: 18, PILLAR: 19, WC: 20 };
+  /* 廁所（每層樓都在核心筒裡）：北側是男廁、女廁（門開向北側走道），IDF 東邊是無障礙廁所（門開向南側走道）。
+   * 無障礙廁所和 IDF 弱電室只隔一道牆：漏水沒被發現，就會淹進 IDF。 */
+  const WC = [
+    { k: 'M', name: '男廁', x0: 31, y0: 14, x1: 34, y1: 17, door: [32, 13] },
+    { k: 'F', name: '女廁', x0: 36, y0: 14, x1: 40, y1: 17, door: [38, 13] },
+    { k: 'A', name: '無障礙廁所', x0: 34, y0: 19, x1: 35, y1: 21, door: [34, 22] },
+  ];
   const STAFF_W = { 0: 0.04, 1: 1.0, 2: 0.35, 5: 0.5, 6: 0.8, 7: 0.03, 8: 0.25, 12: 1.0, 13: 0.01, 14: 0.9, 15: 0.05 };
   const GUEST_W = { 0: 0.1, 2: 0.5, 7: 1.0, 8: 0.7 };
   /* 餐廳的用餐人潮：坐在用餐區、在餐檯前排隊、包廂 */
@@ -128,6 +135,13 @@
     for (let y = 19; y <= 21; y++) for (let x = 31; x <= 33; x++) set(L, x, y, T.IDF, 8);
     L.rooms.push({ x0: CORE.x0, y0: CORE.y0, x1: CORE.x1, y1: CORE.y1, kind: T.CORE, label: '核心筒（電梯 / 樓梯）' });
     L.idf = { x: 32, y: 20 };
+    /* 廁所：磁磚牆 + 給排水管，訊號衰減和核心筒差不多；門口在核心筒外牆上開一格 */
+    for (const w of WC) {
+      for (let y = w.y0; y <= w.y1; y++) for (let x = w.x0; x <= w.x1; x++) set(L, x, y, T.WC, 9);
+      set(L, w.door[0], w.door[1], T.OPEN, 0);
+      L.rooms.push({ x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1, kind: T.WC, label: w.name, wc: w.k });
+    }
+    L.wc = WC;
   }
 
   function inCoreMargin(x, y) { return x >= CORE.x0 - 2 && x <= CORE.x1 + 2 && y >= CORE.y0 - 2 && y <= CORE.y1 + 2; }
@@ -322,17 +336,20 @@
         const L = blank();
         core(L);
         (BUILDERS[type] || BUILDERS.office)(L);
+        /* 廁所門口一定要通（停車場的電梯廳玻璃牆剛好蓋過無障礙廁所的門） */
+        for (const w of WC) set(L, w.door[0], w.door[1], T.OPEN, 0);
         finalize(L, type);
         cache[type] = L;
       }
       return cache[type];
     },
-    /** AP 可安裝的位置（天花板）：不能在牆上、核心筒或外牆 */
+    /** AP 可安裝的位置（天花板）：不能在牆上、核心筒、外牆，也不裝在廁所裡（隱私與衛生；走道的 AP 就蓋得到） */
     canPlaceAp(L, x, y) {
       if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) return false;
       const t = L.type[y * W + x];
-      return t !== T.WALL && t !== T.GLASS && t !== T.CORE && t !== T.IDF && t !== T.EXT && t !== T.COLD;
+      return t !== T.WALL && t !== T.GLASS && t !== T.CORE && t !== T.IDF && t !== T.EXT && t !== T.COLD && t !== T.WC;
     },
+    WC,
     /** AP 到 IDF 的線長估算（曼哈頓距離 + 上下天花板 4m） */
     cableToIdf(L, x, y) { return Math.abs(x - L.idf.x) + Math.abs(y - L.idf.y) + 4; },
   };

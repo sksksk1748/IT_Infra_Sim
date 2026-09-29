@@ -31,8 +31,8 @@
         racks: [], devices: {}, links: {}, isp: [],
         room: [{ id: 'rm0', model: 'AC-8', status: 'ok', readyAt: 0 }],
         floors: {},
-        fw: { rules: [], segmentation: false, guestWifi: false },
-        subnets: { wired: 23, wifi: 22, guest: 23, servers: 24, dmz: 28 },
+        fw: { rules: [], segmentation: false, guestWifi: false, iotVlan: false },
+        subnets: { wired: 23, wifi: 22, guest: 23, servers: 24, dmz: 28, iot: 26 },
         services: {}, trainingUntil: 0,
         power: { outageUntil: 0, outageStart: 0, upsCharge: 1 },
         temp: 22, hum: 55, coolSet: 21,
@@ -43,6 +43,8 @@
         access: G.Acc.newState(),
         /* 實體接線：光模組、懸空的線、自我迴圈（phys.js） */
         phys: { xcvr: {}, loose: [], self: [], seq: 1 },
+        /* 廁所與清潔（restroom.js）：沙盒一開始就有 4 位白班清潔人員；劇情模式第一章只有 2F，1 位就夠 */
+        rest: G.Rest.newState(mode === 'sandbox' ? 4 : 1),
         /* 電話：沙盒模式從週一上班開始要有自己的電話交換機（之前用大樓的舊總機） */
         voice: { qos: false, trunk: 0, next: 0, nextAt: 0, graceUntil: mode === 'sandbox' ? U.at(3, 9) : 0 },
         stor: { snap: false, extraTB: 0 },
@@ -101,6 +103,9 @@
       s.ep = s.ep || G.Ep.newState();
       s.vuln = s.vuln || G.Vuln.newState();
       s.access = s.access || G.Acc.newState();
+      /* 智慧廁所的 IoT 網段（廁所與清潔本身在讀檔後由 Rest.ensure 補上） */
+      if (s.fw.iotVlan === undefined) s.fw.iotVlan = false;
+      s.subnets.iot = s.subnets.iot || 26;
       /* 沙盒模式全部知識卡都開放：新版本加入的卡片也要解鎖 */
       if (s.mode === 'sandbox') for (const c of G.KB.cards) if (s.kb.unlocked[c.id] === undefined) s.kb.unlocked[c.id] = s.time;
       /* 舊存檔：加入分支據點；沙盒模式接下來幾天陸續開幕 */
@@ -211,7 +216,9 @@
     const pos = ft.pos || 0;
     /* 停車場：車道的車牌辨識 / 柵欄機、監視器 */
     const gates = ft.gates || 0, cams = ft.cams || 0;
-    return { seats, printers, pos, gates, cams, aps: fs.aps.length, total: seats + printers + pos + gates + cams + fs.aps.length };
+    /* 智慧廁所的 IoT 閘道器（一台，PoE） */
+    const iot = G.Rest && G.Rest.hasIot(fid) ? 1 : 0;
+    return { seats, printers, pos, gates, cams, iot, aps: fs.aps.length, total: seats + printers + pos + gates + cams + iot + fs.aps.length };
   };
   /** 辦公樓層的進駐人數（不含餐廳與停車場人員） */
   Q.officeStaff = () => U.sum(G.BLD.floors.filter((f) => !G.FT[f.type].dine && !G.FT[f.type].park), (f) => G.S.floors[f.id].movedIn);
@@ -226,7 +233,8 @@
     /* 監視器：每台約 7 W（PoE Class 2～3） */
     const cams = (ft.cams || 0) * 7;
     const aps = U.sum(fs.aps, (a) => CAT.aps[a.model].poe);
-    return { budget, phones, cams, aps, used: phones + cams + aps };
+    const iot = G.Rest && G.Rest.hasIot(fid) ? CAT.rest.iotGw.poe : 0;
+    return { budget, phones, cams, iot, aps, used: phones + cams + iot + aps };
   };
 
   /** CIDR 前綴 → 可用主機數 */

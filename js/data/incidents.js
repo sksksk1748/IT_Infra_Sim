@@ -155,6 +155,62 @@
       },
     },
 
+    /* 廁所漏水：有智慧廁所的漏水感測器就幾分鐘內告警；沒有的話要等人發現——無障礙廁所和 IDF 只隔一道牆，漏久了會淹進 IDF */
+    'rest-leak': {
+      name: '廁所漏水', cat: 'ops', sev: 'high', kb: 'k-iot', minCh: 2, cooldown: 2880,
+      weight: () => (G.Rest.occupied().length ? 0.35 : 0),
+      init(s, inc) {
+        const fl = G.Rest.occupied();
+        if (!fl.length) return false;
+        const f = U.pick(fl);
+        const k = Math.random() < 0.5 ? 'A' : U.pick(['M', 'F']);
+        const r = G.Rest.room(f.id, k);
+        if (r.leak) return false;
+        r.leak = true;
+        Object.assign(inc.data, { fid: f.id, k, water: 0, idf: false, iot: G.Rest.iotOk(f.id) });
+        inc.title = `${f.id} ${G.Rest.RM[k].name}漏水`;
+        E().log(inc, `${f.id} ${G.Rest.RM[k].name}洗手台下方的給水管接頭鬆脫，開始漏水。`);
+      },
+      tick(s, inc) {
+        const d = inc.data, r = G.Rest.room(d.fid, d.k);
+        if (!r.leak && !d.idf) { E().resolve(inc, 'fixed'); return; }
+        if (r.leak) d.water++;
+        if (!inc.detected && r.leak) {
+          /* 漏水感測器的資料送得到 IoT 管理平台：馬上告警；沒有的話要等有人發現地板積水 */
+          if (G.Rest.iotOk(d.fid)) { d.iot = true; E().detect(inc, '智慧廁所的漏水感測器'); }
+          else {
+            const x = G.R.sim && G.R.sim.floors[d.fid];
+            if (Math.random() < (x && x.present > 20 ? 0.012 : 0.002)) E().detect(inc, '員工回報廁所地板積水');
+          }
+        }
+        /* 無障礙廁所和 IDF 弱電室只隔一道牆：漏了一個半小時，水就滲進 IDF */
+        if (r.leak && d.k === 'A' && !d.idf && d.water >= 90) {
+          d.idf = true;
+          E().log(inc, `水從牆角滲進隔壁的 IDF 弱電室，接入交換器泡水短路：${d.fid} 整層斷網！`);
+          if (!inc.detected) E().detect(inc, 'IDF 斷線告警');
+          s.rating = Math.max(0, s.rating - 3);
+        }
+      },
+      effects(s, inc, mods) { if (inc.data.idf) mods.floorOff[inc.data.fid] = true; },
+      actions: [
+        { id: 'valve', label: '關閉止水閥、請水電師傅修好接頭', cost: 6000, time: 25, verdict: 'good',
+          explain: '先關水再修：止水閥一關就不會再漏。發現得越早，損害越小——這就是漏水感測器的價值。',
+          run(s, inc) { G.Rest.room(inc.data.fid, inc.data.k).leak = false; E().log(inc, '止水閥關上、接頭換新，漏水停止。'); } },
+        { id: 'idf', label: '搶修 IDF：斷電、烘乾、更換泡水的交換器', cost: (s, inc) => Math.round(30000 + CAT.access[s.floors[inc.data.fid].idf.model].price * 2), time: 120, verdict: 'good',
+          avail: (s, inc) => inc.data.idf, unavail: 'IDF 沒有進水',
+          explain: '泡過水的網路設備不能直接開機（會短路燒毀）：先斷電、烘乾，泡水的交換器換新，再把漏水源修好。',
+          run(s, inc) { inc.data.idf = false; s.floors[inc.data.fid].idf.bootUntil = s.time + 5; E().log(inc, 'IDF 烘乾、交換器換新，樓層網路恢復。'); } },
+        { id: 'mop', label: '請清潔人員先拖地', time: 10, verdict: 'bad', explain: '只拖地沒有關水，水還是一直漏：拖完又濕了，還可能淹進隔壁的 IDF 弱電室。' },
+      ],
+      review(s, inc) {
+        const d = inc.data;
+        const out = [d.iot ? '漏水感測器在幾分鐘內就發出告警，損害很小。' : `沒有漏水感測器（或感測器的資料送不到 IoT 平台），漏了 ${d.water} 分鐘才被發現。`];
+        if (d.k === 'A') out.push('無障礙廁所和 IDF 弱電室只隔一道牆：弱電室旁邊的用水空間，最需要漏水偵測。');
+        if (!d.iot) out.push('導入智慧廁所：漏水、衛生紙、整潔度都由感測器即時回報，清潔人員和水電可以第一時間處理。');
+        return out;
+      },
+    },
+
     'hw-fail': {
       name: '設備硬體故障', cat: 'ops', sev: 'high', kb: 'k-ha', minCh: 3, cooldown: 2880, detect: 'auto',
       weight: (s) => (Object.values(s.devices).some((d) => d.rack && d.status === 'ok') ? 0.45 : 0),

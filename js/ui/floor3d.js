@@ -64,12 +64,15 @@
     FC[TY.OPEN] = '#5b646c'; FC[TY.DESK] = '#4f5b66'; FC[TY.MEET] = '#61584e'; FC[TY.OFFICE] = '#5f554b'; FC[TY.LAB] = '#6d777d';
     FC[TY.LOBBY] = '#8d9296'; FC[TY.CAFE] = '#7b6a55'; FC[TY.CORE] = '#474e54'; FC[TY.IDF] = '#2b353c'; FC[TY.WALL] = '#56606a'; FC[TY.GLASS] = '#56606a'; FC[TY.EXT] = '#394148';
     FC[TY.KITCHEN] = '#78848b'; FC[TY.SERVE] = '#6f6253'; FC[TY.DINE] = '#8b7a64'; FC[TY.COLD] = '#a9c3cd';
-    FC[TY.RAMP] = '#40474d'; FC[TY.PARK] = '#4a5157'; FC[TY.MOTO] = '#4f565c'; FC[TY.PILLAR] = '#6b7378';
+    FC[TY.RAMP] = '#40474d'; FC[TY.PARK] = '#4a5157'; FC[TY.MOTO] = '#4f565c'; FC[TY.PILLAR] = '#6b7378'; FC[TY.WC] = '#8e9ca4';
     const floorT = K.makeTex(W * 10, H * 10, (c) => {
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) K.D.rect(c, x * 10, y * 10, 10.3, 10.3, FC[L.type[y * W + x]] || FC[TY.OPEN]);
       c.fillStyle = 'rgba(255,255,255,0.045)';
       for (let x = 0; x <= W; x++) c.fillRect(x * 10 - 0.2, 0, 0.4, H * 10);
       for (let y = 0; y <= H; y++) c.fillRect(0, y * 10 - 0.2, W * 10, 0.4);
+      /* 廁所地磚：每格再分成 2 × 2 小塊 */
+      c.fillStyle = 'rgba(255,255,255,0.14)';
+      for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (L.type[y * W + x] === TY.WC) { c.fillRect(x * 10 + 4.8, y * 10, 0.4, 10); c.fillRect(x * 10, y * 10 + 4.8, 10, 0.4); }
       for (const r of L.rooms) {
         if (r.kind === TY.CORE || r.x1 - r.x0 < 6) continue;
         const cy = r.y0 === 0 ? r.y1 - 1.2 : r.y1 === H - 1 ? r.y0 + 1.7 : (r.y0 + r.y1 + 1) / 2;
@@ -159,17 +162,31 @@
     const coreM = K.std('#747c83', { roughness: 0.9, metalness: 0.05 });
     const coreB = batch(coreM, { kind: 'core' });
     const coreBox = (x0, y0, x1, y1) => { if (x1 < x0 || y1 < y0) return; coreB.add((wx(x0) + wx(x1)) / 2, CORE_H / 2, (wz(y0) + wz(y1)) / 2, x1 - x0 + 1, CORE_H, y1 - y0 + 1); };
-    coreBox(cb.x0, cb.y0, cb.x1, ib.y0 - 1);
-    coreBox(ib.x1 + 1, ib.y0, cb.x1, cb.y1);
-    coreBox(cb.x0, ib.y0, ib.x0 - 1, cb.y1);
-    coreBox(ib.x0, ib.y1 + 1, ib.x1, cb.y1);
+    /* 一排一排把核心筒的格子連成方塊：IDF、廁所與門口留空 */
+    for (let y = cb.y0; y <= cb.y1; y++) {
+      for (let x = cb.x0; x <= cb.x1;) {
+        if (at(x, y) !== TY.CORE) { x++; continue; }
+        let x1 = x;
+        while (x1 + 1 <= cb.x1 && at(x1 + 1, y) === TY.CORE) x1++;
+        coreBox(x, y, x1, y);
+        x = x1 + 1;
+      }
+    }
+    /* IDF 和隔壁廁所之間的隔間牆；廁所門口上方的門楣 */
+    for (let y = ib.y0; y <= ib.y1; y++) for (let x = ib.x0; x <= ib.x1; x++) {
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        if (at(x + dx, y + dy) !== TY.WC) continue;
+        coreB.add(wx(x) + dx * 0.5, CORE_H / 2, wz(y) + dy * 0.5, dx ? 0.14 : 1, CORE_H, dy ? 0.14 : 1);
+      }
+    }
+    for (const w of L.wc || []) coreB.add(wx(w.door[0]), (2.2 + CORE_H) / 2, wz(w.door[1]), 1, CORE_H - 2.2, 1);
     coreB.build(root);
-    /* 電梯門（核心筒朝南的那一面） */
+    /* 電梯門（核心筒朝南的那一面，無障礙廁所門口的東邊） */
     const doorB = batch(K.std('#aeb6bc', { metalness: 0.6, roughness: 0.35 }), null);
-    for (let k = 0; k < 3; k++) doorB.add(wx(ib.x1 + 2) + k * 2.2, 1.1, wz(cb.y1) + 0.51, 1.2, 2.1, 0.04);
+    for (let k = 0; k < 3; k++) doorB.add(wx(cb.x1 - 4.4) + k * 1.75, 1.1, wz(cb.y1) + 0.51, 1.2, 2.1, 0.04);
     doorB.build(root);
     const coreTag = tag('核心筒（電梯 / 樓梯）', '', 'center', 0);
-    coreTag.pos.set((wx(cb.x0) + wx(cb.x1)) / 2 + 1.5, CORE_H + 0.6, (wz(cb.y0) + wz(ib.y0 - 1)) / 2);
+    coreTag.pos.set(wx(cb.x1 - 2.5), CORE_H + 0.6, (wz(ib.y0) + wz(cb.y1)) / 2);
     /* IDF 機櫃與通往 B1 的豎井開口 */
     const IDF = [wx(L.idf.x) + 0.3, wz(L.idf.y) - 0.2];
     const CAB_TOP = 2.05;
@@ -356,6 +373,8 @@
     const dineMod = G.FT[f.type].dine && M3.canteen ? M3.canteen({ api, K, fx, L, fid, root, wx, wz, batch }) : null;
     /* 停車場樓層：汽機車、柵欄機、監視器、充電樁、走向電梯廳打卡的人（parking3d.js） */
     const parkMod = park && M3.parking ? M3.parking({ api, K, fx, L, fid, root, wx, wz, batch }) : null;
+    /* 廁所：隔間、清潔人員、智慧廁所感測器、漏水積水（restroom3d.js） */
+    const restMod = M3.restroom ? M3.restroom({ api, K, L, fid, root, wx, wz, batch }) : null;
     /* 螢幕：亮 = 有人在用；紅色 = 受感染；橘色 = 網路斷線 */
     const MON = { off: C('#1a2228'), on: C('#9fd8ff'), red: C('#ff4a3d'), amber: C('#f0a63a') };
     const monitors = new T.InstancedMesh(unit, own(new T.MeshBasicMaterial({ color: 0xffffff })), Math.max(1, monPos.length));
@@ -656,7 +675,7 @@
       const apBy = {};
       for (const a of G.S.floors[fid].aps) apBy[a.id] = a;
       for (let i = 0; i < W * H; i++) {
-        if (L.type[i] === TY.EXT) continue;
+        if (L.type[i] === TY.EXT || L.type[i] === TY.WC) continue;
         const r = plan.best[i], k = plan.bestIdx[i], served = r >= G.Wifi.TH.assoc && k >= 0;
         let hex = '#6e7882', a = 0.22;
         if (layer === 'rssi') { const hh = heatOf(r); if (hh) { hex = hh[1]; a = 0.5; } else a = 0.28; }
@@ -739,6 +758,7 @@
         no = Math.round(U.clamp((st ? st.diners || 0 : 0) / G.FT[f.type].diners, 0, 1) * otherSeats.length);
       }
       if (parkMod) parkMod.sync(st);
+      if (restMod) restMod.sync(st);
       if (nd + ':' + no !== occSig) { occSig = nd + ':' + no; placePeople(nd, no); }
       /* 資安事件：受感染的電腦螢幕變紅、偽冒 AP */
       let redN = 0, alert = '', rogueNow = null;
@@ -791,12 +811,12 @@
     TNAME[TY.OPEN] = '走道'; TNAME[TY.DESK] = '開放式座位區'; TNAME[TY.MEET] = '會議室'; TNAME[TY.OFFICE] = '辦公室'; TNAME[TY.LAB] = '實驗室';
     TNAME[TY.LOBBY] = '大廳'; TNAME[TY.CAFE] = '茶水間'; TNAME[TY.CORE] = '核心筒'; TNAME[TY.IDF] = 'IDF 弱電室'; TNAME[TY.WALL] = '牆'; TNAME[TY.GLASS] = '玻璃隔間'; TNAME[TY.EXT] = '外牆';
     TNAME[TY.KITCHEN] = '廚房'; TNAME[TY.DINE] = '用餐區'; TNAME[TY.SERVE] = '餐檯 / 櫃台'; TNAME[TY.COLD] = '冷凍庫';
-    TNAME[TY.RAMP] = '車道'; TNAME[TY.PARK] = '汽車停車格'; TNAME[TY.MOTO] = '機車停車格'; TNAME[TY.PILLAR] = '結構柱';
+    TNAME[TY.RAMP] = '車道'; TNAME[TY.PARK] = '汽車停車格'; TNAME[TY.MOTO] = '機車停車格'; TNAME[TY.PILLAR] = '結構柱'; TNAME[TY.WC] = '廁所';
     const roomAt = (x, y) => L.rooms.find((r) => r.kind !== TY.CORE && x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1);
     function spotTip(pt) {
       const s = G.S, fs = s.floors[fid];
       const c = cellOf(pt), i = c.y * W + c.x;
-      const room = roomAt(c.x, c.y);
+      const room = L.type[i] === TY.WC && L.wc ? { label: (L.wc.find((w) => c.x >= w.x0 && c.x <= w.x1 && c.y >= w.y0 && c.y <= w.y1) || { name: '廁所' }).name } : roomAt(c.x, c.y);
       const out = [`${room ? room.label : TNAME[L.type[i]] || ''}（${c.x}, ${c.y}）`];
       if (fs.aps.length) {
         const plan = G.Wifi.get(fid, new Set(fs.aps.map((a) => a.id)));
@@ -834,7 +854,7 @@
     const RIP_BASE = fx.rgb('#5fd4ff'), RED = fx.rgb('#ff4d4d');
     const ripC = new T.Color();
     const PARK_KINDS = ['gate', 'car', 'moto', 'ev', 'cam', 'pillar', 'ramp', 'walker'];
-    const floorLike = (k) => k === 'floor' || k === 'spot' || k === 'person' || k === 'wall' || k === 'core' || k === 'crew' || k === 'pos' || k === 'cold' || PARK_KINDS.includes(k);
+    const floorLike = (k) => k === 'floor' || k === 'spot' || k === 'person' || k === 'wall' || k === 'core' || k === 'crew' || k === 'pos' || k === 'cold' || k === 'wc' || k === 'cleaner' || k === 'wetsign' || k === 'leak' || PARK_KINDS.includes(k);
 
     return {
       /* 預設視角：從南側正面看進去（yaw 0），平面圖的長邊和畫面平行，不會歪一邊 */
@@ -895,6 +915,7 @@
         P.end();
         if (dineMod) dineMod.tick(dt, t);
         if (parkMod) parkMod.tick(dt, t);
+        if (restMod) restMod.tick(dt, t);
         /* 閃爍：偽冒 AP、選取外圈 */
         if (rogue.visible) rogueLed.material.emissiveIntensity = Math.sin(t * 8) > 0 ? 2.6 : 0.3;
         if (selRing.visible) selRing.scale.setScalar(1 + 0.12 * Math.sin(t * 4));
@@ -918,6 +939,10 @@
         if (parkMod && PARK_KINDS.includes(p.kind)) {
           const Ls = parkMod.tip(p);
           if (Ls) return Ls.filter(Boolean).concat(p.pt && tool === 'place' ? spotTip(p.pt).slice(-1) : p.pt ? spotTip(p.pt).slice(1, 2) : []);
+        }
+        if (restMod && restMod.kinds.includes(p.kind)) {
+          const Ls = restMod.tip(p);
+          if (Ls) return Ls.filter(Boolean).concat(p.pt && tool === 'place' ? spotTip(p.pt).slice(-1) : []);
         }
         if (p.kind === 'wall') { const d = WALLDEF[p.cls]; return [d.name, `Wi-Fi 訊號穿過時衰減${d.att}`].concat(p.pt && tool === 'place' ? spotTip(p.pt).slice(-1) : []); }
         if (p.kind === 'core') return ['核心筒（電梯 / 樓梯）', '鋼筋混凝土：訊號衰減 8～15 dB，幾乎穿不透', 'IDF 弱電室就在核心筒裡、緊鄰弱電豎井'];
@@ -951,6 +976,7 @@
         offTheme();
         if (dineMod) dineMod.dispose();
         if (parkMod) parkMod.dispose();
+        if (restMod) restMod.dispose();
         for (const t of allTags) t.remove();
         for (const t of chTags) t.remove();
         for (const m of mats) m.dispose();

@@ -415,6 +415,15 @@
         clockOk: ft.park ? 0 : 1, gateOk: ft.gates ? gateOk : true, camOk: ft.cams ? (up ? Math.min(camPorts, poeF) : 0) : 1,
       };
       floorSt[f.id] = st;
+      /* 智慧廁所：IoT 閘道器 → IoT 管理平台（MQTT），全天候都要連得上。
+       * IoT 獨立網段的閘道設在防火牆上（IOT 區域）；沒有獨立網段時就是員工內網（LAN），開了內部分段才經過防火牆 */
+      if (up && G.Rest.hasIot(f.id)) {
+        const iv = !!s.fw.iotVlan;
+        const fl = { id: nid + '>IOT', stage: 1, kind: 'iot', floor: f.id, src: nid, dst: 'ROLE:iot', fwd: 0.03, rev: 0.01, zs: iv ? 'IOT' : 'LAN', zd: null, svc: ['MQTT'] };
+        if ((iv || segOn) && fwNode) fl.via = fwNode.dev.id;
+        flows.push(fl);
+        st.iotFlow = fl;
+      }
       if (!up || (pres < 0.5 && guests < 0.5 && crowd < 0.5)) continue;
 
       const wiredU = pres * ft.wired * portFrac * dhcpWired;
@@ -717,6 +726,9 @@
       web = { demand: webDem, delivered: webDem * r, ratio: r, blocked: webFlow.blocked };
     }
 
+    /* 智慧廁所的感測器資料有沒有送到 IoT 管理平台 */
+    for (const f of G.BLD.floors) { const st = floorSt[f.id]; st.iotOk = !!(st.iotFlow && !st.iotFlow.blocked); }
+
     /* ---- 樓層滿意度 ---- */
     G.R.satEma = G.R.satEma || {};
     let adCap = 0;
@@ -773,6 +785,8 @@
       }
       /* 檔案伺服器的空間滿了：存不了檔 */
       if (G.R.stor && G.R.stor.fileFull && required.includes('file')) q *= 0.88;
+      /* 廁所太髒、沒衛生紙、馬桶堵住（最多扣 10%） */
+      q *= G.Rest.satMult(f.id);
       if (mods.floorPenalty && mods.floorPenalty[f.id]) q *= mods.floorPenalty[f.id];
       q = U.clamp(q * 0.97, 0, 1);
       const prev = G.R.satEma[f.id];

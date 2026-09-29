@@ -63,7 +63,7 @@
     const set = new Set();
     if (!floorUp) return set;
     const poe = G.Q.floorPoe(fid);
-    let left = poe.budget - poe.phones - (poe.cams || 0);
+    let left = poe.budget - poe.phones - (poe.cams || 0) - (poe.iot || 0);
     for (const a of fs.aps) {
       const w = CAT.aps[a.model].poe;
       if (left >= w) { set.add(a.id); left -= w; }

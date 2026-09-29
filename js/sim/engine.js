@@ -58,6 +58,8 @@
     G.R = { topoVer: 1 };
     /* 舊存檔：替每條線路補上實體跳線（埠、光模組）；並算好 STP */
     G.Phys.ensure();
+    /* 舊存檔：補上廁所與清潔 */
+    G.Rest.ensure();
     G.Fac.update(0);
     G.Stor.update();
     G.Ev.applyEffects();
@@ -106,6 +108,8 @@
     /* 廣播風暴告警、割接（第九章）的計時與評分 */
     G.Phys.watch(s);
     G.Cut.tick(s);
+    /* 廁所：使用、清潔人員巡邏 / 依感測器派工、夜班整理 */
+    G.Rest.tick(s);
     if (s.time % 5 === 0) G.Ops.monitor();
     rating(s);
     if (s.time % 1440 === 0) daily(s);
@@ -199,20 +203,23 @@
     const income = Q.employees() * 14 * (0.4 + s.rating / 100);
     /* AI 平台帶來的研發效率：每 1 PFLOPS 有效算力每天約 NT$6 萬 */
     const ai = G.R.ai ? G.R.ai.pflops * 60000 : 0;
-    return { isp, svc, maint, power, income: income + ai, ai };
+    /* 清潔：白班清潔人員（外包）+ 衛生紙與洗手乳 */
+    const clean = G.Rest.dailyCost();
+    return { isp, svc, maint, power, clean, income: income + ai, ai };
   };
 
   function daily(s) {
     const c = Engine.dailyCosts();
     const power = (s.power.kwh || 0) * CAT.power.perKWh;
     s.power.kwh = 0;
-    const cost = Math.round(c.isp + c.svc + c.maint + power);
+    const cost = Math.round(c.isp + c.svc + c.maint + c.clean + power);
+    G.Rest.resetDay();
     const income = Math.round(c.income);
     s.money += income - cost;
     s.stats.income += income;
     s.stats.spent += cost;
-    s.lastDaily = { t: s.time, income, isp: Math.round(c.isp), svc: Math.round(c.svc), maint: Math.round(c.maint), power: Math.round(power) };
-    G.Act.log(`每日結算：營運預算 +${U.money(income)}${c.ai > 0 ? `（含 AI 平台效益 ${U.money(c.ai)}）` : ''}；電信（ISP、WAN、SIP）${U.money(c.isp)}、訂閱服務 ${U.money(c.svc)}、維護 ${U.money(c.maint)}、電費 ${U.money(power)}`, 'money');
+    s.lastDaily = { t: s.time, income, isp: Math.round(c.isp), svc: Math.round(c.svc), maint: Math.round(c.maint), clean: Math.round(c.clean), power: Math.round(power) };
+    G.Act.log(`每日結算：營運預算 +${U.money(income)}${c.ai > 0 ? `（含 AI 平台效益 ${U.money(c.ai)}）` : ''}；電信（ISP、WAN、SIP）${U.money(c.isp)}、訂閱服務 ${U.money(c.svc)}、維護 ${U.money(c.maint)}、清潔 ${U.money(c.clean)}、電費 ${U.money(power)}`, 'money');
     for (const k in s.ruleHits) s.ruleHits[k] = Math.round(s.ruleHits[k] * 0.5);
   }
 
