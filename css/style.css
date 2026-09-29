@@ -702,3 +702,8 @@ g.hint-glow .pp-cage { stroke: #f5c518 !important; stroke-width: 2.2 !important;
 .pp-grade { width: 64px; height: 64px; border-radius: 14px; display: grid; place-items: center; font: 800 36px var(--font-display); border: 2px solid currentColor; flex: none; }
 .pp-grade.ok { color: var(--ok); } .pp-grade.info { color: var(--info); } .pp-grade.warn { color: var(--warn); } .pp-grade.bad { color: var(--bad); }
 @media (prefers-reduced-motion: reduce) { .pp-led.storm { animation: none; fill: #ffb020; } }
+
+/* ---------- 雲端存檔 ---------- */
+.cloud-slot { display: flex; flex-direction: column; gap: 3px; }
+.cloud-slot.on { border-color: var(--accent); background: var(--accent-soft); }
+.cloud-note { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }

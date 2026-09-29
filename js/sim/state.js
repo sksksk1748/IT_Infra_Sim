@@ -17,12 +17,14 @@
   }
 
   G.R = { topoVer: 1 };
+  /** 每一局遊戲的識別碼（雲端存檔用來分辨「同一局」還是「另一局」，避免自動同步蓋掉別的遊戲） */
+  const newGid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 
   G.State = {
     SAVE_KEY,
     create(mode) {
       const s = {
-        v: 1, mode, seq: 1,
+        v: 1, mode, seq: 1, gid: newGid(),
         time: U.at(1, 8), speed: 0,
         money: 0, rating: 60,
         chapter: 0, chapterStart: U.at(1, 8), obj: {}, objT: {}, flags: {}, sched: [],
@@ -66,16 +68,24 @@
     peek() {
       const str = U.store.get(SAVE_KEY);
       if (!str) return null;
-      try { const s = JSON.parse(str); return { mode: s.mode, time: s.time, chapter: s.chapter, money: s.money, scen: s.scen ? s.scen.id : null }; } catch (e) { return null; }
+      try { const s = JSON.parse(str); return { mode: s.mode, time: s.time, chapter: s.chapter, money: s.money, scen: s.scen ? s.scen.id : null, gid: s.gid || null, won: !!s.won }; } catch (e) { return null; }
     },
     load() {
       const str = U.store.get(SAVE_KEY);
       if (!str) return null;
-      try { return G.State.migrate(JSON.parse(str)); } catch (e) { console.error(e); return null; }
+      try {
+        const raw = JSON.parse(str);
+        const hadGid = !!raw.gid;
+        const s = G.State.migrate(raw);
+        /* 舊存檔剛拿到識別碼：馬上寫回去，下次讀取才會是同一局 */
+        if (s && !hadGid) U.store.set(SAVE_KEY, JSON.stringify(s));
+        return s;
+      } catch (e) { console.error(e); return null; }
     },
     clear() { U.store.del(SAVE_KEY); },
     migrate(s) {
       if (!s || s.v !== 1) return null;
+      s.gid = s.gid || newGid();
       for (const f of G.BLD.floors) {
         if (s.floors[f.id]) continue;
         s.floors[f.id] = newFloorState();

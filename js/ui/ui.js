@@ -494,13 +494,16 @@
           h('button', { class: 'btn', onclick: () => { const ok = G.State.save(); UI.res({ ok, msg: ok ? '已存檔（瀏覽器本機）' : '存檔失敗：瀏覽器封鎖了本機儲存，請改用「匯出存檔」' }); } }, '存檔'),
           h('button', { class: 'btn', onclick: () => { close(); UI.exportSave(); } }, '匯出存檔（文字）'),
           h('button', { class: 'btn', onclick: () => { close(); UI.importSave(); } }, '匯入存檔'),
+          G.Cloud && G.Cloud.configured() ? h('button', { class: 'btn', 'data-hint': 'menu-cloud', onclick: () => { close(); UI.cloud(); } }, '雲端存檔（Google 帳號）') : null,
           h('button', { class: 'btn', onclick: () => { close(); UI.help(); } }, '操作說明'),
           h('button', { class: 'btn', onclick: () => { close(); UI.go('noc'); UI.showLog(); } }, '營運日誌'),
           h('button', { class: 'btn danger', onclick: () => { close(); UI.confirm('回到標題畫面', '目前進度會先自動存檔。', '回到標題', () => { G.State.save(); UI.title(); }); } }, '回到標題')),
         h('div', { class: 'row wrap', style: { marginTop: '4px' } }, h('span', {}, '畫面外觀'), UI.themeSeg()),
         G.Hint ? h('div', { class: 'row wrap', style: { marginTop: '4px' } }, h('span', {}, '提示'), (() => { const seg = h('div', { class: 'seg', role: 'group', 'aria-label': '提示' }); const draw = () => { U.clear(seg); for (const [k, t] of G.Hint.MODES) seg.appendChild(h('button', { class: G.Hint.mode() === k ? 'on' : '', onclick: () => { G.Hint.setMode(k); draw(); } }, t)); }; draw(); return seg; })()) : null,
         h('label', { class: 'row', style: { marginTop: '4px' } }, h('input', { type: 'checkbox', id: 'opt-autopause', checked: s.settings.autoPause, onchange: (e) => { s.settings.autoPause = e.target.checked; } }), '重大事件發生時自動暫停'),
-        h('p', { class: 'small dim' }, '存檔保存在這個瀏覽器中；換裝置或清除瀏覽資料前，請先匯出存檔。'),
+        h('p', { class: 'small dim' }, G.Cloud && G.Cloud.configured()
+          ? (G.Cloud.user ? `存檔保存在這個瀏覽器，並同步到雲端（${G.Cloud.pref().slot ? '欄位 ' + G.Cloud.pref().slot.slice(1) : '還沒選欄位'}）。` : '存檔保存在這個瀏覽器中；登入「雲端存檔」就能換裝置接著玩。')
+          : '存檔保存在這個瀏覽器中；換裝置或清除瀏覽資料前，請先匯出存檔。'),
       ],
     });
   };
@@ -600,6 +603,7 @@
       h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '九章，從空機房到萬人企業、AI 運算中心、集團 IT 與核心割接')),
       h('button', { class: 'btn', onclick: () => startNew('sandbox') }, '沙盒模式', h('small', {}, '預算 1.5 億，自由建設')),
       h('button', { class: 'btn', onclick: () => UI.scenPicker() }, '情境挑戰', h('small', {}, '限時處理事件 · 評分')),
+      G.Cloud && G.Cloud.configured() ? h('button', { class: 'btn ghost', onclick: () => UI.cloud() }, '雲端存檔', h('small', {}, '用 Google 帳號在別台裝置接著玩')) : null,
       h('button', { class: 'btn ghost', onclick: () => UI.importSave() }, '匯入存檔', h('small', {}, '')));
     const scr = h('div', { class: 'title-screen', id: 'title' },
       h('div', { class: 'title-inner' },
@@ -611,6 +615,8 @@
           h('div', { class: 'topics' }, topics.map((t) => h('span', { class: 'chip' }, t)))),
         rackArt()));
     document.body.appendChild(scr);
+    /* 雲端上有比較新的進度時提醒 */
+    if (G.Cloud) G.Cloud.titleNote();
   };
   UI.hideTitle = () => { const t = document.getElementById('title'); if (t) t.remove(); };
   UI.sandboxIntro = () => UI.modal({
