@@ -78,36 +78,56 @@
     }
     for (const d of routers.concat(fws)) if (!hasLinks(d.id)) { /* 仍放在各自層級，方便連線 */ }
     const MAIN = 500;
+    /* 一排放不下就自動換行：每一層最多 cap 個、橫向間距 gap、換行間距 rg；回傳最後一排的 y */
+    const tier = (list, y, cap, gap, w, hh, rg, cx, mk) => {
+      let last = y;
+      for (let r = 0; r * cap < list.length; r++) {
+        const row = list.slice(r * cap, (r + 1) * cap);
+        last = y + r * rg;
+        spread(row.length, cx, gap).forEach((x, i) => { pos[mk(row[i])] = { x, y: last, w, h: hh, kind: 'dev' }; });
+      }
+      return last;
+    };
     pos.INET = { x: MAIN, y: 44, w: 170, h: 48, kind: 'internet' };
     const isps = s.isp.slice();
-    spread(isps.length, MAIN, 190).forEach((x, i) => { pos['isp:' + isps[i].id] = { x, y: 132, w: 156, h: 36, kind: 'isp' }; });
-    spread(routers.length, MAIN, 210).forEach((x, i) => { pos[routers[i].id] = { x, y: 222, w: 150, h: 44, kind: 'dev' }; });
-    spread(fws.length, MAIN, 210).forEach((x, i) => { pos[fws[i].id] = { x, y: 318, w: 150, h: 44, kind: 'dev' }; });
-    spread(core.length, MAIN, 230).forEach((x, i) => { pos[core[i].id] = { x, y: 420, w: 150, h: 44, kind: 'dev' }; });
+    let y = tier(isps, 132, 5, 190, 156, 36, 50, MAIN, (c) => 'isp:' + c.id);
+    for (const c of isps) pos['isp:' + c.id].kind = 'isp';
+    y = tier(routers, y + 90, 4, 210, 150, 44, 60, MAIN, (d) => d.id);
+    y = tier(fws, y + 96, 4, 210, 150, 44, 60, MAIN, (d) => d.id);
+    y = tier(core, y + 102, 5, 170, 150, 44, 60, MAIN, (d) => d.id);
     const floors = G.BLD.floors;
-    const perRow = 12;
+    const perRow = 10;
+    const fy = y + 128;
     floors.forEach((f, i) => {
       const row = Math.floor(i / perRow), col = i % perRow;
       const n = Math.min(perRow, floors.length - row * perRow);
-      const x = 40 + (col + (perRow - n) / 2) * 84 + 8;
-      pos['F:' + f.id] = { x, y: 548 + row * 56, w: 66, h: 32, kind: 'floor' };
+      pos['F:' + f.id] = { x: MAIN + (col - (n - 1) / 2) * 84, y: fy + row * 56, w: 66, h: 32, kind: 'floor' };
     });
+    const mainEnd = fy + (Math.ceil(floors.length / perRow) - 1) * 56;
+    /* 右欄（DMZ、伺服器區）：兩欄、往下堆疊，不會和左邊的樓層重疊 */
     const RX = 1080;
-    spread(dmz.length, RX, 150).forEach((x, i) => { pos[dmz[i].id] = { x, y: 300, w: 140, h: 40, kind: 'dev' }; });
-    dmzSrv.forEach((d, i) => { pos[d.id] = { x: RX - 70 + (i % 2) * 140, y: 366 + Math.floor(i / 2) * 50, w: 130, h: 40, kind: 'dev' }; });
-    const srvTop = Math.max(470, 366 + Math.ceil(dmzSrv.length / 2) * 50 + 50);
-    spread(srvSw.length, RX, 150).forEach((x, i) => { pos[srvSw[i].id] = { x, y: srvTop, w: 140, h: 40, kind: 'dev' }; });
-    const srvStart = srvSw.length ? srvTop + 64 : srvTop;
-    srv.forEach((d, i) => { pos[d.id] = { x: RX - 70 + (i % 2) * 140, y: srvStart + Math.floor(i / 2) * 50, w: 130, h: 40, kind: 'dev' }; });
-    const loneY = Math.max(700, srvStart + Math.ceil(srv.length / 2) * 50 + 30);
-    lone.forEach((d, i) => { pos[d.id] = { x: 90 + i * 150, y: loneY, w: 136, h: 40, kind: 'dev', lone: true }; });
+    const grid = (list, y0) => {
+      list.forEach((d, i) => { pos[d.id] = { x: RX - 70 + (i % 2) * 140, y: y0 + Math.floor(i / 2) * 50, w: 130, h: 40, kind: 'dev' }; });
+      return list.length ? y0 + (Math.ceil(list.length / 2) - 1) * 50 : y0 - 50;
+    };
+    let ry = 300;
+    if (dmz.length) ry = tier(dmz, ry, 2, 150, 140, 40, 50, RX, (d) => d.id) + 66;
+    else ry = 366;
+    ry = grid(dmzSrv, ry) + 100;
+    const srvTop = Math.max(470, ry);
+    let sy = srvSw.length ? tier(srvSw, srvTop, 2, 150, 140, 40, 50, RX, (d) => d.id) + 64 : srvTop;
+    const srvEnd = grid(srv, sy);
+    const cap = 8;
+    const loneY = Math.max(700, mainEnd + 80, srvEnd + 80);
+    lone.forEach((d, i) => { pos[d.id] = { x: 90 + (i % cap) * 150, y: loneY + Math.floor(i / cap) * 50, w: 136, h: 40, kind: 'dev', lone: true }; });
+    const loneEnd = loneY + (Math.ceil(lone.length / cap) - 1) * 50;
     const groups = {
       outside: ['INET'].concat(isps.map((c) => 'isp:' + c.id), routers.map((d) => d.id)),
       inside: core.map((d) => d.id).concat(floors.map((f) => 'F:' + f.id)),
       dmz: dmz.concat(dmzSrv).map((d) => d.id),
       servers: srvSw.concat(srv).map((d) => d.id),
     };
-    const H = Math.max(VH, loneY + 50);
+    const H = Math.max(VH, (lone.length ? loneEnd : Math.max(mainEnd, srvEnd)) + 50);
     return { pos, groups, lone: lone.length, loneY, H };
   }
 
@@ -199,7 +219,9 @@
     if (lay.lone) V.svg.appendChild(U.s('text', { x: 20, y: lay.loneY - 34, 'font-size': 11, fill: 'var(--text-3)' }, '尚未連線的設備（點選後按「連線」）'));
     const edgeG = U.s('g', {});
     const nodeG = U.s('g', {});
-    V.svg.append(edgeG, nodeG);
+    /* 線路上的文字放在最上層（不會被設備蓋住），並且會自動錯開 */
+    V.labelG = U.s('g', { 'pointer-events': 'none' });
+    V.svg.append(edgeG, nodeG, V.labelG);
     /* ISP 邊 */
     for (const c of s.isp) {
       const P = pos['isp:' + c.id];
@@ -227,7 +249,7 @@
       if (fwEnd && l.zone) {
         const other = fwEnd === p.a ? p.b : p.a;
         const tx = fwEnd.x + (other.x - fwEnd.x) * 0.22, ty = fwEnd.y + (other.y - fwEnd.y) * 0.22;
-        edgeG.appendChild(U.s('text', { x: tx + 4, y: ty, 'font-size': 9, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)', 'font-weight': 600 }, { outside: 'OUT', inside: 'IN', dmz: 'DMZ', ha: 'HA', ot: 'OT' }[l.zone]));
+        V.labelG.appendChild(U.s('text', { x: tx + 4, y: ty, 'font-size': 9, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)', 'font-weight': 600, class: 'tlabel' }, { outside: 'OUT', inside: 'IN', dmz: 'DMZ', ha: 'HA', ot: 'OT' }[l.zone]));
       }
       e.link = l;
       V.refs.links[l.id] = e;
@@ -349,13 +371,16 @@
     const base = U.s('path', { d: p.d, fill: 'none', stroke: o.color, 'stroke-width': o.width, opacity: 0.9, 'stroke-linecap': 'round' });
     const flow = U.s('path', { d: p.d, fill: 'none', stroke: 'var(--text)', 'stroke-width': 1.2, opacity: 0.6, 'stroke-dasharray': '3 9', class: 'flow' });
     const hit = U.s('path', { d: p.d, fill: 'none', stroke: 'transparent', 'stroke-width': 14 });
-    const label = U.s('text', { x: p.mx + 5, y: p.my - 4, 'font-size': 9.5, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)' }, '');
-    g.append(base, flow, hit, label);
+    const horiz = !p.a.v;
+    const lx = horiz ? p.mx : p.mx + 5, ly = horiz ? p.a.y - 28 : p.my - 4;
+    const label = U.s('text', { x: lx, y: ly, 'font-size': 9.5, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)', 'text-anchor': horiz ? 'middle' : 'start', class: 'tlabel' }, '');
+    g.append(base, flow, hit);
+    V.labelG.appendChild(label);
     g.addEventListener('click', (e) => { e.stopPropagation(); o.click(); });
     parent.appendChild(g);
     const sel = V.sel && ((V.sel.type === 'link' && V.sel.id === o.key) || (V.sel.type === 'node' && o.key.startsWith('isp') && V.sel.id === 'isp:' + o.key.split(':')[1]));
     if (sel) base.setAttribute('stroke-width', o.width + 2);
-    return { g, base, flow, label, color: o.color, width: o.width, key: o.key };
+    return { g, base, flow, label, lx, ly, horiz, color: o.color, width: o.width, key: o.key };
   }
 
   function mkNode(id, P) {
@@ -410,6 +435,33 @@
       e.flow.style.animationDirection = dirRev ? 'reverse' : 'normal';
     }
   }
+  /** 線路文字避開設備與彼此：文字太擠就沿垂直方向找一個空位 */
+  function declutter() {
+    if (!V.refs || !V.pos) return;
+    const es = Object.values(V.refs.links).concat(Object.values(V.refs.isp));
+    const boxes = Object.values(V.pos).map((p) => ({ x0: p.x - p.w / 2 - 2, x1: p.x + p.w / 2 + 2, y0: p.y - p.h / 2 - 2, y1: p.y + p.h / 2 + 2 }));
+    const wOf = (t) => { let w = 0; for (const ch of t) w += ch.charCodeAt(0) > 255 ? 9.5 : 5.8; return w; };
+    const hit = (b, list) => list.some((o) => b.x0 < o.x1 && b.x1 > o.x0 && b.y0 < o.y1 && b.y1 > o.y0);
+    const items = es.filter((e) => e.label.textContent).sort((a, b) => a.ly - b.ly || a.lx - b.lx);
+    /* 防火牆介面的 IN / OUT / DMZ 標籤固定不動，其他文字要閃開它 */
+    const placed = [...V.labelG.querySelectorAll('.tlabel')].filter((t) => t.textContent && !es.some((e) => e.label === t))
+      .map((t) => { const x = +t.getAttribute('x'), y = +t.getAttribute('y'), w = wOf(t.textContent); return { x0: x, x1: x + w, y0: y - 12, y1: y + 4 }; });
+    for (const e of items) {
+      const w = wOf(e.label.textContent);
+      const at = (dx, dy) => { const y = e.ly + dy, x0 = (e.horiz ? e.lx - w / 2 : e.lx) + dx; return { x0, x1: x0 + w, y0: y - 12, y1: y + 4, x: e.lx + dx, y }; };
+      let pick = null;
+      const tries = [];
+      for (const dy of [0, 13, -13, 26, -26, 39, -39, 52, -52]) for (const dx of [0, 24, -24, 48, -48]) tries.push([dx, dy]);
+      for (const [dx, dy] of tries) {
+        const b = at(dx, dy);
+        if (!hit(b, placed) && !hit(b, boxes)) { pick = b; break; }
+      }
+      if (!pick) pick = at(0, 0);
+      placed.push(pick);
+      e.label.setAttribute('x', pick.x);
+      e.label.setAttribute('y', pick.y);
+    }
+  }
   function applyLive() {
     if (!V.refs) return;
     const s = G.S, sim = G.R.sim || { links: {}, isp: {}, floors: {}, nodes: {}, wan: { in: 0, out: 0, cap: 0 } };
@@ -442,6 +494,7 @@
       const e2 = V.refs.isp[c.id + '#h'];
       if (e2) styleEdge(e2, is ? is.util : 0, !up || !(is && is.up), false, false);
     }
+    declutter();
     if (V.refs.inetSub) V.refs.inetSub.textContent = sim.wan.cap ? `WAN ↓${U.bw(sim.wan.in)} ↑${U.bw(sim.wan.out)}` : '尚未連線';
     for (const [id, r] of Object.entries(V.refs.nodes)) {
       let stroke = 'var(--line-2)';

@@ -375,6 +375,7 @@ table.t td.r, table.t th.r { text-align: right; }
 .topo-wrap { position: relative; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; }
 .topo-wrap svg { width: 100%; height: min(72vh, 760px); display: block; touch-action: none; cursor: grab; }
 .topo-wrap svg.connecting { cursor: crosshair; }
+.topo-wrap .tlabel { paint-order: stroke; stroke: var(--bg-2); stroke-width: 3.5px; stroke-linejoin: round; }
 .topo-tools { position: absolute; left: 10px; top: 10px; display: flex; gap: 6px; flex-wrap: wrap; z-index: 2; }
 /* 封包旅程 */
 .journey .jseg { stroke: var(--accent-2); stroke-width: 6; opacity: 0.2; stroke-linecap: round; pointer-events: none; }
