@@ -164,7 +164,8 @@
   function tick() {
     const c = G.UI && G.UI.cur && document.getElementById('app') && !document.getElementById('title') ? Hint.current() : null;
     if (!c || Hint.mode() === 'off') { clear(); return; }
-    const key = c.o.id + '#' + c.idx + (c.urgent ? ':' + c.step.text : '');
+    /* 同一個任務裡的第幾步 + 短句（同一步驟產生器可能連續出現兩次，例如先設 MES、再設 EAP 的角色） */
+    const key = c.o.id + '#' + c.idx + '#' + (c.step.short || '') + (c.urgent ? ':' + c.step.text : '');
     if (key !== st.key) {
       st.key = key; st.since = performance.now(); st.scrolled = '';
       st.active = st.follow;
@@ -174,8 +175,9 @@
     if (!st.active) { clear(); return; }
     const t = target(c.step);
     if (!t) { clear(); return; }
-    /* 對話框開著、而下一步不在對話框裡：先不打擾 */
-    const modal = document.querySelector('.modal-back');
+    /* 對話框開著、而下一步不在最上層的對話框裡：先不打擾 */
+    const mods = document.querySelectorAll('.modal-back');
+    const modal = mods[mods.length - 1];
     if (modal && !modal.contains(t.el)) { clear(); return; }
     /* 已經在這一頁、但要點的東西不在畫面上（例如 3D 機房裡的伺服器）：由提示幫忙打開（每一步只做一次） */
     if (t.key === 'nav:' + G.UI.cur.view && typeof c.step.go === 'function' && st.assisted !== key) { st.assisted = key; c.step.go(); return; }

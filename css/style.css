@@ -268,6 +268,7 @@ table.t td { padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-al
 table.t tr.click { cursor: pointer; }
 table.t tr.click:hover td { background: var(--bg-3); }
 table.t tr.sel td { background: var(--accent-soft); }
+table.t tr.sep td { background: var(--bg-2); padding: 9px 8px 5px; }
 table.t td.r, table.t th.r { text-align: right; }
 
 .empty { color: var(--text-3); text-align: center; padding: 24px 12px; font-size: 13px; }
@@ -421,6 +422,28 @@ table.t td.r, table.t th.r { text-align: right; }
 .tile .v { font-family: var(--font-mono); font-size: 21px; font-weight: 600; line-height: 1.25; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile .s { font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile canvas { width: 100%; height: 26px; display: block; margin-top: 4px; }
+.tiles.t4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+/* 晶圓廠：Purdue 模型、OT 網路檢查、機台清單 */
+.purdue svg { width: 100%; height: auto; display: block; }
+.chk { padding: 5px 8px; border-radius: 6px; background: var(--bg-2); align-items: center; gap: 8px; }
+.chk .ck { width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--line-2); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--text-3); flex: none; }
+.chk.ok .ck { background: var(--ok); border-color: var(--ok); color: #0b1a10; font-weight: 700; }
+.chk .grow { flex: 1 1 auto; min-width: 0; }
+.fab-area { padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg-2); }
+.fchip { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.tchips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.tchip { font-family: var(--font-mono); font-size: 10.5px; padding: 3px 5px; border-radius: 4px; border: 1px solid var(--line-2); background: var(--bg-3); color: var(--text-2); cursor: pointer; line-height: 1.15; }
+.tchip:hover { border-color: var(--accent); color: var(--text); }
+.tchip.ok { background: color-mix(in srgb, var(--ok) 22%, var(--bg-3)); border-color: var(--ok); color: var(--text); }
+.tchip.warn { background: color-mix(in srgb, var(--warn) 22%, var(--bg-3)); border-color: var(--warn); color: var(--text); }
+.tchip.bad { background: color-mix(in srgb, var(--bad) 32%, var(--bg-3)); border-color: var(--bad); color: var(--text); }
+.tchip.wait { border-color: var(--accent); border-style: dashed; color: var(--text); }
+.tchip.info { border-color: var(--info); color: var(--info); }
+.tchip.off { opacity: 0.5; }
+.tchip.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+.tchip.skip::after { content: '!'; color: var(--bad); font-weight: 800; margin-left: 2px; }
+.floor-pick .sep { flex: none; align-self: center; font-size: 11px; color: var(--text-3); padding: 0 4px 0 8px; border-left: 1px solid var(--line-2); margin-left: 4px; white-space: nowrap; }
 .chart { width: 100%; height: 200px; display: block; }
 .locked { position: relative; }
 .locked > .lock-cover {
@@ -437,7 +460,7 @@ table.t td.r, table.t th.r { text-align: right; }
 /* ---------- 防火牆 ---------- */
 .rule-tbl td.z { font-family: var(--font-mono); font-size: 12px; }
 .zone-chip { font-family: var(--font-mono); font-size: 11.5px; padding: 1px 6px; border-radius: 4px; background: var(--bg-4); border: 1px solid var(--line); white-space: nowrap; }
-.zone-INTERNET { color: #f07b5a; } .zone-LAN { color: var(--info); } .zone-GUEST { color: #c58af0; } .zone-SERVERS { color: var(--accent); } .zone-DMZ { color: var(--accent-2); } .zone-ANY { color: var(--text-2); } .zone-WAN { color: #8f7cf0; }
+.zone-INTERNET { color: #f07b5a; } .zone-LAN { color: var(--info); } .zone-GUEST { color: #c58af0; } .zone-SERVERS { color: var(--accent); } .zone-DMZ { color: var(--accent-2); } .zone-ANY { color: var(--text-2); } .zone-WAN { color: #8f7cf0; } .zone-IOT { color: #3fb6a8; } .zone-OT { color: #d6a531; }
 .grade { font-family: var(--font-display); font-size: 54px; font-weight: 700; line-height: 1; }
 /* 章節小測驗與情境挑戰 */
 .quiz { display: grid; gap: 10px; }
@@ -604,7 +627,7 @@ table.t td.r, table.t th.r { text-align: right; }
   .port { min-width: 58px; }
   #main { padding: 12px 16px; }
   .grid.c2, .grid.c3, .grid.c4 { grid-template-columns: minmax(0, 1fr); }
-  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tiles, .tiles.t4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .toasts { top: auto; bottom: 84px; }
   .topo-wrap svg { height: 60vh; }
 }

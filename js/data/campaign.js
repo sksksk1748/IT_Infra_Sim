@@ -1,4 +1,4 @@
-/* 劇情模式：九個章節、任務目標、進駐時程、據點開幕與劇本事件 */
+/* 劇情模式：十個章節、任務目標、進駐時程、據點開幕與劇本事件 */
 (function (G) {
   'use strict';
   const U = G.U, CAT = G.CAT, Q = G.Q;
@@ -16,6 +16,8 @@
       return otherPred(other) && (!zone || l.zone === zone);
     }),
     isL3: (id) => { const d = G.S.devices[id]; return !!d && Q.isL3(d); },
+    /** 可用覆蓋（≥ −75 dBm）：無塵室的手持裝置只要這個 */
+    usable: (fid) => G.Wifi.get(fid, G.Wifi.powered(fid, G.Net.floorUp(fid))).usable,
     coverage: (fid) => {
       const up = G.Net.floorUp(fid);
       return G.Wifi.get(fid, G.Wifi.powered(fid, up)).good;
@@ -45,6 +47,10 @@
     range: (a, b) => { const out = []; for (let i = a; i <= b; i++) out.push(i + 'F'); return out; },
     /** 已進駐樓層都裝了智慧廁所，而且感測器連得到 IoT 平台 */
     iotAll: () => { const fl = G.Rest.occupied(); return fl.length > 0 && fl.every((f) => G.Rest.iotOk(f.id)); },
+    /** 晶圓廠：OT 核心（L3 交換器接在防火牆的 OT 介面）、FAB 在 OT 區、某個角色有幾台在 OT 區運作 */
+    otCore: () => Object.values(G.S.links).some((l) => l.zone === 'ot' && [l.a, l.b].some((id) => { const d = G.S.devices[id]; return !!d && d.rack && Q.isL3(d); })),
+    fabInOt: () => { const z = G.Net.zones().get('F:FAB'); return !!z && z.zone === 'OT'; },
+    inOt: (role) => { const z = G.Net.zones(); return Q.roleServers(role).filter((d) => (d.rack || d.host) && G.Net.devUp(d) && z.get(d.id) && z.get(d.id).zone === 'OT').length; },
   };
 
   const C2F = H.range(3, 8), C4F = H.range(9, 21);
@@ -441,6 +447,47 @@
       ],
       outro: ['最後一條線的燈號轉綠，監控中心的曲線恢復平穩。一次好的割接，就該讓人感覺不到它發生過。',
         '你在變更單上寫下結案紀錄，把舊核心推出機房。天亮了，一萬名同事照常上班——下面是這一夜的成績單。'],
+    },
+    {
+      id: 'c10', title: '第十章｜晶圓廠 Fab 1', grant: 20000000,
+      story: [
+        '集團決定跨入半導體：總部後方的空地上，12 吋晶圓試產線「Fab 1」完工了。接下來三個工作天，62 台製程機台會陸續進廠——掃描機、蝕刻機、爐管、量測機……每一台都要連上網路，由 MES 下工單、EAP 自動控制。',
+        '晶圓廠 24 小時不停：網路斷一分鐘，爐管裡的晶圓就可能整批報廢。機台電腦大多是原廠鎖定、不能更新的舊 Windows——曾經有晶圓廠因為一台新機台在裝機時夾帶病毒，好幾座廠一起停工。',
+        '還有一件事：製程配方是公司最高機密。資安長的第一個要求——無塵室裡，不准帶私人手機。',
+      ],
+      learn: ['IT 與 OT：Purdue 模型、IT / OT 防火牆', '機台連網：SECS/GEM、EAP、MES、FDC', '機台進廠掃毒（SEMI E188）與應用程式白名單', '無塵室的保密：手機管制與公司手持裝置', '原廠遠端維護：DMZ 跳板機 + MFA', '校園光纖主幹（380 m）'],
+      moveIns: [],
+      /* 開廠：無塵室的人員明天進駐、機台分三個工作天進廠（第三天的一台蝕刻機，原廠的安裝 USB 帶著病毒） */
+      begin: (s) => G.Fab.begin(s, { scripted: true }),
+      events: [
+        /* 第二個工作天 14:00、第三個工作天 11:00（和機台進廠的時程一致） */
+        { type: 'fab-vendor', at: (t0) => G.Fab.workday(t0, 2) + 300 },
+        { type: 'fab-leak', at: (t0) => G.Fab.workday(t0, 3) + 120 },
+      ],
+      kb: ['k-ot', 'k-fab', 'k-fabsec', 'k-nophone'],
+      objectives: [
+        { id: 'c10-otcore', text: 'OT 核心：一台 L3 交換器接在防火牆的「OT 生產網路」介面', hint: '晶圓廠的網路（OT）不能和總部的員工電腦（IT）混在一起。買一台 L3 交換器當 OT 核心（放在 B1），在拓撲把它接到防火牆，介面選「OT 生產網路」：IT 與 OT 之間只能經過防火牆。', goto: 'topo', kb: 'k-ot',
+          check: () => H.otCore() },
+        { id: 'c10-fab', text: 'FAB 無塵室佈建：布線、接入交換器（機台就要 99 埠）、兩條上行到 OT 核心、Wi-Fi 可用覆蓋 ≥ 90%', hint: 'FAB 到 B1 是 380 m 的校園光纖：銅纜到不了，OM4 跑 10G 最多 400 m，25G 以上要單模 OS2。上行接到 OT 核心（不是總部的核心）；機台與金屬壁板很擋訊號，每個 bay 都要有 AP（現場的手持裝置只要「可用」的訊號）。', goto: 'floor:FAB', kb: 'k-cable',
+          check: () => { const fs = G.S.floors.FAB; return fs.cabling.status === 'done' && fs.idf.count > 0 && H.portsOk('FAB') && H.fabInOt() && Q.linksOf('F:FAB').length >= 2 && H.usable('FAB') >= 0.9; } },
+        { id: 'c10-servers', text: 'MES、EAP（兩台）、FDC 伺服器放在 OT 區（接在 OT 核心）', hint: 'MES 下工單、EAP 用 SECS/GEM 控制機台（一台大約管 40 台，62 台機台要兩台）、FDC 收機台的感測資料。放在 OT 區，機台的資料就不必穿過防火牆。', goto: 'shop:srv', kb: 'k-fab',
+          check: () => H.inOt('mes') >= 1 && H.inOt('eap') >= 2 && H.inOt('fdc') >= 1, progress: () => `MES ${H.inOt('mes')} · EAP ${H.inOt('eap')}/2 · FDC ${H.inOt('fdc')}` },
+        { id: 'c10-rules', text: 'IT ⇄ OT 防火牆：LAN → OT 只開 WEB、OT → SERVERS 開 SQL；OT 不能上網、不能連員工電腦', hint: '研發工程師在辦公室看 MES 報表（LAN → OT：WEB），MES 和 ERP 交換工單（OT → SERVERS：SQL）。其他一律不開：機台不需要上網，也不需要連員工電腦。', goto: 'fw', kb: 'k-ot',
+          check: () => { const S = G.Sec; return S.allows('LAN', 'OT', 'WEB') && S.allows('OT', 'SERVERS', 'SQL') && !S.allowedSvcs('LAN', 'OT').some((x) => x !== 'WEB') && S.posture().otIsolated; } },
+        { id: 'c10-scan', text: '建置機台進廠掃毒站，而且沒有任何機台略過掃毒', hint: '原廠裝機用的筆電、USB 與機台電腦，都要先掃毒才能接上網路（SEMI E188）。沒有掃毒站，機台只能等著——或是你冒險略過。', goto: 'fab', kb: 'k-fabsec',
+          check: (s) => G.Fab.kioskReady() && s.fab.open && !G.Fab.counts().skipped },
+        { id: 'c10-phone', text: '無塵室禁止私人手機：安檢門與置物櫃、配發足夠的無相機手持裝置，無塵室 Wi-Fi 可用覆蓋 ≥ 90%', hint: '到「晶圓廠」建置安檢門與手機置物櫃，手機政策改成「禁止」，再配發公司手持裝置（每班的操作員一人一台）。手持裝置要連無塵室的 Wi-Fi 才查得到 MES。', goto: 'fab', kb: 'k-nophone',
+          check: (s) => { const st = G.R.sim && G.R.sim.floors.FAB; return s.fab.phone === 'ban' && s.fab.hand >= G.Fab.handNeed() && !!st && !!st.wifi && st.wifi.usable >= 0.9; } },
+        { id: 'c10-vendor', text: '原廠遠端維護走 DMZ 的跳板機（MFA），網際網路不能直連 OT', hint: '一台伺服器設成「跳板機」角色、接在 DMZ 交換器上，防火牆開 DMZ → OT：RDP，並啟用 MFA。千萬不要在機台上接 4G 分享器讓原廠直連！', goto: 'fab', kb: 'k-fabsec',
+          check: () => G.Sec.posture().jumpOk },
+        { id: 'c10-tools', text: '所有機台都連上網路，並由 EAP 自動化', hint: '機台裝好、掃完毒，就會接上 FAB IDF 的交換器（每台 1～2 埠）。交換器埠數不夠、EAP 不夠（一台管 40 台）、SECS 連不到 EAP，都會卡住。', goto: 'fab', kb: 'k-fab',
+          check: (s) => { const R = G.R.fab; return !!R && R.total > 0 && R.auto >= R.total; }, progress: () => { const R = G.R.fab; return R ? `${R.auto}/${R.total}` : ''; } },
+        { id: 'c10-output', text: '量產：產能 ≥ 500 片 / 日、良率 ≥ 90%，累積 12 小時', hint: '產能看最慢的那一區（瓶頸）：每一區的機台都要自動化，MES、工單（ERP）、FDC 都要連得上。網路一斷，製程中的晶圓就報廢。', goto: 'fab', kb: 'k-fab',
+          sustain: 720, cond: () => { const R = G.R.fab; return !!R && R.rate >= 500 && R.yield >= 0.9; } },
+      ],
+      outro: ['第一批 12 吋晶圓順利出貨。無塵室裡，天車在頭頂上安靜地搬著晶圓盒，每一台機台的綠燈都亮著。',
+        '資安長看完你的 OT 架構圖，只說了一句：「IT 跟 OT，終於分開了。」',
+        '廠務部長卻遞來一疊報告：晶圓廠的電力、純水、特殊氣體與化學品……那又是另一個世界了。'],
     },
   ];
 

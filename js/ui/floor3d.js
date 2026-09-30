@@ -65,6 +65,7 @@
     FC[TY.LOBBY] = '#8d9296'; FC[TY.CAFE] = '#7b6a55'; FC[TY.CORE] = '#474e54'; FC[TY.IDF] = '#2b353c'; FC[TY.WALL] = '#56606a'; FC[TY.GLASS] = '#56606a'; FC[TY.EXT] = '#394148';
     FC[TY.KITCHEN] = '#78848b'; FC[TY.SERVE] = '#6f6253'; FC[TY.DINE] = '#8b7a64'; FC[TY.COLD] = '#a9c3cd';
     FC[TY.RAMP] = '#40474d'; FC[TY.PARK] = '#4a5157'; FC[TY.MOTO] = '#4f565c'; FC[TY.PILLAR] = '#6b7378'; FC[TY.WC] = '#8e9ca4';
+    FC[TY.CR] = '#dfe3e6'; FC[TY.TOOL] = '#9aa3a9'; FC[TY.STOCK] = '#6f787e';
     const floorT = K.makeTex(W * 10, H * 10, (c) => {
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) K.D.rect(c, x * 10, y * 10, 10.3, 10.3, FC[L.type[y * W + x]] || FC[TY.OPEN]);
       c.fillStyle = 'rgba(255,255,255,0.045)';
@@ -73,6 +74,12 @@
       /* 廁所地磚：每格再分成 2 × 2 小塊 */
       c.fillStyle = 'rgba(255,255,255,0.14)';
       for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (L.type[y * W + x] === TY.WC) { c.fillRect(x * 10 + 4.8, y * 10, 0.4, 10); c.fillRect(x * 10, y * 10 + 4.8, 10, 0.4); }
+      /* 晶圓廠：架高地板的穿孔地磚（無塵室的氣流由天花板往下、從地板的孔抽走）、黃光區偏黃 */
+      if (L.tools) {
+        c.fillStyle = 'rgba(70,80,90,0.22)';
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (L.type[y * W + x] === TY.CR) for (const [dx, dy] of [[2.5, 2.5], [7.5, 2.5], [2.5, 7.5], [7.5, 7.5]]) c.fillRect(x * 10 + dx - 0.7, y * 10 + dy - 0.7, 1.4, 1.4);
+        for (const b of L.bays) if (b.id === 'N1') { c.fillStyle = 'rgba(240,200,60,0.24)'; c.fillRect(b.x0 * 10, b.y0 * 10, (b.x1 - b.x0 + 1) * 10, (b.y1 - b.y0 + 1) * 10); }
+      }
       for (const r of L.rooms) {
         if (r.kind === TY.CORE || r.x1 - r.x0 < 6) continue;
         const cy = r.y0 === 0 ? r.y1 - 1.2 : r.y1 === H - 1 ? r.y0 + 1.7 : (r.y0 + r.y1 + 1) / 2;
@@ -105,12 +112,15 @@
     root.add(overlay);
 
     /* ---------- 隔間牆：依衰減分三種（玻璃 / 石膏板 / 加厚牆），連續的格子合成一道牆 ---------- */
-    const wallCls = (a) => (a <= 2 ? 0 : a >= 10 ? 3 : a >= 6 ? 2 : 1);
+    /* 晶圓廠的 bay 隔牆是無塵室的金屬壁板（白色，也很擋訊號） */
+    const fabWalls = !!G.FT[f.type].fab;
+    const wallCls = (a) => (a <= 2 ? 0 : a >= 10 ? 3 : a >= 6 ? (fabWalls ? 4 : 2) : 1);
     const WALLDEF = [
       { mat: K.std('#a9d6ef', { transparent: true, opacity: 0.3, roughness: 0.1, metalness: 0.2, depthWrite: false }), t: 0.08, name: '玻璃隔間', att: '約 2 dB' },
       { mat: K.std('#d9dde0', { roughness: 0.85, metalness: 0 }), t: 0.14, name: '隔間牆（石膏板）', att: '約 4～5 dB' },
       { mat: K.std('#b3a898', { roughness: 0.9, metalness: 0 }), t: 0.22, name: '加厚牆（隔音 / 實驗室 / 廚房）', att: '約 6～7 dB' },
       { mat: K.std('#cdd6db', { roughness: 0.3, metalness: 0.8 }), t: 0.2, name: '冷凍庫金屬牆（不鏽鋼 + 保溫層）', att: '12 dB 以上（金屬幾乎擋住 Wi-Fi）' },
+      { mat: K.std('#eceff1', { roughness: 0.45, metalness: 0.35 }), t: 0.12, name: '無塵室金屬壁板（鋁蜂巢板）', att: '約 8 dB（金屬面板很擋訊號）' },
     ];
     const WB = WALLDEF.map((d, i) => batch(d.mat, { kind: 'wall', cls: i }));
     const isWall = (x, y) => { const t = at(x, y); return t === TY.WALL || t === TY.GLASS; };
@@ -181,12 +191,14 @@
     }
     for (const w of L.wc || []) coreB.add(wx(w.door[0]), (2.2 + CORE_H) / 2, wz(w.door[1]), 1, CORE_H - 2.2, 1);
     coreB.build(root);
-    /* 電梯門（核心筒朝南的那一面，無障礙廁所門口的東邊） */
-    const doorB = batch(K.std('#aeb6bc', { metalness: 0.6, roughness: 0.35 }), null);
-    for (let k = 0; k < 3; k++) doorB.add(wx(cb.x1 - 4.4) + k * 1.75, 1.1, wz(cb.y1) + 0.51, 1.2, 2.1, 0.04);
-    doorB.build(root);
-    const coreTag = tag('核心筒（電梯 / 樓梯）', '', 'center', 0);
-    coreTag.pos.set(wx(cb.x1 - 2.5), CORE_H + 0.6, (wz(ib.y0) + wz(cb.y1)) / 2);
+    /* 電梯門（核心筒朝南的那一面，無障礙廁所門口的東邊）；晶圓廠沒有總部的核心筒 */
+    if (L.hasCore) {
+      const doorB = batch(K.std('#aeb6bc', { metalness: 0.6, roughness: 0.35 }), null);
+      for (let k = 0; k < 3; k++) doorB.add(wx(cb.x1 - 4.4) + k * 1.75, 1.1, wz(cb.y1) + 0.51, 1.2, 2.1, 0.04);
+      doorB.build(root);
+      const coreTag = tag('核心筒（電梯 / 樓梯）', '', 'center', 0);
+      coreTag.pos.set(wx(cb.x1 - 2.5), CORE_H + 0.6, (wz(ib.y0) + wz(cb.y1)) / 2);
+    }
     /* IDF 機櫃與通往 B1 的豎井開口 */
     const IDF = [wx(L.idf.x) + 0.3, wz(L.idf.y) - 0.2];
     const CAB_TOP = 2.05;
@@ -209,13 +221,15 @@
     root.add(hole);
     const idfTag = tag('IDF 弱電室', 'info', 'center', 2);
     idfTag.pos.set(IDF[0], CAB_TOP + 0.9, IDF[1]);
-    const riserTag = tag('↓ 弱電豎井：主幹線往 B1', 'info', 'right', 1);
+    const riserTag = tag(L.hasCore ? '↓ 弱電豎井：主幹線往 B1' : `↓ 校園光纖管溝：往總部 B1（${G.BLD.campus} m）`, 'info', 'right', 1);
     riserTag.pos.set(RISER[0] - 0.4, 0.4, RISER[1] + 0.3);
 
-    /* ---------- 帷幕玻璃外牆（靠近鏡頭的那一面自動隱藏，方便看進室內）；地下室是鋼筋混凝土擋土牆 ---------- */
+    /* ---------- 帷幕玻璃外牆（靠近鏡頭的那一面自動隱藏，方便看進室內）；地下室是鋼筋混凝土擋土牆、晶圓廠是沒有窗戶的金屬壁板 ---------- */
     const FW = W - 1, FD = H - 1;
     const park = !!G.FT[f.type].park;
-    const facM = own(park ? new T.MeshStandardMaterial({ color: C('#7a8388'), roughness: 0.95, metalness: 0.02, side: T.DoubleSide })
+    const fabFloor = !!G.FT[f.type].fab;
+    const facM = own(fabFloor ? new T.MeshStandardMaterial({ color: C('#d9dde0'), roughness: 0.6, metalness: 0.3, side: T.DoubleSide })
+      : park ? new T.MeshStandardMaterial({ color: C('#7a8388'), roughness: 0.95, metalness: 0.02, side: T.DoubleSide })
       : new T.MeshStandardMaterial({ color: C('#a8d8f5'), transparent: true, opacity: 0.14, roughness: 0.1, metalness: 0.3, depthWrite: false, side: T.DoubleSide }));
     const mullM = K.std('#3b444b', { metalness: 0.6, roughness: 0.4 });
     const sides = [];
@@ -227,7 +241,7 @@
       p.raycast = noop;
       g.add(p);
       const mb = batch(mullM, null);
-      if (!park) for (let k = 0; k <= Math.round(len / 3); k++) mb.add(-len / 2 + k * (len / Math.round(len / 3)), FAC_H / 2, 0, 0.09, FAC_H, 0.09);
+      if (!park && !fabFloor) for (let k = 0; k <= Math.round(len / 3); k++) mb.add(-len / 2 + k * (len / Math.round(len / 3)), FAC_H / 2, 0, 0.09, FAC_H, 0.09);
       mb.add(0, FAC_H, 0, len, 0.12, 0.14);
       mb.add(0, 0.06, 0, len, 0.12, 0.14);
       mb.build(g);
@@ -276,6 +290,8 @@
     }
     for (const r of L.rooms) {
       const ix0 = r.x0 + 1, ix1 = r.x1 - 1, iy0 = r.y0 + 1, iy1 = r.y1 - 1;
+      /* 晶圓廠的房間與 bay 由 fab3d 佈置 */
+      if (r.fabRoom || r.bay || r.aisle || r.gate) continue;
       const iw = ix1 - ix0 + 1, ih = iy1 - iy0 + 1;
       if (iw < 2 || ih < 2) continue;
       const cx = (wx(ix0) + wx(ix1)) / 2, cz = (wz(iy0) + wz(iy1)) / 2;
@@ -375,6 +391,8 @@
     const parkMod = park && M3.parking ? M3.parking({ api, K, fx, L, fid, root, wx, wz, batch }) : null;
     /* 廁所：隔間、清潔人員、智慧廁所感測器、漏水積水（restroom3d.js） */
     const restMod = M3.restroom ? M3.restroom({ api, K, L, fid, root, wx, wz, batch }) : null;
+    /* 晶圓廠：機台、天車、操作員、安檢門與置物櫃（fab3d.js） */
+    const fabMod = fabFloor && M3.fab ? M3.fab({ api, K, L, fid, root, wx, wz, batch }) : null;
     /* 螢幕：亮 = 有人在用；紅色 = 受感染；橘色 = 網路斷線 */
     const MON = { off: C('#1a2228'), on: C('#9fd8ff'), red: C('#ff4a3d'), amber: C('#f0a63a') };
     const monitors = new T.InstancedMesh(unit, own(new T.MeshBasicMaterial({ color: 0xffffff })), Math.max(1, monPos.length));
@@ -759,6 +777,7 @@
       }
       if (parkMod) parkMod.sync(st);
       if (restMod) restMod.sync(st);
+      if (fabMod) fabMod.sync(st);
       if (nd + ':' + no !== occSig) { occSig = nd + ':' + no; placePeople(nd, no); }
       /* 資安事件：受感染的電腦螢幕變紅、偽冒 AP */
       let redN = 0, alert = '', rogueNow = null;
@@ -792,7 +811,7 @@
       /* 標籤與圖例 */
       idfTag.set(fs.idf.count ? `IDF 弱電室 · ${fs.idf.count} 台交換器` : 'IDF 弱電室（還沒有交換器）', fs.idf.count ? (stt.c === 'bad' ? 'bad' : 'info') : 'warn');
       const nUp = Q.linksOf('F:' + fid).length;
-      riserTag.set(nUp ? `↓ 弱電豎井：${nUp} 條主幹線往 B1` : '↓ 弱電豎井（還沒有主幹線）', nUp ? 'info' : 'warn');
+      riserTag.set(L.hasCore ? (nUp ? `↓ 弱電豎井：${nUp} 條主幹線往 B1` : '↓ 弱電豎井（還沒有主幹線）') : (nUp ? `↓ 校園光纖：${nUp} 條往總部 B1（${G.BLD.campus} m）` : '↓ 校園光纖管溝（還沒有上行）'), nUp ? 'info' : 'warn');
       if ((cur.ap || null) !== selAp) {
         selAp = cur.ap || null;
         if (selAp) panelSel = { kind: 'ap', id: selAp };
@@ -803,7 +822,7 @@
       syncSel();
       refreshSel();
       legend();
-      if (!park) syncSky();
+      if (!park && !fabFloor) syncSky();
     }
 
     /* ---------- 提示 ---------- */
@@ -811,7 +830,7 @@
     TNAME[TY.OPEN] = '走道'; TNAME[TY.DESK] = '開放式座位區'; TNAME[TY.MEET] = '會議室'; TNAME[TY.OFFICE] = '辦公室'; TNAME[TY.LAB] = '實驗室';
     TNAME[TY.LOBBY] = '大廳'; TNAME[TY.CAFE] = '茶水間'; TNAME[TY.CORE] = '核心筒'; TNAME[TY.IDF] = 'IDF 弱電室'; TNAME[TY.WALL] = '牆'; TNAME[TY.GLASS] = '玻璃隔間'; TNAME[TY.EXT] = '外牆';
     TNAME[TY.KITCHEN] = '廚房'; TNAME[TY.DINE] = '用餐區'; TNAME[TY.SERVE] = '餐檯 / 櫃台'; TNAME[TY.COLD] = '冷凍庫';
-    TNAME[TY.RAMP] = '車道'; TNAME[TY.PARK] = '汽車停車格'; TNAME[TY.MOTO] = '機車停車格'; TNAME[TY.PILLAR] = '結構柱'; TNAME[TY.WC] = '廁所';
+    TNAME[TY.RAMP] = '車道'; TNAME[TY.PARK] = '汽車停車格'; TNAME[TY.MOTO] = '機車停車格'; TNAME[TY.PILLAR] = '結構柱'; TNAME[TY.WC] = '廁所'; TNAME[TY.CR] = '無塵室'; TNAME[TY.TOOL] = '製程機台'; TNAME[TY.STOCK] = '晶圓倉儲（Stocker）';
     const roomAt = (x, y) => L.rooms.find((r) => r.kind !== TY.CORE && x > r.x0 && x < r.x1 && y > r.y0 && y < r.y1);
     function spotTip(pt) {
       const s = G.S, fs = s.floors[fid];
@@ -854,7 +873,7 @@
     const RIP_BASE = fx.rgb('#5fd4ff'), RED = fx.rgb('#ff4d4d');
     const ripC = new T.Color();
     const PARK_KINDS = ['gate', 'car', 'moto', 'ev', 'cam', 'pillar', 'ramp', 'walker'];
-    const floorLike = (k) => k === 'floor' || k === 'spot' || k === 'person' || k === 'wall' || k === 'core' || k === 'crew' || k === 'pos' || k === 'cold' || k === 'wc' || k === 'cleaner' || k === 'wetsign' || k === 'leak' || PARK_KINDS.includes(k);
+    const floorLike = (k) => k === 'floor' || k === 'spot' || k === 'person' || k === 'wall' || k === 'core' || k === 'crew' || k === 'pos' || k === 'cold' || k === 'wc' || k === 'cleaner' || k === 'wetsign' || k === 'leak' || k === 'tool' || k === 'slot' || k === 'fabop' || PARK_KINDS.includes(k);
 
     return {
       /* 預設視角：從南側正面看進去（yaw 0），平面圖的長邊和畫面平行，不會歪一邊 */
@@ -916,6 +935,7 @@
         if (dineMod) dineMod.tick(dt, t);
         if (parkMod) parkMod.tick(dt, t);
         if (restMod) restMod.tick(dt, t);
+        if (fabMod) fabMod.tick(dt, t);
         /* 閃爍：偽冒 AP、選取外圈 */
         if (rogue.visible) rogueLed.material.emissiveIntensity = Math.sin(t * 8) > 0 ? 2.6 : 0.3;
         if (selRing.visible) selRing.scale.setScalar(1 + 0.12 * Math.sin(t * 4));
@@ -939,6 +959,10 @@
         if (parkMod && PARK_KINDS.includes(p.kind)) {
           const Ls = parkMod.tip(p);
           if (Ls) return Ls.filter(Boolean).concat(p.pt && tool === 'place' ? spotTip(p.pt).slice(-1) : p.pt ? spotTip(p.pt).slice(1, 2) : []);
+        }
+        if (fabMod && fabMod.kinds.includes(p.kind)) {
+          const Ls = fabMod.tip(p);
+          if (Ls) return Ls.filter(Boolean).concat(p.pt && tool === 'place' ? spotTip(p.pt).slice(-1) : []);
         }
         if (restMod && restMod.kinds.includes(p.kind)) {
           const Ls = restMod.tip(p);
@@ -977,6 +1001,7 @@
         if (dineMod) dineMod.dispose();
         if (parkMod) parkMod.dispose();
         if (restMod) restMod.dispose();
+        if (fabMod) fabMod.dispose();
         for (const t of allTags) t.remove();
         for (const t of chTags) t.remove();
         for (const m of mats) m.dispose();

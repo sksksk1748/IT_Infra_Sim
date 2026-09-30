@@ -89,7 +89,7 @@
     const glassM = K.std('#8fb8d4', { transparent: true, opacity: 0.07, roughness: 0.12, metalness: 0.2, depthWrite: false });
     const edgeM = new T.LineBasicMaterial({ color: C('#5c7686'), transparent: true, opacity: 0.5 });
     const floors = [];
-    for (const f of G.BLD.floors) {
+    for (const f of G.BLD.hq) {
       const y = yOf(f.level);
       const slab = new T.Mesh(slabG, concrete);
       slab.position.set(0, y + 0.175, 0);
@@ -215,6 +215,182 @@
     const alertTag = api.tag('', 'bad', 'center', 4);
     alertTag.pos.set(0, NF * FH + 6, 0);
     alertTag.show = false;
+
+    /* ---------- 大樓後方：晶圓廠 Fab 1（第十章開廠）；之前是圍起來的預定地，動工後是依工程進度長高的工地 ----------
+     * 西側是支援區（入口、更衣室、FAB IDF、控制室，有窗戶），東側是沒有窗戶的無塵室廠房；屋頂有外氣空調箱（MAU）與廢氣洗滌塔的排氣管。
+     * FAB IDF 經地面上的光纖管溝連回總部 B1（校園主幹） */
+    const FB = { x0: -20, x1: 22, z0: -62, z1: -25, h: 15, ax: -10 };
+    const TRX = 9;
+    const FAB_IDF = [FB.x0 + 3.2, 1.3, FB.z1 - 2.4];
+    /* lotG = 工地圍籬與告示牌（開廠前都在）；siteG = 興建中的廠房（地基 → 鋼構 → 外牆，旁邊一台塔式起重機）；fabG = 完工的廠房 */
+    const lotG = new T.Group(), siteG = new T.Group(), fabG = new T.Group();
+    root.add(lotG, siteG, fabG);
+    /* 工地範圍：廠房四周留一點空地，北側（後面）放起重機與工務所；東邊不能超過公園（x = 24） */
+    const SB = { x0: FB.x0 - 1.5, x1: FB.x1 + 1.5, z0: FB.z0 - 8, z1: FB.z1 + 2 };
+    const signTex = {};
+    let lotSign = null, signKind = '';
+    {
+      const postM = K.std('#c9cdd1', { metalness: 0.5, roughness: 0.5 }), meshM = K.std('#8f969b', { transparent: true, opacity: 0.35, metalness: 0.3, depthWrite: false });
+      const fence = (x0, z0, x1, z1) => {
+        const len = Math.hypot(x1 - x0, z1 - z0), ang = Math.atan2(z1 - z0, x1 - x0);
+        const m = K.box(len, 1.8, 0.05, meshM); m.position.set((x0 + x1) / 2, 0.9, (z0 + z1) / 2); m.rotation.y = -ang; m.raycast = () => {}; lotG.add(m);
+        for (let k = 0; k <= Math.round(len / 4); k++) { const u = k / Math.round(len / 4); const p = K.box(0.1, 2, 0.1, postM); p.position.set(x0 + (x1 - x0) * u, 1, z0 + (z1 - z0) * u); p.raycast = () => {}; lotG.add(p); }
+      };
+      fence(SB.x0, SB.z0, SB.x1, SB.z0); fence(SB.x1, SB.z0, SB.x1, SB.z1); fence(SB.x1, SB.z1, SB.x0, SB.z1); fence(SB.x0, SB.z1, SB.x0, SB.z0);
+      /* 告示牌：預定地 / 興建中（第二行是預計完工） */
+      signTex.lot = K.makeTex(360, 160, (c) => { K.D.rect(c, 0, 0, 360, 160, '#1c3a5a'); K.D.txt(c, 'NOVALUX Fab 1', 180, 62, 40, '#e8f0f5', 'center', 800); K.D.txt(c, '12 吋晶圓廠預定地', 180, 116, 30, '#f2c14e', 'center', 700); }, 1.5);
+      const building = (eta) => K.makeTex(360, 160, (c) => {
+        K.D.rect(c, 0, 0, 360, 160, '#1c3a5a');
+        K.D.rect(c, 0, 0, 360, 12, '#f2c14e');
+        for (let x = -12; x < 360; x += 24) K.D.rect(c, x, 0, 12, 12, '#1d2227');
+        K.D.txt(c, 'NOVALUX Fab 1', 180, 58, 38, '#e8f0f5', 'center', 800);
+        K.D.txt(c, '12 吋晶圓廠 興建中', 180, 100, 28, '#f2c14e', 'center', 700);
+        K.D.txt(c, eta, 180, 138, 20, '#c8d6df', 'center', 600);
+      }, 1.5);
+      signTex.sandbox = building('預計第 6 天完工');
+      signTex.campaign = building('預計第十章完工啟用');
+      lotSign = K.plane(7, 3.1, K.texMat(signTex.lot, { metalness: 0, roughness: 0.6 }));
+      lotSign.position.set((FB.x0 + FB.x1) / 2, 2.6, SB.z1 + 0.1);
+      lotSign.userData.pick = { kind: 'fablot' };
+      lotG.add(lotSign);
+      const legs = K.box(6.6, 0.1, 0.1, postM); legs.position.set(lotSign.position.x, 1, SB.z1 + 0.05); lotG.add(legs);
+    }
+    /* 興建中的廠房：每一根鋼柱、每一面牆都是單位高度的方塊，用 scale.y 長高 */
+    const site = { cols: [], beams: [], walls: [], brace: [], jib: null, trolley: null, cable: null, hook: null, light: null };
+    {
+      const pick = { kind: 'fablot' };
+      const slab = K.box(FB.x1 - FB.x0, 0.3, FB.z1 - FB.z0, K.std('#9ea5aa', { roughness: 0.95, metalness: 0 }));
+      slab.position.set((FB.x0 + FB.x1) / 2, 0.15, (FB.z0 + FB.z1) / 2);
+      slab.userData.pick = pick;
+      siteG.add(slab);
+      /* 鋼構（紅色防鏽底漆） */
+      const steelM = K.std('#b0532f', { metalness: 0.55, roughness: 0.5 });
+      const unit = new T.BoxGeometry(1, 1, 1);
+      const colAt = (x, z, hMax) => { const m = new T.Mesh(unit, steelM); m.scale.set(0.5, 0.01, 0.5); m.position.set(x, 0.3, z); m.userData.hMax = hMax; m.userData.pick = pick; siteG.add(m); site.cols.push(m); };
+      const xs = [0, 1, 2, 3, 4].map((i) => FB.ax + (FB.x1 - FB.ax) * i / 4), zs = [0, 1, 2, 3, 4, 5].map((j) => FB.z0 + (FB.z1 - FB.z0) * j / 5);
+      for (const x of xs) for (const z of zs) colAt(x, z, FB.h);
+      for (const x of [FB.x0, (FB.x0 + FB.ax) / 2]) for (const z of zs) colAt(x, z, 8.4);
+      /* 橫梁：到了那個高度才出現 */
+      /* frac = 鋼構要長到幾成才會出現這根梁 */
+      const beamAt = (x0, z0, x1, z1, y, frac, d) => {
+        const m = new T.Mesh(unit, steelM);
+        m.scale.set(Math.max(0.35, Math.abs(x1 - x0)), d || 0.45, Math.max(0.35, Math.abs(z1 - z0)));
+        m.position.set((x0 + x1) / 2, y, (z0 + z1) / 2);
+        m.userData.frac = frac; m.raycast = () => {};
+        siteG.add(m); site.beams.push(m);
+      };
+      for (const y of [5, 10, FB.h]) {
+        beamAt(FB.ax, FB.z0, FB.x1, FB.z0, y, y / FB.h); beamAt(FB.ax, FB.z1, FB.x1, FB.z1, y, y / FB.h);
+        beamAt(FB.ax, FB.z0, FB.ax, FB.z1, y, y / FB.h); beamAt(FB.x1, FB.z0, FB.x1, FB.z1, y, y / FB.h);
+      }
+      for (const y of [4.2, 8.4]) { beamAt(FB.x0, FB.z0, FB.ax, FB.z0, y, y / 8.4); beamAt(FB.x0, FB.z1, FB.ax, FB.z1, y, y / 8.4); beamAt(FB.x0, FB.z0, FB.x0, FB.z1, y, y / 8.4); }
+      /* 屋頂桁架（鋼構到頂才有） */
+      for (const x of xs.slice(1, -1)) beamAt(x, FB.z0, x, FB.z1, FB.h, 1, 0.9);
+      for (const z of zs.slice(1, -1)) beamAt(FB.ax, z, FB.x1, z, FB.h + 0.2, 1, 0.3);
+      /* 正面兩格的交叉斜撐 */
+      for (const [xa, xb] of [[xs[0], xs[1]], [xs[3], xs[4]]]) for (const [ya, yb] of [[0.3, 5], [5, 10]]) for (const sgn of [1, -1]) {
+        const len = Math.hypot(xb - xa, yb - ya);
+        const m = new T.Mesh(unit, steelM);
+        m.scale.set(len, 0.2, 0.2);
+        m.position.set((xa + xb) / 2, (ya + yb) / 2, FB.z1 + 0.1);
+        m.rotation.z = sgn * Math.atan2(yb - ya, xb - xa);
+        m.userData.frac = yb / FB.h; m.raycast = () => {};
+        siteG.add(m); site.brace.push(m);
+      }
+      /* 外牆（由下往上封板，上面是開的：看得到裡面的鋼構）；牆比鋼柱厚，封好的地方就把鋼構包起來 */
+      const wallAt = (x0, z0, x1, z1, hMax, mat) => {
+        const m = new T.Mesh(unit, mat);
+        m.scale.set(Math.max(0.6, Math.abs(x1 - x0) + 0.6), 0.01, Math.max(0.6, Math.abs(z1 - z0) + 0.6));
+        m.position.set((x0 + x1) / 2, 0.3, (z0 + z1) / 2);
+        m.userData.hMax = hMax; m.userData.pick = pick;
+        siteG.add(m); site.walls.push(m);
+      };
+      const cladM = K.std('#dfe3e6', { metalness: 0.25, roughness: 0.55 }), annexM = K.std('#b9c3c9', { metalness: 0.2, roughness: 0.6 });
+      wallAt(FB.ax, FB.z0, FB.x1, FB.z0, FB.h, cladM); wallAt(FB.ax, FB.z1, FB.x1, FB.z1, FB.h, cladM);
+      wallAt(FB.ax, FB.z0, FB.ax, FB.z1, FB.h, cladM); wallAt(FB.x1, FB.z0, FB.x1, FB.z1, FB.h, cladM);
+      wallAt(FB.x0, FB.z0, FB.ax, FB.z0, 8.4, annexM); wallAt(FB.x0, FB.z1, FB.ax, FB.z1, 8.4, annexM); wallAt(FB.x0, FB.z0, FB.x0, FB.z1, 8.4, annexM);
+      /* 工務所：北側兩個疊起來的貨櫃屋 */
+      const boxM = K.std('#2f6fa3', { metalness: 0.4, roughness: 0.55 });
+      for (const [x, y] of [[FB.x0 + 4, 1.3], [FB.x0 + 4, 3.9], [FB.x0 + 11, 1.3]]) { const c = K.box(6, 2.6, 2.4, boxM); c.position.set(x, y, FB.z0 - 4); c.userData.pick = pick; siteG.add(c); }
+      /* 塔式起重機：格子桁架的塔身與吊臂（黃色）、配重、駕駛室、頂端的航空障礙燈 */
+      const latT = K.makeTex(64, 64, (c) => {
+        c.clearRect(0, 0, 64, 64);
+        c.strokeStyle = '#f2b822'; c.lineWidth = 6;
+        c.strokeRect(3, 3, 58, 58);
+        c.beginPath(); c.moveTo(3, 61); c.lineTo(61, 3); c.stroke();
+      }, 1);
+      const lat = (rx, ry) => { const t = latT.clone(); t.needsUpdate = true; t.wrapS = t.wrapT = T.RepeatWrapping; t.repeat.set(rx, ry); return K.texMat(t, { transparent: true, alphaTest: 0.4, side: T.DoubleSide, metalness: 0.4, roughness: 0.5 }); };
+      const CR = { x: FB.x1 - 9, z: FB.z0 - 4.5, h: FB.h + 17 };
+      const craneG = new T.Group();
+      craneG.position.set(CR.x, 0, CR.z);
+      siteG.add(craneG);
+      const base = K.box(4, 0.8, 4, K.std('#8d9398', { roughness: 0.9 })); base.position.y = 0.4; craneG.add(base);
+      const mast = K.box(1.6, CR.h, 1.6, lat(1, CR.h / 1.6)); mast.position.y = CR.h / 2 + 0.8; mast.userData.pick = pick; craneG.add(mast);
+      const jib = new T.Group(); jib.position.y = CR.h + 0.8; craneG.add(jib);
+      site.jibY = CR.h + 0.8;
+      const arm = K.box(34, 1.3, 1.3, lat(34 / 1.3, 1)); arm.position.x = 17; jib.add(arm);
+      const counter = K.box(10, 1.1, 1.3, lat(10 / 1.1, 1)); counter.position.x = -5; jib.add(counter);
+      const weight = K.box(2.4, 2.2, 2, K.std('#6f757a', { roughness: 0.9 })); weight.position.set(-8.6, -1.2, 0); jib.add(weight);
+      const cab = K.box(1.8, 1.8, 1.8, K.std('#e9edf0', { metalness: 0.3 })); cab.position.set(1.8, -1.6, 1.4); jib.add(cab);
+      const head = K.box(1, 5, 1, lat(1, 4)); head.position.y = 3.1; jib.add(head);
+      const tieM = new T.LineBasicMaterial({ color: 0xd8b64a });
+      jib.add(new T.Line(new T.BufferGeometry().setFromPoints([new T.Vector3(-9.5, 0.6, 0), new T.Vector3(0, 5.6, 0), new T.Vector3(33.5, 0.6, 0)]), tieM));
+      site.light = new T.Mesh(new T.SphereGeometry(0.35, 10, 8), K.glow('#ff3b30', 2.4));
+      site.light.position.y = 5.8; jib.add(site.light);
+      /* 吊車與吊鉤（吊著一根鋼梁） */
+      const trolley = K.box(1.4, 0.5, 1.5, K.std('#3a4046')); trolley.position.set(20, -0.9, 0); jib.add(trolley);
+      const cable = new T.Mesh(unit, new T.MeshBasicMaterial({ color: 0x2b3035 })); jib.add(cable);
+      const hook = K.box(2.2, 0.35, 0.35, steelM); jib.add(hook);
+      site.jib = jib; site.trolley = trolley; site.cable = cable; site.hook = hook;
+    }
+    /** 依工程進度長高：前半段吊鋼構，後半段由下往上封外牆 */
+    function growSite(p) {
+      const fr = U.clamp(p / 0.5, 0, 1), cl = U.clamp((p - 0.45) / 0.5, 0, 1);
+      for (const c of site.cols) { const h = Math.max(0.01, c.userData.hMax * fr); c.scale.y = h; c.position.y = 0.3 + h / 2; }
+      for (const b of site.beams) b.visible = fr >= b.userData.frac - 1e-6;
+      for (const b of site.brace) b.visible = fr >= b.userData.frac - 1e-6;
+      for (const w of site.walls) { const h = Math.max(0.01, w.userData.hMax * cl); w.scale.y = h; w.position.y = 0.3 + h / 2; w.visible = cl > 0; }
+      site.top = 0.3 + FB.h * fr;
+    }
+    const fabBody = K.box(FB.x1 - FB.ax, FB.h, FB.z1 - FB.z0, K.std('#dfe3e6', { metalness: 0.25, roughness: 0.55 }));
+    fabBody.position.set((FB.x1 + FB.ax) / 2, FB.h / 2, (FB.z0 + FB.z1) / 2);
+    fabBody.userData.pick = { kind: 'fabb' };
+    fabG.add(fabBody);
+    {
+      const bandM = K.std('#5b6770', { metalness: 0.4, roughness: 0.5 });
+      for (const y of [5, 11]) { const b = K.box(FB.x1 - FB.ax + 0.12, 0.35, FB.z1 - FB.z0 + 0.12, bandM); b.position.set(fabBody.position.x, y, fabBody.position.z); b.raycast = () => {}; fabG.add(b); }
+      /* 支援區（有窗戶的兩層樓） */
+      const annex = K.box(FB.ax - FB.x0, 8.4, FB.z1 - FB.z0, K.std('#b9c3c9', { metalness: 0.2, roughness: 0.6 }));
+      annex.position.set((FB.x0 + FB.ax) / 2, 4.2, (FB.z0 + FB.z1) / 2);
+      annex.userData.pick = { kind: 'fabb' };
+      fabG.add(annex);
+      const winM = K.glow('#9fd8ff', 0.35);
+      for (const y of [2.4, 6.2]) for (let z = FB.z0 + 2.5; z < FB.z1 - 1; z += 3.2) { const wn = K.box(0.06, 1.3, 2.2, winM); wn.position.set(FB.x0 - 0.04, y, z); wn.raycast = () => {}; fabG.add(wn); }
+      for (const y of [2.4, 6.2]) for (let x = FB.x0 + 1.6; x < FB.ax - 1; x += 3) { const wn = K.box(2, 1.3, 0.06, winM); wn.position.set(x, y, FB.z1 + 0.04); wn.raycast = () => {}; fabG.add(wn); }
+      /* 屋頂：外氣空調箱、廢氣洗滌塔的排氣管 */
+      const mauM = K.std('#aab4ba', { metalness: 0.5, roughness: 0.45 }), stackM = K.std('#e6e8ea', { metalness: 0.6, roughness: 0.35 });
+      for (let k = 0; k < 4; k++) { const m = K.box(4.2, 2.2, 6, mauM); m.position.set(FB.ax + 5 + k * 7.6, FB.h + 1.1, FB.z0 + 8); m.raycast = () => {}; fabG.add(m); }
+      for (let k = 0; k < 3; k++) { const st = K.cylY(0.55, 7, stackM, 14); st.position.set(FB.ax + 8 + k * 9, FB.h + 3.5, FB.z1 - 6); st.raycast = () => {}; fabG.add(st); }
+      const logoT = K.makeTex(520, 120, (c) => { K.D.rect(c, 0, 0, 520, 120, '#10171c'); K.D.txt(c, 'NOVALUX FAB 1', 260, 64, 64, '#dce7ec', 'center', 800); }, 1.5);
+      const lg = K.plane(13, 3, K.texMat(logoT, { metalness: 0, roughness: 0.5, emissive: C('#ffffff'), emissiveIntensity: 0.12 }));
+      lg.rotation.y = Math.PI / 2;
+      lg.position.set(FB.x1 + 0.06, FB.h - 2.4, (FB.z0 + FB.z1) / 2);
+      lg.raycast = () => {};
+      fabG.add(lg);
+    }
+    /* 屋頂的狀態燈：綠 = 量產中、橘 = 機台還在進廠 / 產能不足、紅 = IT 造成停線 */
+    const fabLamp = new T.Mesh(new T.SphereGeometry(0.7, 14, 10), K.glow('#6b808b', 1.8));
+    fabLamp.position.set(FB.x1 - 3, FB.h + 1.4, FB.z1 - 3);
+    fabG.add(fabLamp);
+    /* 光纖管溝（地面上的蓋板）：總部後牆 → 晶圓廠 */
+    const trench = K.box(2.4, 0.14, FB.z1 - (-D / 2) + 0.6, K.std('#59636b', { roughness: 0.9 }));
+    trench.position.set(TRX, 0.07, (FB.z1 - D / 2) / 2);
+    trench.raycast = () => {};
+    fabG.add(trench);
+    const fabTag = api.tag('Fab 1 晶圓廠', 'info', 'center', 2);
+    fabTag.pos.set((FB.x0 + FB.x1) / 2 + 6, FB.h + 5, (FB.z0 + FB.z1) / 2);
+    const campusTag = api.tag(`校園光纖 ${G.BLD.campus} m（地下管溝）`, 'info', 'center', 1);
+    campusTag.pos.set(TRX, 1.4, (FB.z1 - D / 2) / 2);
     const FX = fx.emitter(700, 1.1);
     root.add(FX.obj);
     const fxState = {};
@@ -315,6 +491,16 @@
       pts.push([x, yc, RACKF + 1.6 + lz * 0.3], [x, yc, RACKF + 0.45], dp ? [x, dp[1], RACKF + 0.1] : [x, B1 + 2.5, RACKF + 0.45]);
       return pts;
     }
+    /** 晶圓廠的上行：B1 機櫃 → 天花板線槽 → 穿出總部後牆 → 地面管溝 → 晶圓廠的 FAB IDF */
+    function fabCablePts(k, dp) {
+      const lx = ((k % 5) - 2) * 0.32;
+      const yc = B1 + 4.35 - (k % 4) * 0.12;
+      const x = (dp ? dp[0] : 0) + lx * 0.2;
+      const pts = [];
+      if (dp) pts.push([x, dp[1], RACKF + 0.1]);
+      pts.push([x, yc, RACKF + 0.45], [x, yc, -D / 2 + 0.7], [TRX + lx, yc, -D / 2 + 0.7], [TRX + lx, 0.25, -D / 2 - 0.9], [TRX + lx, 0.25, FB.z1 + 1.2], [FAB_IDF[0] + lx * 0.4, FAB_IDF[1], FB.z1 + 1.2], [FAB_IDF[0] + lx * 0.4, FAB_IDF[1], FAB_IDF[2]]);
+      return pts.reverse();
+    }
     function buildCables() {
       const s = G.S;
       clearG(cableG);
@@ -324,7 +510,7 @@
       links.forEach((l, k) => {
         const fn = l.a.startsWith('F:') ? l.a : l.b, other = Q.other(l, fn);
         const f = G.BLD.byId[fn.slice(2)];
-        const pts = cablePts(f.level, k, devPts.get(other));
+        const pts = f.bldg ? fabCablePts(k, devPts.get(other)) : cablePts(f.level, k, devPts.get(other));
         const mesh = fx.tubeAlong(pts, 0.17, lineMat(CAT.cables[l.cable].color, 1));
         mesh.userData.pick = { kind: 'link', id: l.id };
         cableG.add(mesh);
@@ -558,6 +744,21 @@
         cb.dn = ls && ls.cap ? toFloor / ls.cap : 0;
         cb.up = ls && ls.cap ? fromFloor / ls.cap : 0;
       }
+      /* 晶圓廠：預定地 → 工地（依工程進度長高）→ 完工的廠房；屋頂燈號 = 產線狀況 */
+      const prog = G.Fab.buildProgress();
+      const fabOpen = prog >= 1;
+      fabG.visible = fabOpen; lotG.visible = !fabOpen; siteG.visible = !fabOpen && prog > 0;
+      const sk = prog > 0 ? (s.mode === 'sandbox' ? 'sandbox' : 'campaign') : 'lot';
+      if (!fabOpen && sk !== signKind) { signKind = sk; lotSign.material.map = signTex[sk]; lotSign.material.needsUpdate = true; }
+      if (siteG.visible) growSite(prog);
+      fabTag.show = prog > 0;
+      campusTag.show = fabOpen && Q.linksOf('F:FAB').length > 0;
+      if (fabOpen) {
+        const R = G.R.fab;
+        const hex = !R || !R.online ? HEX.none : R.itStop ? HEX.bad : R.rate >= CAT.fab.wspd * 0.8 ? HEX.ok : HEX.warn;
+        fabLamp.material.color.copy(C(hex)); fabLamp.material.emissive.copy(C(hex));
+        fabTag.set(R && R.online ? `Fab 1 · ${U.num(Math.round(R.rate))} 片 / 日 · 機台 ${R.online} / ${R.total}` : 'Fab 1 晶圓廠（機台進廠中）', R && R.itStop ? 'bad' : 'info');
+      } else if (prog > 0) fabTag.set(`Fab 1 晶圓廠 · 興建中 ${U.pct(prog)}`, 'info');
       /* ISP */
       for (const x of isps.values()) {
         const c = x.c, st = sim.isp[c.id];
@@ -662,6 +863,17 @@
         return inc && inc.status === 'active' ? [inc.title, '沿著實際路由移動的紅點 = 攻擊流量'] : null;
       }
       if (p.kind === 'inet') return ['網際網路', '所有外部流量（包含攻擊）都從這裡進來'];
+      if (p.kind === 'fabb') {
+        const R = G.R.fab, c = G.Fab.counts();
+        return ['Fab 1 晶圓廠（12 吋試產線）', R && R.online ? `產能 ${U.num(Math.round(R.rate))} 片 / 日 · 良率 ${U.pct(R.yield, 1)}` : '機台陸續進廠中', `機台 ${c.online} / ${s.fab.tools.length} 連網 · 等掃毒 ${c.scan} · 等交換器埠 ${c.ready}`, `經 ${G.BLD.campus} m 校園光纖連回總部 B1`];
+      }
+      if (p.kind === 'fablot') {
+        const pr = G.Fab.buildProgress();
+        /* 完工了：工地不見了，選取的卡片跟著關掉 */
+        if (pr >= 1) return null;
+        if (pr <= 0) return ['大樓後方的空地', '集團規劃中的 12 吋晶圓廠 Fab 1 預定地'];
+        return ['Fab 1 晶圓廠（興建中）', `工程進度 ${U.pct(pr)} · ${pr < 0.5 ? '鋼構吊裝中' : pr < 0.9 ? '外牆封板、無塵室裝修中' : '收尾：機電與無塵室測試'}`, G.Fab.buildEta(), `完工後經 ${G.BLD.campus} m 校園光纖連回總部 B1`];
+      }
       if (p.kind === 'gen') {
         const fac = G.R.fac || {};
         return ['柴油發電機（戶外）', fac.genRunning ? '運轉中：市電中斷，由發電機供電' : '待命中：市電中斷約 1 分鐘內自動啟動', 'UPS 負責撐過發電機啟動前的空檔'];
@@ -683,6 +895,11 @@
       else if (cur.kind === 'dev') acts.push(btn('到機房查看', () => opts.onDev && opts.onDev(cur.id), true));
       else if (cur.kind === 'link' || cur.kind === 'isp') acts.push(btn('到拓撲圖', () => opts.onTopo && opts.onTopo(), true));
       else if (cur.kind === 'atk') acts.push(btn('前往事件中心', () => opts.onInc && opts.onInc(), true));
+      else if (cur.kind === 'fabb') {
+        acts.push(btn('進入晶圓廠', () => opts.onFab && opts.onFab(), true));
+        if (opts.onFloor3d) acts.push(btn('走進無塵室（3D）', () => opts.onFloor3d('FAB')));
+        acts.push(btn('拉近', () => api.focus(fabBody, 0.5)));
+      } else if (cur.kind === 'fablot') acts.push(btn('拉近', () => api.focus(fabBody, 0.5), true));
       const title = U.h('b', {}, L[0]), lines = U.h('div', { class: 'ls' });
       U.mount(panel, U.h('div', { class: 'hd' }, title, U.h('button', { class: 'btn ghost xs', 'aria-label': '取消選取', onclick: () => { sel = null; renderSel(); } }, '✕')), lines, U.h('div', { class: 'row wrap' }, ...acts));
       selEls = { title, lines };
@@ -696,6 +913,10 @@
       } else if (cur.kind === 'b1' || cur.kind === 'dev') {
         selLine.scale.set(W + 0.7, 5.4, D + 0.7);
         selLine.position.set(0, B1 + 2.5, 0);
+        selLine.visible = true;
+      } else if (cur.kind === 'fabb' || cur.kind === 'fablot') {
+        selLine.scale.set(FB.x1 - FB.x0 + 0.8, FB.h + 0.6, FB.z1 - FB.z0 + 0.8);
+        selLine.position.set((FB.x0 + FB.x1) / 2, FB.h / 2, (FB.z0 + FB.z1) / 2);
         selLine.visible = true;
       } else selLine.visible = false;
       api.request();
@@ -821,6 +1042,18 @@
         for (const m of marks) m.s.material.emissiveIntensity = Math.sin(t * 6) > 0 ? 2.4 : 0.3;
         for (const sp of strips) if (sp.blink) sp.st.visible = Math.sin(t * Math.PI * sp.blink) > -0.2; else if (!sp.st.visible) sp.st.visible = true;
         beacon.material.emissiveIntensity = Math.sin(t * 3) > 0.6 ? 2.4 : 0.3;
+        /* 工地的塔式起重機：吊臂在工地上方來回轉、吊車前後移動，吊鉤吊著鋼梁到鋼構的最上面 */
+        if (siteG.visible && site.jib) {
+          site.jib.rotation.y = -2 + 0.6 * Math.sin(t * 0.045);
+          const r = 18 + 9 * Math.sin(t * 0.07 + 1);
+          site.trolley.position.x = r;
+          const hy = Math.max(3, (site.top || 1) + 2.5) - site.jibY;
+          const len = -1.15 - hy;
+          site.cable.scale.set(0.07, Math.max(0.1, len), 0.07);
+          site.cable.position.set(r, -1.15 - len / 2, 0);
+          site.hook.position.set(r, hy - 0.2, 0);
+          site.light.material.emissiveIntensity = Math.sin(t * 4) > 0.3 ? 2.6 : 0.2;
+        }
         if (alertFloors.size) {
           const pulse = 0.55 + 0.45 * Math.sin(t * 5);
           floors.forEach((fl, L) => { if (alertFloors.has(fl.f.id)) paintFloor(L, pulse); });
@@ -832,6 +1065,7 @@
         p = norm(p);
         if (p.kind === 'floor') { const fl = floors.find((x) => x.f.id === p.id); return fl ? fl.glass : null; }
         if (p.kind === 'b1' || p.kind === 'dev' || p.kind === 'rack') return b1Floor;
+        if (p.kind === 'fabb' || p.kind === 'fablot') return fabBody;
         return null;
       },
       clickable: (p) => p.kind !== 'inet',
@@ -850,7 +1084,7 @@
         for (const fl of floors) fl.tag.remove();
         for (const a of atks) if (a.tag) a.tag.remove();
         for (const m of marks) if (m.tag) m.tag.remove();
-        for (const t of [shaftTag, inetTag, ispTag, b1Tag, genTag, alertTag]) t.remove();
+        for (const t of [shaftTag, inetTag, ispTag, b1Tag, genTag, alertTag, fabTag, campusTag]) t.remove();
         for (const m of Object.values(stripM)) m.dispose();
         for (const m of matCache.values()) m.dispose();
       },

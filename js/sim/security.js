@@ -12,6 +12,7 @@
     DMZ: { name: 'DMZ 非軍事區', short: 'DMZ' },
     WAN: { name: '分支據點 / 雲端（專線、VPN、SD-WAN）', short: 'WAN' },
     IOT: { name: 'IoT 裝置網段（智慧廁所感測器）', short: 'IOT' },
+    OT: { name: 'OT 生產網路（晶圓廠機台、MES / EAP / FDC）', short: 'OT' },
   };
   G.SVC = {
     ANY:  { name: '任何服務', port: '*' },
@@ -27,8 +28,9 @@
     ICMP: { name: 'ICMP (ping)', port: '—' },
     SIP:  { name: 'SIP 語音', port: 'UDP 5060 / TLS 5061 + RTP' },
     MQTT: { name: 'MQTT 物聯網', port: 'TCP 1883 / TLS 8883' },
+    SECS: { name: 'SECS/GEM 機台通訊與資料', port: 'TCP 5000（HSMS）' },
   };
-  const CONCRETE = ['WEB', 'DNS', 'SMB', 'LDAP', 'SQL', 'RDP', 'SSH', 'SMTP', 'NTP', 'ICMP', 'SIP', 'MQTT'];
+  const CONCRETE = ['WEB', 'DNS', 'SMB', 'LDAP', 'SQL', 'RDP', 'SSH', 'SMTP', 'NTP', 'ICMP', 'SIP', 'MQTT', 'SECS'];
 
   const Sec = {};
   G.Sec = Sec;
@@ -105,6 +107,12 @@
     if (G.Rest && G.BLD.floors.some((f) => G.Rest.hasIot(f.id)) && (s.fw.iotVlan || s.fw.segmentation)) {
       const z = s.fw.iotVlan ? 'IOT' : 'LAN';
       out.push({ id: 'iot-mqtt', text: '智慧廁所感測器回報 IoT 管理平台', rule: `${z} → SERVERS : MQTT`, need: true, ok: ok(z, 'SERVERS', 'MQTT') });
+    }
+    /* 晶圓廠：工程師看 MES 報表、MES 與 ERP 交換工單；原廠透過 DMZ 的跳板機遠端維護 */
+    if (G.Fab && G.Fab.active()) {
+      out.push({ id: 'ot-eng', text: '研發工程師看晶圓廠的 MES 報表', rule: 'LAN → OT : WEB', need: true, ok: ok('LAN', 'OT', 'WEB') });
+      out.push({ id: 'ot-erp', text: 'MES 與 ERP 交換工單與出貨資料', rule: 'OT → SERVERS : SQL', need: true, ok: ok('OT', 'SERVERS', 'SQL') });
+      if (Sec.serverZones('jump').some((x) => x.zone === 'DMZ')) out.push({ id: 'ot-jump', text: '原廠經跳板機遠端維護機台', rule: 'DMZ → OT : RDP', need: true, ok: ok('DMZ', 'OT', 'RDP') });
     }
     /* 電話：分機註冊到 PBX、外線經 SBC（DMZ）對接電信業者 */
     if (G.Voice.active() && Q.roleServers('pbx').some((d) => d.rack)) {
@@ -195,6 +203,36 @@
         if (extra.length) add('med', 'IoT 網段到伺服器區開太多', `允許 IOT → SERVERS：${extra.join('、')}`, '只保留 IOT → SERVERS：MQTT（必要時 DNS、NTP）。', 'k-iot');
       }
     }
+    /* 第十章：晶圓廠的 OT 網路（Purdue 模型：IT 與 OT 之間只能經過防火牆，只開必要的服務） */
+    if (G.Fab && G.Fab.active()) {
+      const fz = zones.get('F:FAB');
+      if (fz && fz.linked && fz.zone !== 'OT' && fz.zone !== 'OTBRIDGE') add('crit', '晶圓廠和員工電腦在同一個網路（沒有 OT 隔離）', 'FAB 的機台接在總部的內網：一台員工電腦中毒就能直接打到機台；機台大多是不能更新的舊 Windows，一中毒整座廠停線。', '買一台 L3 交換器當 OT 核心，接到防火牆的「OT」介面；FAB 的上行改接到 OT 核心，MES / EAP / FDC 也接在 OT 核心。', 'k-ot');
+      if (byZone.OTBRIDGE) add('crit', 'IT 與 OT 直接相連（繞過防火牆）', `${byZone.OTBRIDGE.map(Q.nodeName).join('、')} 同時連得到防火牆的 OT 介面與內網 / DMZ：隔離失效。`, '拆掉 OT 核心和總部核心（或 DMZ 交換器）之間的直連線路：IT 與 OT 之間只能經過防火牆。', 'k-ot');
+      if (fw) {
+        const oi = Sec.allowedSvcs('OT', 'INTERNET');
+        if (oi.length) add('high', 'OT 網路可以連上網際網路', `允許 OT → INTERNET：${oi.join('、')}。機台一連上網際網路，就可能被遠端控制、或把配方外傳。`, '刪掉 OT → INTERNET 的允許規則：機台不需要上網。', 'k-ot');
+        const io = Sec.allowedSvcs('INTERNET', 'OT');
+        if (io.length) add('crit', '網際網路可以直接連進 OT', `允許 INTERNET → OT：${io.join('、')}`, '原廠遠端維護只能經過 DMZ 的跳板機（MFA + 錄影）：刪掉 INTERNET → OT 的規則。', 'k-fabsec');
+        const ol = Sec.allowedSvcs('OT', 'LAN');
+        if (ol.length) add('high', 'OT 可以主動連到員工電腦', `允許 OT → LAN：${ol.join('、')}`, 'OT 不需要連到員工電腦：刪掉 OT → LAN 的規則。', 'k-ot');
+        const lo = Sec.allowedSvcs('LAN', 'OT').filter((x) => x !== 'WEB');
+        if (lo.length) add('med', '員工內網到 OT 開太多', `允許 LAN → OT：${lo.join('、')}（工程師只需要看 MES 網頁）`, '只保留 LAN → OT：WEB。', 'k-ot');
+        const other = [];
+        for (const z of ['GUEST', 'IOT', 'WAN']) { const a = Sec.allowedSvcs(z, 'OT'); if (a.length) other.push(`${z}（${a.join('、')}）`); }
+        const dmzOt = Sec.allowedSvcs('DMZ', 'OT').filter((x) => x !== 'RDP');
+        if (dmzOt.length) other.push(`DMZ（${dmzOt.join('、')}）`);
+        if (other.length) add('high', '其他網段可以連進 OT', `允許 ${other.join('；')} → OT`, 'OT 只接受兩種連線：LAN → OT：WEB（MES 報表）、DMZ 跳板機 → OT：RDP（原廠維護）。', 'k-ot');
+        if (Sec.allows('DMZ', 'OT', 'RDP') && !Sec.serverZones('jump').some((x) => x.zone === 'DMZ')) add('med', 'DMZ 可以用 RDP 連進 OT，卻沒有跳板機', '允許 DMZ → OT：RDP，但 DMZ 裡沒有跳板機：DMZ 的官網一被攻破，就能直接遠端桌面進機台。', '在 DMZ 放一台跳板機（JMP 角色）統一管控；或先刪掉這條規則。', 'k-fabsec');
+      }
+      for (const r of ['mes', 'eap', 'fdc']) {
+        for (const { d, zone } of Sec.serverZones(r)) if (zone !== 'OT' && zone !== 'OTBRIDGE') add('med', `${d.name}（${CAT.roles[r].short}）不在 OT 區`, `${CAT.roles[r].name}放在 ${zone}：機台的資料要穿過 IT/OT 防火牆，防火牆一忙、一故障，產線就停。`, `把 ${CAT.roles[r].short} 伺服器接到 OT 核心交換器。`, 'k-fab');
+      }
+      const skipped = G.Fab.counts().skipped;
+      if (skipped) add('high', `${skipped} 台機台沒有經過進廠掃毒就接上網路`, '原廠的筆電、USB 與機台電腦可能帶著惡意程式：曾經有晶圓廠因為新機台安裝時夾帶勒索病毒，好幾座廠一起停工。', '建置機台進廠掃毒站；已經接上的機台排時間斷線重掃。', 'k-fabsec');
+      if (s.fab.g4 !== undefined && s.fab.g4 !== null) add('crit', `${G.Fab.code(s.fab.g4)} 上還接著 4G 分享器`, '原廠遠端維修時接上的 4G 分享器沒有拆：這台機台直接連在網際網路上，完全繞過了 IT / OT 防火牆。', '到「晶圓廠」拆除 4G 分享器；原廠遠端維護一律走 DMZ 的跳板機。', 'k-fabsec');
+      if (s.fab.phone !== 'ban') add('med', '無塵室允許帶私人手機', '製程配方、機台畫面、無塵室的配置都是公司最高機密：手機一拍就外洩，還可能被拿來當熱點，讓機台偷偷連上網際網路。', '在「晶圓廠」裝好安檢門與手機置物櫃、禁止私人手機，並配發無相機的公司手持裝置。', 'k-nophone');
+      if (!Sec.serverZones('jump').some((x) => x.zone === 'DMZ')) add('low', '沒有原廠遠端維護用的跳板機', '原廠要遠端診斷機台時沒有安全的管道：很容易有人在機台上偷接 4G 分享器。', '在 DMZ 放一台跳板機（JMP 角色），開 DMZ → OT：RDP，並啟用 MFA。', 'k-fabsec');
+    }
     if (ch >= 3 && fw && !Q.hasService('ips')) add('low', '沒有啟用 IPS', '防火牆只看埠號，無法辨識夾帶在允許流量中的攻擊。', '訂閱 IPS 入侵防禦（注意吞吐量下降）。', 'k-ips');
     if (ch >= 5 && !s.fw.segmentation) add('med', '內網沒有分段', '員工電腦可以直接存取所有伺服器，勒索軟體可以任意擴散。', '在防火牆頁面啟用「內部分段」，並補上 LAN → SERVERS 的必要規則。', 'k-segment');
     if (ch >= 5 && !Q.roleServers('backup').some((d) => d.rack)) add('med', '沒有備份伺服器', '遭勒索軟體加密時將無法復原。', '部署儲存伺服器並設為備份角色，並啟用不可變備份。', 'k-ransom');
@@ -264,7 +302,12 @@
     const guestLeak = fw ? ['LAN', 'SERVERS', 'DMZ'].some((z) => Sec.allowedSvcs('GUEST', z).length > 0) : true;
     const iotLeak = !s.fw.iotVlan || !fw || ['LAN', 'INTERNET', 'DMZ', 'GUEST'].some((z) => Sec.allowedSvcs('IOT', z).length > 0);
     const webZones = Sec.serverZones('web').map((x) => x.zone);
+    /* 晶圓廠：FAB 在 OT 區、OT 不能上網 / 連員工電腦、網際網路連不進 OT；原廠維護走 DMZ 的跳板機 + MFA */
+    const fabZ = G.Net.zones().get('F:FAB');
+    const otIsolated = fw && !!fabZ && fabZ.zone === 'OT' && !Sec.allowedSvcs('OT', 'INTERNET').length && !Sec.allowedSvcs('OT', 'LAN').length && !Sec.allowedSvcs('INTERNET', 'OT').length;
+    const jumpOk = fw && Sec.serverZones('jump').some((x) => x.zone === 'DMZ' && G.Net.devUp(x.d)) && Sec.allows('DMZ', 'OT', 'RDP') && !Sec.allowedSvcs('INTERNET', 'OT').length && Q.hasService('mfa');
     return {
+      otIsolated, jumpOk,
       fw, mgmtExposed: mgmt.length > 0, mgmt,
       lanExposed: !fw || Sec.allowedSvcs('INTERNET', 'LAN').length > 0,
       guestIsolated: !guestLeak, iotIsolated: !iotLeak,

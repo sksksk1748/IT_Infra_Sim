@@ -45,12 +45,14 @@
         phys: { xcvr: {}, loose: [], self: [], seq: 1 },
         /* 廁所與清潔（restroom.js）：沙盒一開始就有 4 位白班清潔人員；劇情模式第一章只有 2F，1 位就夠 */
         rest: G.Rest.newState(mode === 'sandbox' ? 4 : 1),
+        /* 晶圓廠（fab.js）：劇情模式第十章開廠；沙盒模式在所有樓層進駐之後開廠 */
+        fab: G.Fab.newState(),
         /* 電話：沙盒模式從週一上班開始要有自己的電話交換機（之前用大樓的舊總機） */
         voice: { qos: false, trunk: 0, next: 0, nextAt: 0, graceUntil: mode === 'sandbox' ? U.at(3, 9) : 0 },
         stor: { snap: false, extraTB: 0 },
         bkp: { freq: 24, keep: 30, jobs: [], lastOk: null, lastTape: null, lastCloud: null, fault: null, drillAt: null, drillOk: null, drillUntil: 0 },
         incidents: [], tickets: [], alerts: [], log: [],
-        hist: { t: [], wanIn: [], wanOut: [], wanCap: [], intra: [], users: [], sat: [], lat: [], loss: [], fw: [], temp: [], kw: [], web: [] },
+        hist: { t: [], wanIn: [], wanOut: [], wanCap: [], intra: [], users: [], sat: [], lat: [], loss: [], fw: [], temp: [], kw: [], web: [], fab: [] },
         stats: { breaches: 0, incResolved: 0, incFailed: 0, ticketsResolved: 0, spent: 0, income: 0, mttd: [], mttr: [], ransomPaid: 0 },
         kb: { unlocked: {}, seen: {} },
         settings: { autoPause: true },
@@ -91,6 +93,8 @@
       for (const f of G.BLD.floors) {
         if (s.floors[f.id]) continue;
         s.floors[f.id] = newFloorState();
+        /* 晶圓廠：由 Fab.ensure / 第十章開廠時排定 */
+        if (f.bldg) continue;
         /* 新版本加入的樓層：沙盒模式下一個工作天啟用；
          * 劇情模式的 22F、23F 餐廳在第七章開張，B2 停車場在第二章啟用（已經過了第二章的存檔：下一個工作天一早啟用） */
         if (s.mode === 'sandbox') s.floors[f.id].moveInAt = U.nextWeekdayAt(s.time, f.id === 'B2' ? 7 : 9, 1);
@@ -218,10 +222,12 @@
     const gates = ft.gates || 0, cams = ft.cams || 0;
     /* 智慧廁所的 IoT 閘道器（一台，PoE） */
     const iot = G.Rest && G.Rest.hasIot(fid) ? 1 : 0;
-    return { seats, printers, pos, gates, cams, iot, aps: fs.aps.length, total: seats + printers + pos + gates + cams + iot + fs.aps.length };
+    /* 晶圓廠：每一台機台 1～2 個埠（全部機台都要算進去，交換器才夠） */
+    const tools = ft.fab && G.Fab ? G.Fab.portsTotal() : 0;
+    return { seats, printers, pos, gates, cams, iot, tools, aps: fs.aps.length, total: seats + printers + pos + gates + cams + iot + tools + fs.aps.length };
   };
-  /** 辦公樓層的進駐人數（不含餐廳與停車場人員） */
-  Q.officeStaff = () => U.sum(G.BLD.floors.filter((f) => !G.FT[f.type].dine && !G.FT[f.type].park), (f) => G.S.floors[f.id].movedIn);
+  /** 辦公樓層的進駐人數（不含餐廳、停車場人員與晶圓廠） */
+  Q.officeStaff = () => U.sum(G.BLD.floors.filter((f) => !G.FT[f.type].dine && !G.FT[f.type].park && !G.FT[f.type].fab), (f) => G.S.floors[f.id].movedIn);
   Q.floorPorts = (fid) => {
     const fs = G.S.floors[fid];
     return fs.idf.count * CAT.access[fs.idf.model].ports;

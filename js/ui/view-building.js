@@ -51,6 +51,7 @@
       onDev: (id) => { const d = G.S.devices[id], R = G.Views.rack; if (d && R) { R.sel = id; if (d.rack) R.rack = d.rack; } UI.go('rack'); },
       onTopo: () => UI.go('topo'),
       onInc: () => UI.go('inc'),
+      onFab: () => UI.go('fab'),
     });
     return V.m3d;
   }
@@ -60,10 +61,11 @@
     V.last = performance.now();
     const s = G.S, sim = G.R.sim || { floors: {} };
     const emp = Q.employees();
-    const upN = G.BLD.floors.filter((f) => G.Net.floorUp(f.id)).length;
+    const upN = G.BLD.hq.filter((f) => G.Net.floorUp(f.id)).length;
+    const hqEmp = U.sum(G.BLD.hq, (f) => s.floors[f.id].movedIn);
     U.mount(V.sum,
-      h('span', { class: 'chip' }, `員工 ${U.num(emp)} / ${U.num(G.BLD.totalStaff)}`),
-      h('span', { class: 'chip ' + (upN === G.BLD.floors.length ? 'ok' : '') }, `上線樓層 ${upN} / ${G.BLD.floors.length}`),
+      h('span', { class: 'chip' }, `員工 ${U.num(hqEmp)} / ${U.num(G.BLD.hqStaff)}`),
+      h('span', { class: 'chip ' + (upN === G.BLD.hq.length ? 'ok' : '') }, `上線樓層 ${upN} / ${G.BLD.hq.length}`),
       sim.sat !== null && sim.sat !== undefined ? h('span', { class: 'chip ' + (sim.sat >= 0.8 ? 'ok' : sim.sat >= 0.6 ? 'warn' : 'bad') }, `滿意度 ${U.pct(sim.sat)}`) : null);
     if (V.tower) U.mount(V.tower, tower());
     U.mount(V.table, table());
@@ -72,9 +74,11 @@
   function tower() {
     const s = G.S, sim = G.R.sim || { floors: {}, links: {} };
     /* 地上樓層由上往下畫，B1 機房在地面線下，地下停車場再往下 */
-    const floors = G.BLD.floors.filter((f) => f.level > 0).reverse();
-    const under = G.BLD.floors.filter((f) => f.level < 0).sort((a, b) => b.level - a.level);
-    const FH = 17, top = 30, W = 214;
+    const floors = G.BLD.hq.filter((f) => f.level > 0).reverse();
+    const under = G.BLD.hq.filter((f) => f.level < 0).sort((a, b) => b.level - a.level);
+    /* 晶圓廠動工後：右邊多畫大樓後方的晶圓廠（開廠後校園光纖從 B1 接過去） */
+    const showFab = Q.unlocked(CAT.fab) || G.Fab.buildProgress() > 0;
+    const FH = 17, top = 30, W = showFab ? 300 : 214;
     const baseY = top + floors.length * FH;
     const H = baseY + 64 + under.length * (FH + 4);
     const svg = U.s('svg', { viewBox: `0 0 ${W} ${H}`, role: 'img', 'aria-label': '大樓剖面圖' });
@@ -125,14 +129,43 @@
     for (let k = 0; k < Math.min(8, s.racks.length); k++) b1.appendChild(U.s('rect', { x: 150 + k * 6.5, y: baseY + 18, width: 5, height: 28, fill: 'var(--jack)', stroke: 'var(--line-2)', 'stroke-width': 0.5 }));
     svg.appendChild(b1);
     svg.appendChild(U.s('line', { x1: 0, y1: baseY + 8, x2: W, y2: baseY + 8, stroke: 'var(--line-2)', 'stroke-dasharray': '3 2' }));
+    if (showFab) {
+      const open = !!(s.fab && s.fab.open), R = G.R.fab;
+      const fx0 = 226, fw = 68, fh = 54, fy = baseY + 8 - fh;
+      const g = U.s('g', { class: 'fl', onclick: () => UI.go(open ? 'fab' : 'building') });
+      g.appendChild(U.s('title', {}, 'Fab 1 晶圓廠（大樓後方）'));
+      /* 開廠前：工程進度由下往上填滿（虛線框 = 還是工地） */
+      const prog = G.Fab.buildProgress();
+      g.appendChild(U.s('rect', { x: fx0, y: fy, width: fw, height: fh, rx: 2, fill: open ? 'var(--bg-3)' : 'none', stroke: open ? 'var(--accent)' : 'var(--line-2)', 'stroke-dasharray': open ? null : '3 2' }));
+      if (!open && prog > 0) g.appendChild(U.s('rect', { x: fx0 + 1, y: fy + fh - (fh - 2) * prog - 1, width: fw - 2, height: (fh - 2) * prog, fill: 'var(--warn)', opacity: 0.16 }));
+      g.appendChild(U.s('text', { x: fx0 + fw / 2, y: fy + 15, 'text-anchor': 'middle', 'font-size': 9.5, 'font-weight': 700, fill: 'var(--text)' }, 'Fab 1'));
+      g.appendChild(U.s('text', { x: fx0 + fw / 2, y: fy + 27, 'text-anchor': 'middle', 'font-size': 7, fill: 'var(--text-2)' }, open ? '晶圓廠' : prog > 0 ? `興建中 ${U.pct(prog)}` : '預定地'));
+      if (open) {
+        const c = R && R.itStop ? 'var(--bad)' : R && R.rate >= CAT.fab.wspd * 0.8 ? 'var(--ok)' : 'var(--warn)';
+        g.appendChild(U.s('circle', { cx: fx0 + fw - 7, cy: fy + 7, r: 2.6, fill: c }));
+        g.appendChild(U.s('text', { x: fx0 + fw / 2, y: fy + 42, 'text-anchor': 'middle', 'font-size': 7.5, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)' }, R && R.online ? `${U.num(Math.round(R.rate))} 片/日` : '進機中'));
+      }
+      svg.appendChild(g);
+      /* 校園光纖：B1 → 地下管溝 → FAB IDF */
+      Q.linksOf('F:FAB').forEach((l, k) => {
+        const ls = sim.links[l.id];
+        const bad = l.status !== 'up' || (ls && ls.util >= 0.9);
+        const stroke = bad ? 'var(--bad)' : G.Net.linkBuilding(l) ? 'var(--text-3)' : CAT.cables[l.cable].color;
+        svg.appendChild(U.s('path', { d: `M208 ${baseY + 30 + k * 2} H${218 + k * 2} V${baseY + 4} H${fx0 + 8}`, fill: 'none', stroke, 'stroke-width': 1.2, 'stroke-dasharray': G.Net.linkBuilding(l) ? '2 2' : null }));
+      });
+    }
     return svg;
   }
 
   function table() {
     const s = G.S, sim = G.R.sim || { floors: {}, links: {} };
     const tb = h('tbody', {});
-    for (const f of G.BLD.floors.slice().reverse()) {
+    /* 大樓樓層由上往下；第十章起最後面是大樓後方的晶圓廠 */
+    const list = G.BLD.hq.slice().reverse();
+    if (Q.unlocked(CAT.fab) || (s.fab && s.fab.open)) list.push(...G.BLD.fab);
+    for (const f of list) {
       const fs = s.floors[f.id], st = sim.floors[f.id], ft = G.FT[f.type];
+      if (ft.fab) tb.appendChild(h('tr', { class: 'sep' }, h('td', { colspan: 7, class: 'small muted' }, '大樓後方 · Fab 1 晶圓廠（經校園光纖連回 B1）')));
       const stt = V.floorStatus(f.id);
       let people;
       if (fs.movedIn >= f.staff) people = U.num(f.staff);
@@ -150,7 +183,8 @@
         h('td', {}, h('span', { class: 'ftype', style: { background: ft.color } }), f.dept),
         h('td', { class: 'mono small' }, people),
         h('td', {}, h('span', { class: 'chip ' + stt.c }, stt.t)),
-        h('td', {}, sat === null ? h('span', { class: 'dim' }, '—') : h('div', { class: 'row' }, h('div', { class: 'bar ' + (sat >= 0.8 ? 'ok' : sat >= 0.6 ? 'warn' : 'bad'), style: { width: '54px' } }, h('i', { style: { width: sat * 100 + '%' } })), h('span', { class: 'mono small' }, U.pct(sat)))),
+        ft.fab ? h('td', { class: 'mono small' }, G.R.fab && G.R.fab.online ? `產能 ${U.num(Math.round(G.R.fab.rate))} 片 / 日` : h('span', { class: 'dim' }, '—'))
+          : h('td', {}, sat === null ? h('span', { class: 'dim' }, '—') : h('div', { class: 'row' }, h('div', { class: 'bar ' + (sat >= 0.8 ? 'ok' : sat >= 0.6 ? 'warn' : 'bad'), style: { width: '54px' } }, h('i', { style: { width: sat * 100 + '%' } })), h('span', { class: 'mono small' }, U.pct(sat)))),
         h('td', { class: 'mono small' }, fs.aps.length ? h('span', { class: wr.good >= 0.9 ? '' : 'warn-t' }, `${U.pct(wr.good)} · ${fs.aps.length} AP`) : h('span', { class: 'dim' }, '—')),
         h('td', { class: 'mono small' }, links.length ? h('span', { class: util >= 0.9 ? 'bad-t' : util >= 0.7 ? 'warn-t' : '' }, `${U.bw(cap)} · ${U.pct(util)}`) : h('span', { class: 'dim' }, '—'))));
     }

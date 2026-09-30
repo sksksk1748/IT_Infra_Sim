@@ -217,7 +217,8 @@
         if (p) { used.add(p.x + ',' + p.y); out.push(p); }
       }
     }
-    /* 補強：牆多的樓層（主管室、會議室）在訊號最差、人最多的位置補 AP，直到良好覆蓋 ≥ 93% */
+    /* 補強：牆多的樓層（主管室、會議室）在訊號最差、人最多的位置補 AP，直到良好覆蓋 ≥ 93%；
+     * 無塵室的機台與金屬壁板很擋訊號，但手持裝置只要「可用」的訊號：補到可用覆蓋 ≥ 95% */
     const cells = L.W * L.H;
     const best = new Float32Array(cells).fill(-120);
     const addMap = (p) => { const mp = apMap(f.type, p.x, p.y, m.tx); for (let i = 0; i < cells; i++) if (mp[i] > best[i]) best[i] = mp[i]; };
@@ -225,12 +226,13 @@
     /* 餐廳：用餐區（人潮分布）和廚房（員工分布）一樣重要；停車場以人潮為主 */
     const wcOf = coverWeight(f.type);
     const wt = (i) => wcOf(L.occ[i], L.guest[i]);
-    const goodCov = () => { let g = 0; for (let i = 0; i < cells; i++) if (best[i] >= Wifi.TH.good) g += wt(i); return g; };
-    for (let extra = 0; extra < 10 && goodCov() < 0.93; extra++) {
+    const TH = ft.fab ? Wifi.TH.usable : Wifi.TH.good, target = ft.fab ? 0.95 : 0.93, maxExtra = ft.fab ? 16 : 10;
+    const goodCov = () => { let g = 0; for (let i = 0; i < cells; i++) if (best[i] >= TH) g += wt(i); return g; };
+    for (let extra = 0; extra < maxExtra && goodCov() < target; extra++) {
       let worst = -1, ww = 0;
       for (let i = 0; i < cells; i++) {
-        if (best[i] >= Wifi.TH.good || wt(i) <= 0) continue;
-        const w = wt(i) * (Wifi.TH.good - best[i]);
+        if (best[i] >= TH || wt(i) <= 0) continue;
+        const w = wt(i) * (TH - best[i]);
         if (w > ww) { ww = w; worst = i; }
       }
       if (worst < 0) break;

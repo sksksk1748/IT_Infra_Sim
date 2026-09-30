@@ -153,6 +153,7 @@
   Diy.start = (fid, std) => {
     const s = G.S, fs = s.floors[fid];
     if (fs.cabling.status !== 'none') return { ok: false, msg: '這層樓已經有布線工程了' };
+    if (G.BLD.isFab(fid)) return { ok: false, msg: '無塵室裡施工要穿無塵衣、申請施工許可，由合格的無塵室工程廠商施作：請改用發包施工' };
     const cost = Diy.cost(fid, std);
     if (!G.Act.spend(cost, `${fid} 自己布線的材料費（${CAT.horizontal[std].name}）${Diy.kitOwned() ? '' : '＋布線工具組'}`)) return { ok: false, msg: `預算不足（需要 ${U.money(cost)}）` };
     s.flags.diyKit = true;

@@ -227,7 +227,7 @@
       if (fwEnd && l.zone) {
         const other = fwEnd === p.a ? p.b : p.a;
         const tx = fwEnd.x + (other.x - fwEnd.x) * 0.22, ty = fwEnd.y + (other.y - fwEnd.y) * 0.22;
-        edgeG.appendChild(U.s('text', { x: tx + 4, y: ty, 'font-size': 9, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)', 'font-weight': 600 }, { outside: 'OUT', inside: 'IN', dmz: 'DMZ', ha: 'HA' }[l.zone]));
+        edgeG.appendChild(U.s('text', { x: tx + 4, y: ty, 'font-size': 9, fill: 'var(--text-2)', 'font-family': 'var(--font-mono)', 'font-weight': 600 }, { outside: 'OUT', inside: 'IN', dmz: 'DMZ', ha: 'HA', ot: 'OT' }[l.zone]));
       }
       e.link = l;
       V.refs.links[l.id] = e;

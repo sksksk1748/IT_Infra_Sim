@@ -215,7 +215,10 @@
       }
       const isFloor = ep.startsWith('F:');
       let zone;
-      if (fz.has('dmz') && fz.has('inside')) zone = 'BRIDGED';
+      /* OT：接在防火牆「OT」介面後面的晶圓廠網路；同時又碰得到內網 / DMZ，就是 IT 與 OT 沒有隔離 */
+      if (fz.has('ot') && (fz.has('inside') || fz.has('dmz'))) zone = 'OTBRIDGE';
+      else if (fz.has('ot')) zone = router ? 'BYPASS' : 'OT';
+      else if (fz.has('dmz') && fz.has('inside')) zone = 'BRIDGED';
       else if (fz.has('dmz')) zone = router ? 'BYPASS' : 'DMZ';
       else if (fz.has('inside')) zone = router ? 'BYPASS' : (isFloor ? 'LAN' : 'SERVERS');
       else if (fz.has('outside')) zone = 'EXPOSED';
@@ -240,6 +243,13 @@
     const isFloor = nodeId.startsWith('F:');
     if (!z) return isFloor ? 'LAN' : 'SERVERS';
     switch (z.zone) {
+      case 'OT': return 'OT';
+      /* IT 與 OT 沒隔離：晶圓廠與 MES / EAP / FDC 仍算 OT，其他照原本的區域 */
+      case 'OTBRIDGE': {
+        const d = G.S.devices[nodeId];
+        if ((isFloor && G.BLD.isFab(nodeId.slice(2))) || (d && ['mes', 'eap', 'fdc'].includes(d.role))) return 'OT';
+        return isFloor ? 'LAN' : 'SERVERS';
+      }
       case 'DMZ': return 'DMZ';
       case 'EXPOSED': return 'INTERNET';
       case 'LAN': return 'LAN';
@@ -288,6 +298,8 @@
   Net.clockWindow = (t) => { if (U.isWeekend(t)) return false; const h = U.hourOf(t); return (h >= 7.5 && h < 10) || (h >= 17 && h < 20); };
   Net.presence = (t, type) => {
     const ft0 = G.FT[type];
+    /* 晶圓廠：24 小時、週末也照常運轉，兩班制（08:00 / 20:00 交接班時人比較少） */
+    if (ft0 && ft0.fab) { const h = U.hourOf(t) % 12; return 0.85 - (h >= 7.8 && h < 8.4 ? 0.2 : 0); }
     if (ft0 && ft0.dine) return curve(CREW, t) * (U.isWeekend(t) ? 0.08 : 1);
     /* 停車場管理員：一早開門到晚上，週末也有人值班 */
     if (ft0 && ft0.park) return curve(CREW, t) * (U.isWeekend(t) ? 0.35 : 1);
@@ -374,6 +386,7 @@
     }
 
     /* 樓層 */
+    let fabCtx = null;
     for (const f of G.BLD.floors) {
       const fs = s.floors[f.id], ft = G.FT[f.type];
       const nid = 'F:' + f.id;
@@ -424,6 +437,8 @@
         flows.push(fl);
         st.iotFlow = fl;
       }
+      /* 晶圓廠：機台 ⇄ EAP / FDC、手持裝置 → MES（fab.js），不走一般樓層的上網與內部服務流量 */
+      if (ft.fab) { fabCtx = G.Fab.flows(g, flows, st, nid, up); continue; }
       if (!up || (pres < 0.5 && guests < 0.5 && crowd < 0.5)) continue;
 
       const wiredU = pres * ft.wired * portFrac * dhcpWired;
@@ -712,6 +727,8 @@
     G.Voice.measure(vctx, floorSt);
     /* 分支據點：各應用的送達率、延遲、據點滿意度、WAN 線路使用率 */
     const wanR = G.Wan.measure(wctx, t, (k) => (load.get(k) || 0) + (loadP.get(k) || 0), g);
+    /* 晶圓廠：自動化、MES、工單、FDC → 產能與良率 */
+    G.Fab.measure(fabCtx, floorSt.FAB, g);
 
     /* ---- 官網可用率 ---- */
     let web = { demand: webDem, delivered: 0, ratio: 1 };
@@ -734,13 +751,15 @@
     let adCap = 0;
     for (const d of Q.roleServers('ad')) if (g.nodes.has(d.id)) adCap += CAT.roles.ad.capUsers;
     let presTot = 0, satSum = 0, latSum = 0, lossSum = 0, demTot = 0;
-    for (const f of G.BLD.floors) presTot += floorSt[f.id].present;
+    for (const f of G.BLD.floors) if (!G.FT[f.type].fab) presTot += floorSt[f.id].present;
     const adCapF = presTot > 0 ? 0.75 + 0.25 * Math.min(1, adCap / presTot) : 1;
     const wlcManaged = G.Q.devices('wlc').some((d) => g.nodes.has(d.id));
 
     for (const f of G.BLD.floors) {
       const st = floorSt[f.id], ft = G.FT[f.type];
       const fs = s.floors[f.id];
+      /* 晶圓廠看的是產能（G.R.fab），不算進員工滿意度 */
+      if (ft.fab) { st.sat = null; continue; }
       if (st.present < 0.5) { st.sat = G.R.satEma[f.id] !== undefined ? G.R.satEma[f.id] : null; continue; }
       st.adOk = required.includes('ad') ? !!adOkFloor[f.id] : true;
       let delivered = 0, offered = 0, latW = 0, latAmt = 0;
@@ -815,7 +834,7 @@
       if (e) { wanIn += Math.min(inn, c.bw); wanOut += Math.min(out, c.bw); wanCap += c.bw; }
     }
     let intra = 0;
-    for (const fl of flows) if (fl.kind === 'intra' || fl.kind === 'backup' || fl.kind === 'webdb') intra += fl.dFwd + fl.dRev;
+    for (const fl of flows) if (fl.kind === 'intra' || fl.kind === 'backup' || fl.kind === 'webdb' || fl.kind === 'secs' || fl.kind === 'fdc' || fl.kind === 'fab') intra += fl.dFwd + fl.dRev;
     const prevSat = G.R.sim ? G.R.sim.sat : null;
     /* 全公司滿意度：總部各樓層 + 分支據點（依在座人數加權） */
     let siteSat = 0, siteW = 0;

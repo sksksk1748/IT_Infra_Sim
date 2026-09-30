@@ -90,15 +90,24 @@
     wcpaper:   { sev: 'med', text: (f) => `${f}：廁所沒有衛生紙了`, hint: '清潔人員還沒巡到這一間。到這層樓的「廁所與清潔」加派清潔人員；或導入智慧廁所：感測器在快用完時就通知清潔人員先補。' },
     wcdirty:   { sev: 'med', text: (f) => `${f}：廁所很髒、有異味`, hint: '用的人太多、清潔人員巡不過來。加派清潔人員，或導入智慧廁所依人流與異味派工。' },
     wcclog:    { sev: 'med', text: (f) => `${f}：廁所馬桶堵住了`, hint: '堵住的那一間暫停使用，要等清潔人員來處理。智慧廁所的感測器會立刻通知清潔人員。' },
+    /* 晶圓廠（第十章） */
+    fabmes:    { sev: 'crit', text: () => '晶圓廠：MES 連不上，整座廠停線！', hint: 'MES 是晶圓廠的大腦：伺服器要設成 MES 角色、接在 OT 核心；EAP 也要連得到 MES。', goto: 'fab' },
+    fabeap:    { sev: 'high', text: (f, n) => `晶圓廠：${n || '部分'} 台機台連不上 EAP，只能靠人工操作`, hint: 'EAP 伺服器（接在 OT 核心）用 SECS/GEM 控制機台。一台 EAP 大約管 40 台機台；EAP 放在 IT 那一側的話，SECS 要經過防火牆。', goto: 'fab' },
+    fabport:   { sev: 'high', text: (f, n) => `晶圓廠：${n || '幾'} 台機台裝好了，卻沒有交換器埠可以接`, hint: 'FAB IDF 的接入交換器埠數不夠：每台機台要 1～2 個埠。到「樓層 → FAB」增加接入交換器。', goto: 'floor:FAB' },
+    fabscan:   { sev: 'med', text: (f, n) => `晶圓廠：${n || '幾'} 台機台卡在「等待進廠掃毒」`, hint: '沒有進廠掃毒站，機台不能安全地接上網路。到「晶圓廠」建置掃毒站（或自負風險略過掃毒）。', goto: 'fab' },
+    fabhand:   { sev: 'med', text: () => '晶圓廠：現場人員查不到 MES（手持裝置不夠或收不到訊號）', hint: '禁止私人手機之後，操作員要用公司的手持裝置查批號、叫天車：裝置數量要夠，無塵室的 bay 裡也要有 Wi-Fi 訊號（金屬機台與壁板很擋訊號）。', goto: 'fab' },
+    fabfdc:    { sev: 'med', text: () => '晶圓廠：FDC 收不到機台的感測資料', hint: '沒有 FDC，製程偏移要等量測站才發現，一整批晶圓就報廢了。部署 FDC 伺服器接在 OT 核心，資料量很大，上行頻寬要夠。', goto: 'fab' },
+    faberp:    { sev: 'high', text: () => '晶圓廠：MES 拿不到 ERP 的工單', hint: 'MES 要跟總部的 ERP（資料庫）交換工單與出貨資料：防火牆要允許 OT → SERVERS：SQL。', goto: 'fw' },
+    fabeng:    { sev: 'med', text: () => '研發工程師在辦公室看不到晶圓廠的 MES 報表', hint: '工程師從總部的員工內網看 MES：防火牆要允許 LAN → OT：WEB（只開網頁，其他都不要開）。', goto: 'fw' },
   };
   Ops.TK = TK;
 
-  function openTicket(key, kind, fid, hintOverride, gotoOverride) {
+  function openTicket(key, kind, fid, hintOverride, gotoOverride, arg) {
     const s = G.S;
     let t = s.tickets.find((x) => x.key === key && !x.resolvedAt);
     if (t) { t.clearSince = null; if (hintOverride) t.hint = hintOverride; return; }
     const d = TK[kind];
-    t = { id: Q.nextId('t'), key, kind, fid, sev: d.sev, text: d.text(fid), hint: hintOverride || d.hint, goto: gotoOverride || d.goto || (fid ? 'floor:' + fid : 'noc'), t: s.time, resolvedAt: null, clearSince: null };
+    t = { id: Q.nextId('t'), key, kind, fid, sev: d.sev, text: d.text(fid, arg), hint: hintOverride || d.hint, goto: gotoOverride || d.goto || (fid ? 'floor:' + fid : 'noc'), t: s.time, resolvedAt: null, clearSince: null };
     s.tickets.push(t);
     G.bus.emit('ticket', t);
   }
@@ -118,6 +127,24 @@
       if (st.flows.length && st.flows.every((x) => x.blocked === 'noroute')) {
         const building = Q.linksOf('F:' + f.id).some((l) => G.Net.linkBuilding(l));
         flag('isolated', building ? '上行主幹還在施工中，完工後就會恢復。' : null);
+        continue;
+      }
+      /* 晶圓廠：不看登入網域、上網，看 MES / EAP / 工單 / FDC / 手持裝置，以及等不到交換器埠或等著掃毒的機台 */
+      if (ft.fab) {
+        const R = G.R.fab, c = G.Fab.counts(), fs = s.floors[f.id];
+        const flagN = (k, n) => { active.add(key(k)); openTicket(key(k), k, f.id, null, null, n); };
+        if (R && R.online > 0) {
+          if (!R.mesUp) flag('fabmes');
+          else {
+            if (R.online - R.down - R.auto > 0) flagN('fabeap', R.online - R.down - R.auto);
+            if (!R.erpOk) flag('faberp');
+          }
+          if (!R.engOk) flag('fabeng');
+          if (R.fdcR < 0.5) flag('fabfdc');
+          if (s.fab.phone === 'ban' && R.handR < 0.7) flag('fabhand');
+        }
+        if (c.ready > 0 && fs.cabling.status === 'done' && fs.idf.count > 0) flagN('fabport', c.ready);
+        if (c.scan > 0 && !G.Fab.kioskReady()) flagN('fabscan', c.scan);
         continue;
       }
       if (!st.adOk) flag('noad');

@@ -52,7 +52,7 @@
     if (fl.blocked === 'noroute') return '連不到 IoT 管理平台（路由不通）';
     return '';
   };
-  const occupied = () => G.BLD.floors.filter((f) => G.S.floors[f.id].movedIn > 0);
+  const occupied = () => G.BLD.hq.filter((f) => G.S.floors[f.id].movedIn > 0);
   Rest.occupied = occupied;
   Rest.dayShift = (t) => { const h = U.hourOf(t); return h >= DAY0 && h < DAY1; };
   /** 感測器推估：照現在的使用人次，這間廁所再過幾分鐘會「不合格」（整潔 < 60% 或沒衛生紙）；沒人用 = Infinity */

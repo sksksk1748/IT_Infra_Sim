@@ -63,6 +63,7 @@
     const s = G.S, vm = CAT.devices.VM;
     if (!Q.unlocked(vm)) return err(`第 ${vm.unlock} 章解鎖`);
     if (!vm.roles.includes(role)) return err('這個角色不能做成 VM');
+    if (!Q.unlocked(CAT.roles[role])) return err(`第 ${CAT.roles[role].unlock} 章解鎖`);
     const [vcpu, ram, disk] = VM.size(role);
     if (!VM.hosts().length) return err('還沒有虛擬化主機：到「採購 → 系統」買 HV-2U 並安裝上架');
     const h = hostId ? s.devices[hostId] : VM.pickHost(ram, vcpu);

@@ -100,7 +100,7 @@
     else if (outcome === 'auto' && def.cat === 'sec') dr -= w * 0.3;
     else if (outcome === 'fail') {
       dr -= w * 2.2;
-      const dmg = { ransomware: 8000000, sqli: 3000000, exfil: 5000000, 'guest-probe': 600000, 'rogue-ap': 400000 }[inc.type] || 0;
+      const dmg = { ransomware: 8000000, sqli: 3000000, exfil: 5000000, 'guest-probe': 600000, 'rogue-ap': 400000, 'fab-leak': 3000000 }[inc.type] || 0;
       if (dmg) { s.money -= dmg; inc.damage = dmg; G.Act.log(`資安事件損失（${def.name}）：−${U.money(dmg)}`, 'money'); }
       if (def.cat === 'sec') s.stats.breaches++;
       s.stats.incFailed++;

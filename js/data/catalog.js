@@ -69,10 +69,10 @@
 
     /* 伺服器（角色在安裝後設定） */
     'SV-1U': { cat: 'server', name: 'SV-1U 通用伺服器', price: 220000, u: 1, watts: 350,
-      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'pbx', 'vscan', 'upd', 'iot'], unlock: 1,
+      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'pbx', 'vscan', 'upd', 'iot', 'eap', 'jump'], unlock: 1,
       desc: '1U 雙路伺服器，2 × 10G 網卡。可擔任 AD/DNS/DHCP、網站、網管、資料庫，以及電話交換機、弱點掃描、更新派送。' },
     'SV-2U': { cat: 'server', name: 'SV-2U 高效能伺服器', price: 520000, u: 2, watts: 750,
-      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'siem', 'vscan', 'upd', 'iot'], unlock: 1,
+      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'siem', 'vscan', 'upd', 'iot', 'mes', 'eap', 'fdc', 'jump'], unlock: 1,
       desc: '2U 高效能伺服器，2 × 25G 網卡。可擔任 SIEM 等重負載角色。' },
     'ST-4U': { cat: 'server', name: 'ST-4U 儲存伺服器', price: 980000, u: 4, watts: 900, rawTB: 192,
       ports: { rj45: 2, sfp: 4, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['file', 'backup'], unlock: 2,
@@ -129,7 +129,7 @@
       ports: { rj45: 2, sfp: 4, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: [], unlock: 8,
       desc: '雙路 64 核、1 TB 記憶體、4 × 25G 網卡。裝好 Hypervisor 就能同時跑十幾台虛擬機（VM）；兩台以上組成叢集、搭配共用儲存（SAN），主機故障時 VM 會自動在別台重啟（HA）。' },
     'VM': { cat: 'server', virtual: true, name: '虛擬機（VM）', price: 0, u: 0, watts: 0,
-      ports: { rj45: 0, sfp: 0, qsfp: 0 }, sfpMax: 0, qsfpMax: 0, roles: ['ad', 'web', 'db', 'nms', 'siem', 'file', 'backup', 'pbx', 'sbc', 'sdwan', 'vscan', 'upd', 'iot'], unlock: 8,
+      ports: { rj45: 0, sfp: 0, qsfp: 0 }, sfpMax: 0, qsfpMax: 0, roles: ['ad', 'web', 'db', 'nms', 'siem', 'file', 'backup', 'pbx', 'sbc', 'sdwan', 'vscan', 'upd', 'iot', 'mes', 'eap', 'fdc', 'jump'], unlock: 8,
       desc: '跑在虛擬化主機上的伺服器：幾分鐘就能建好一台，不佔機櫃、不用另外買硬體。' },
     'SAN-5K': { cat: 'storage', san: true, sys: true, name: 'SAN-5K 全快閃儲存陣列', price: 5200000, u: 2, watts: 800, rawTB: 92, flash: true,
       ports: { rj45: 2, sfp: 8, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, unlock: 8,
@@ -282,6 +282,52 @@
     iotKit: { name: '智慧廁所感測器組（門口人流計數、衛生紙 / 洗手乳存量、異味、漏水）', price: 9000 },
   };
 
+  /* ---------- 晶圓廠（第十章，js/sim/fab.js） ----------
+   * 機台由公司採購、原廠來裝機；IT 要做的是讓每一台都安全地連上網路：進廠掃毒 → 接上交換器 → 由 EAP 自動化、MES 派工。
+   * ports = 機台要佔幾個交換器埠（SECS/GEM 通訊 + 原廠診斷 / 大量資料）；fdc = FDC 感測資料（Mbps）；install = 原廠裝機時間（分鐘） */
+  CAT.fab = {
+    unlock: 10,
+    wspd: 600,          /* 滿載時每天投片（片 / 日） */
+    wafer: 900,         /* 每片良品帶給 IT 部門的預算（新台幣） */
+    areas: {
+      litho: { name: '黃光（微影）', color: '#e8c547' },
+      etch:  { name: '蝕刻', color: '#e86f5a' },
+      film:  { name: '薄膜', color: '#5aa9f0' },
+      diff:  { name: '擴散 / 熱處理', color: '#f0823a' },
+      imp:   { name: '離子植入', color: '#8f7cf0' },
+      cmp:   { name: 'CMP / 濕式清洗', color: '#43c59e' },
+      metro: { name: '量測 / 檢測', color: '#2fc6b8' },
+      amhs:  { name: '自動搬運（AMHS）', color: '#9aa7ad' },
+    },
+    types: {
+      scanner: { name: '浸潤式掃描機（曝光）', area: 'litho', ports: 2, fdc: 12, install: 540, os: '原廠封閉系統（Linux）' },
+      track:   { name: '塗佈顯影機', area: 'litho', ports: 1, fdc: 2, install: 300, os: 'Windows 10 IoT' },
+      etch:    { name: '電漿蝕刻機', area: 'etch', ports: 2, fdc: 6, install: 360, os: 'Windows 7 Embedded（原廠不支援升級）' },
+      cvd:     { name: 'CVD 化學氣相沉積', area: 'film', ports: 2, fdc: 5, install: 360, os: 'Windows 7 Embedded（原廠不支援升級）' },
+      pvd:     { name: 'PVD 濺鍍機', area: 'film', ports: 2, fdc: 5, install: 360, os: 'Windows XP Embedded（原廠不支援升級）' },
+      ald:     { name: 'ALD 原子層沉積', area: 'film', ports: 2, fdc: 5, install: 360, os: 'Windows 10 IoT' },
+      furnace: { name: '爐管（擴散 / 氧化）', area: 'diff', ports: 1, fdc: 1, install: 420, os: 'Windows 7 Embedded（原廠不支援升級）' },
+      rtp:     { name: 'RTP 快速熱處理', area: 'diff', ports: 1, fdc: 2, install: 300, os: 'Windows 10 IoT' },
+      implant: { name: '離子植入機', area: 'imp', ports: 2, fdc: 4, install: 600, os: 'Windows 7 Embedded（原廠不支援升級）' },
+      cmp:     { name: 'CMP 化學機械研磨', area: 'cmp', ports: 1, fdc: 3, install: 360, os: 'Windows 10 IoT' },
+      wet:     { name: '濕式清洗機', area: 'cmp', ports: 1, fdc: 1, install: 300, os: 'PLC + Windows 7 人機介面' },
+      cdsem:   { name: 'CD-SEM 線寬量測', area: 'metro', ports: 2, fdc: 3, install: 300, os: 'Windows 10 IoT' },
+      thick:   { name: '膜厚量測', area: 'metro', ports: 1, fdc: 1, install: 180, os: 'Windows 10 IoT' },
+      overlay: { name: '疊對量測', area: 'metro', ports: 1, fdc: 2, install: 240, os: 'Windows 10 IoT' },
+      inspect: { name: '缺陷檢測（影像）', area: 'metro', ports: 2, fdc: 60, install: 360, os: 'Linux' },
+      stocker: { name: '晶圓倉儲 Stocker', area: 'amhs', ports: 1, fdc: 0.2, install: 240, os: 'PLC 控制器' },
+    },
+    /* 資安與保密設施 */
+    kiosk: { name: '機台進廠掃毒站（SEMI E188）', price: 680000, buildMin: 180, scanMin: 40, slots: 2,
+      desc: '原廠裝機用的筆電、USB、安裝光碟與機台電腦本身，都要先在這裡用多家防毒引擎掃過、確認沒有惡意程式，才能接上 OT 網路。' },
+    gate: { name: '無塵室安檢門 + 手機置物櫃', price: 1200000, buildMin: 240,
+      desc: '入口的金屬探測門與保全、更衣室裡上鎖的個人置物櫃：私人手機、隨身碟、有相機的裝置一律不能帶進無塵室。' },
+    handheld: { name: '無相機的公司手持裝置', price: 16000,
+      desc: '沒有相機、裝好 MES 程式的工業級手持電腦（PDA）：查批號、叫天車、回報機台狀況。只連得上無塵室的 OT Wi-Fi，不能上網。' },
+    allowlist: { name: '機台應用程式白名單', price: 900000, buildMin: 240,
+      desc: '在機台電腦上只允許原廠的程式執行（Application Allowlisting）：沒辦法更新的舊 Windows，至少不會被惡意程式執行起來、到處擴散。' },
+  };
+
   /* ---------- 水平布線（IDF → 座位 / AP） ---------- */
   CAT.horizontal = {
     cat6:  { name: 'Cat6 水平布線', perDrop: 2200, diyPerDrop: 900, buildMin: 8 * 60, maxSpeed: 5000,
@@ -340,6 +386,15 @@
       desc: '語音的防火牆：放在 DMZ 對接電信業者的 SIP 中繼，內部的電話交換機不直接暴露在網際網路上。' },
     sdwan:  { name: 'SD-WAN 集中器', short: 'SDW',
       desc: '各據點的 SD-WAN 設備經網際網路建立加密隧道連回總部的集中器，依應用程式自動選路、斷線瞬間切換。' },
+    /* 晶圓廠（第十章）：MES / EAP / FDC 放在 OT 區，跳板機放在 DMZ */
+    mes:    { name: 'MES 製造執行系統', short: 'MES', unlock: 10,
+      desc: '晶圓廠的大腦：工單、批號（lot）追蹤、派工、配方管理，也管天車與倉儲（MCS）。MES 一停，整座廠就停。要放在 OT 區，和 ERP 只交換工單與出貨資料。' },
+    eap:    { name: 'EAP 機台自動化', short: 'EAP', capTools: 40, unlock: 10,
+      desc: 'Equipment Automation Program：用 SECS/GEM 跟每一台機台對話（上下貨、選配方、開始加工、收資料）。一台 EAP 伺服器大約管 40 台機台；連不上 EAP 的機台只能靠人工操作。' },
+    fdc:    { name: 'FDC 異常偵測', short: 'FDC', unlock: 10,
+      desc: 'Fault Detection & Classification：即時收集每一台機台的感測資料（溫度、壓力、氣體流量、射頻功率……），一有偏移就停機告警，避免整批晶圓報廢。資料量很大。' },
+    jump:   { name: '跳板機（遠端存取閘道）', short: 'JMP', unlock: 10,
+      desc: '原廠要遠端維修機台時唯一的入口：放在 DMZ，要 MFA 登入、全程錄影、用完就關，只能連到指定的機台。' },
   };
   /* ---------- 電話語音：SIP 中繼（向電信業者租用的外線路數） ---------- */
   CAT.voice = {
@@ -351,7 +406,7 @@
     kbps: 90,
   };
   /** 各角色的 VM 規格：[vCPU, 記憶體 GB, 系統碟 TB]（檔案與備份的資料量另計） */
-  CAT.vmSize = { ad: [4, 16, 0.2], web: [8, 32, 0.3], db: [16, 128, 3], nms: [8, 32, 0.5], siem: [16, 64, 4], file: [8, 32, 0.2], backup: [8, 32, 0.2], pbx: [4, 16, 0.2], sbc: [4, 8, 0.1], sdwan: [4, 8, 0.1], vscan: [4, 16, 0.3], upd: [4, 16, 1.5] };
+  CAT.vmSize = { mes: [16, 64, 2], eap: [8, 32, 0.3], fdc: [16, 64, 6], jump: [4, 8, 0.2], iot: [4, 16, 0.3], ad: [4, 16, 0.2], web: [8, 32, 0.3], db: [16, 128, 3], nms: [8, 32, 0.5], siem: [16, 64, 4], file: [8, 32, 0.2], backup: [8, 32, 0.2], pbx: [4, 16, 0.2], sbc: [4, 8, 0.1], sdwan: [4, 8, 0.1], vscan: [4, 16, 0.3], upd: [4, 16, 1.5] };
   CAT.vmCfg = { license: 45000, osLicense: 30000, bootMin: 6, haDelay: 3, p2vFee: 50000, p2vMin: 60 };
   /** RAID：可用比例、可容忍同時壞幾顆、說明 */
   CAT.raid = {

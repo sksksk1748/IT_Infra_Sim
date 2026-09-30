@@ -3,11 +3,12 @@
   'use strict';
   const U = G.U, h = U.h, CAT = G.CAT, Q = G.Q, UI = G.UI;
 
-  const ZONE_NAMES = { outside: '外部 OUTSIDE', inside: '內部 INSIDE', dmz: 'DMZ', ha: 'HA 同步' };
+  const ZONE_NAMES = { outside: '外部 OUTSIDE', inside: '內部 INSIDE', dmz: 'DMZ', ot: 'OT 生產網路', ha: 'HA 同步' };
   const ZONE_DESC = {
     outside: '接往路由器 / 網際網路的介面，信任度最低。',
     inside: '接往核心交換器：員工內網與內部伺服器都在這一側。',
     dmz: '接往對外提供服務的伺服器（官網）。與內網隔離。',
+    ot: '接往晶圓廠的 OT 核心交換器（機台、MES、EAP、FDC）：IT 與 OT 之間只能經過這個介面，只開必要的服務。',
     ha: '兩台防火牆之間同步狀態，組成 Active / Standby。',
   };
   UI.ZONE_NAMES = ZONE_NAMES;
@@ -115,7 +116,7 @@
         h('div', { class: 'mono' }, h('div', { class: 'label' }, '總頻寬'), h('b', { style: { fontSize: '18px' } }, U.bw(spec.speed * spec.count)))));
       if (fwEnds === 1) {
         const zs = h('div', { class: 'seg' });
-        for (const z of ['outside', 'inside', 'dmz']) zs.appendChild(h('button', { class: pv.zone === z ? 'on' : '', 'data-hint': 'zone:' + z, onclick: () => { spec.zone = z; render(); } }, ZONE_NAMES[z]));
+        for (const z of ['outside', 'inside', 'dmz'].concat(Q.unlocked(CAT.fab) || pv.zone === 'ot' ? ['ot'] : [])) zs.appendChild(h('button', { class: pv.zone === z ? 'on' : '', 'data-hint': 'zone:' + z, onclick: () => { spec.zone = z; render(); } }, ZONE_NAMES[z]));
         body.appendChild(h('div', {}, h('div', { class: 'label', style: { marginBottom: '6px' } }, '防火牆介面區域'), zs, h('div', { class: 'small muted', style: { marginTop: '4px' } }, ZONE_DESC[pv.zone] || '')));
       } else if (fwEnds === 2) body.appendChild(h('div', { class: 'note info' }, ZONE_DESC.ha));
       const portTxt = (id, P) => {
@@ -160,8 +161,10 @@
     for (const d of cands) {
       const st = UI.devStatus(d);
       const P = Q.ports(d.id);
-      body.appendChild(h('button', { class: 'btn', 'data-hint': Q.isL3(d) ? 'pick:core' : 'pick:' + d.id, style: { justifyContent: 'space-between' }, onclick: () => { m.close(); UI.linkDialog(from, d.id); } },
-        h('span', {}, h('b', {}, d.name), h('span', { class: 'muted small' }, '　' + CAT.devices[d.model].name)),
+      /* 接在防火牆 OT 介面的 L3 交換器是「OT 核心」：提示分開標示（晶圓廠上行到它，總部樓層不要接它） */
+      const ot = Q.isL3(d) && Q.linksOf(d.id).some((l) => l.zone === 'ot');
+      body.appendChild(h('button', { class: 'btn', 'data-hint': ot ? 'pick:otcore' : Q.isL3(d) ? 'pick:core' : 'pick:' + d.id, style: { justifyContent: 'space-between' }, onclick: () => { m.close(); UI.linkDialog(from, d.id); } },
+        h('span', {}, h('b', {}, d.name), h('span', { class: 'muted small' }, '　' + CAT.devices[d.model].name), ot ? h('span', { class: 'chip warn', style: { marginLeft: '6px' } }, 'OT') : null),
         h('span', { class: 'mono small' }, `SFP ${P.sfp.total - P.sfp.used} 可用`, '　', h('span', { class: 'chip ' + st.c }, st.t))));
     }
     m = UI.modal({ title: title || '選擇要連線的設備', body, blocking: true });
@@ -238,7 +241,7 @@
     if (m.cat === 'server' && !m.hv) {
       const sel = h('select', { id: 'role-' + id, 'data-hint': 'role:' + id, onchange: (e) => UI.res(G.Act.setRole(id, e.target.value || null)) },
         h('option', { value: '' }, '— 尚未設定角色 —'),
-        m.roles.map((r) => h('option', { value: r, selected: d.role === r || null }, CAT.roles[r].name)));
+        m.roles.filter((r) => Q.unlocked(CAT.roles[r]) || d.role === r).map((r) => h('option', { value: r, selected: d.role === r || null }, CAT.roles[r].name)));
       card.appendChild(h('label', { class: 'field' }, h('span', {}, '伺服器角色'), sel));
       if (d.role) card.appendChild(h('div', { class: 'small muted' }, CAT.roles[d.role].desc));
       else card.appendChild(h('div', { class: 'note warn' }, '伺服器需要設定角色才會提供服務。'));

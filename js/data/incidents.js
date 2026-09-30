@@ -8,11 +8,23 @@
   const E = () => G.Ev;
   const pos = () => G.Sec.posture();
   const randIP = () => `${U.randInt(31, 223)}.${U.randInt(0, 255)}.${U.randInt(0, 255)}.${U.randInt(2, 254)}`;
-  const occupied = (min) => G.BLD.floors.filter((f) => G.S.floors[f.id].movedIn >= (min || 100));
+  const occupied = (min) => G.BLD.hq.filter((f) => G.S.floors[f.id].movedIn >= (min || 100));
   const C2 = ['update-check-cdn.xyz', 'msoffice-verify.top', 'cdn-sync-api.click', 'telemetry-win.site'];
   const bino = (n, p) => { let k = 0; for (let i = 0; i < n; i++) if (Math.random() < p) k++; return k; };
   const workHours = (t) => !U.isWeekend(t) && U.hourOf(t) >= 9 && U.hourOf(t) < 17;
   const hasOther = (list, pred) => list.some(pred);
+  /* 晶圓廠：正在線上生產的機台、其中跑 Windows 的（蠕蟲的目標） */
+  const fabOn = (i) => { const x = G.S.fab && G.S.fab.tools[i]; return !!x && x.st === 'online' && !x.down; };
+  const fabWin = () => (G.S.fab ? G.S.fab.tools.map((x, i) => i).filter((i) => fabOn(i) && /Windows/.test(G.Fab.type(i).os)) : []);
+  /** 事件應變：無塵室禁止私人手機（安檢門還沒蓋就先動工，完工後自動生效） */
+  function fabBan(s) {
+    const F = s.fab;
+    G.bus.emit('change', { what: 'fab' });
+    if (!(F.gate > 0)) F.gate = s.time + CAT.fab.gate.buildMin;
+    if (G.Fab.gateReady()) { F.phone = 'ban'; return `從現在起私人手機一律鎖在置物櫃。記得配發公司手持裝置（${F.hand} / ${G.Fab.handNeed()} 台），現場才查得到 MES。`; }
+    F.phoneWant = true;
+    return `安檢門與置物櫃施工中（約 ${U.dur(F.gate - s.time)}），完工後自動改成「禁止私人手機」。記得配發公司手持裝置。`;
+  }
 
   /** 機房火警：冒煙變成起火，損害大小由消防設備決定（氣體滅火 < 預動式灑水 < 一般灑水頭） */
   function ignite(s, inc) {
@@ -208,6 +220,206 @@
         if (d.k === 'A') out.push('無障礙廁所和 IDF 弱電室只隔一道牆：弱電室旁邊的用水空間，最需要漏水偵測。');
         if (!d.iot) out.push('導入智慧廁所：漏水、衛生紙、整潔度都由感測器即時回報，清潔人員和水電可以第一時間處理。');
         return out;
+      },
+    },
+
+    /* ---------- 晶圓廠（第十章） ---------- */
+    /* 機台中毒：原廠的安裝媒體（或手機熱點、4G 分享器）帶進來的蠕蟲，在不能更新的舊 Windows 機台之間擴散 */
+    'fab-malware': {
+      name: '機台中毒：病毒在機台之間擴散', cat: 'sec', sev: 'crit', kb: 'k-fabsec', minCh: 10, random: false, detect: 'auto',
+      init(s, inc) {
+        const F = s.fab;
+        if (!F || !F.open) return false;
+        let i = inc.data.tool;
+        if (!fabOn(i)) { const on = fabWin(); if (!on.length) return false; i = U.pick(on); inc.data.tool = i; }
+        const via = inc.data.via === '4g' ? '原廠為了遠端維修接在機台上的 4G 分享器' : inc.data.via === 'hotspot' ? '工程師的手機熱點' : '原廠裝機時用的 USB 隨身碟';
+        Object.assign(inc.data, { infected: [], contained: false, spreadAt: s.time + 10 });
+        /* 應用程式白名單：只有原廠簽章的程式能執行，蠕蟲根本跑不起來 */
+        if (G.Fab.allowReady()) {
+          inc.data.blocked = true; inc.sev = 'low';
+          inc.title = `${G.Fab.code(i)} 上的惡意程式被白名單擋下`;
+          E().log(inc, `${G.Fab.name(i)} 上有一個不明程式想要執行（來源：${via}），應用程式白名單直接擋下，機台照常生產。`);
+          return;
+        }
+        F.tools[i].down = 'mal'; F.tools[i].inf = false;
+        inc.data.infected.push(i);
+        inc.title = `機台中毒：${G.Fab.code(i)} 起的病毒在 OT 網路擴散`;
+        E().log(inc, `${G.Fab.name(i)} 突然藍屏重開、EAP 跟它斷線：機台電腦被植入蠕蟲（來源：${via}），正透過 SMB 掃描其他機台。`);
+        G.R.topoVer++;
+      },
+      tick(s, inc) {
+        const d = inc.data, F = s.fab;
+        if (d.blocked) { if (s.time - inc.startedAt >= 5) E().resolve(inc, 'blocked'); return; }
+        if (d.done) { E().resolve(inc, 'fixed'); return; }
+        if (d.contained || s.time < d.spreadAt) return;
+        d.spreadAt = s.time + 10;
+        if (G.Fab.allowReady()) { if (!d.wlLogged) { d.wlLogged = true; E().log(inc, '應用程式白名單啟用了：蠕蟲在其他機台上執行不起來，不再擴散。'); } return; }
+        const cands = fabWin();
+        const n = Math.min(cands.length, U.randInt(1, 3));
+        for (let k = 0; k < n; k++) {
+          const j = cands.splice(Math.floor(Math.random() * cands.length), 1)[0];
+          F.tools[j].down = 'mal';
+          d.infected.push(j);
+        }
+        if (n) {
+          F.scrap += n * 2;
+          E().log(inc, `又有 ${n} 台機台中毒停機：${d.infected.slice(-n).map((i) => G.Fab.code(i)).join('、')}（累計 ${d.infected.length} 台，製程中的晶圓報廢）`);
+          G.R.topoVer++;
+        }
+      },
+      actions: [
+        { id: 'isolate', label: '先隔離：關掉中毒機台的交換器埠（NAC 可以一鍵隔離）', time: () => (Q.hasService('nac') ? 3 : 15), verdict: 'good',
+          explain: '先止血：斷開中毒的機台，病毒就不能再透過網路擴散；沒中毒的機台照常生產。',
+          run(s, inc) { inc.data.contained = true; E().log(inc, `${inc.data.infected.length} 台中毒的機台已經從 OT 網路隔離，擴散停止。`); } },
+        { id: 'rebuild', label: '用原廠的乾淨映像檔重灌中毒的機台，掃毒後再接回', cost: (s, inc) => inc.data.infected.length * 25000, time: 180, verdict: 'good',
+          avail: (s, inc) => inc.data.contained, unavail: '要先隔離：不然重灌好的機台一接回去又被感染',
+          explain: '機台電腦不能自己亂裝防毒或更新（原廠不支援）：用原廠提供的乾淨映像檔重灌，再經過進廠掃毒，才能接回 OT 網路。',
+          run(s, inc) {
+            for (const i of inc.data.infected) Object.assign(s.fab.tools[i], { down: false, inf: false, scan: 'ok' });
+            if (s.fab.g4 !== undefined && s.fab.g4 !== null) { s.fab.g4 = null; E().log(inc, '順便拆掉了機台上的 4G 分享器。'); }
+            inc.data.done = true; G.R.topoVer++; G.bus.emit('change', { what: 'fab' });
+            E().log(inc, `${inc.data.infected.length} 台機台重灌完成、重新接回網路。`);
+          } },
+        { id: 'allowlist', label: '導入機台應用程式白名單（只有原廠的程式能執行）', cost: () => CAT.fab.allowlist.price, time: 240, verdict: 'good',
+          avail: (s) => !(s.fab.allow > 0), unavail: '白名單已經在部署或已經啟用',
+          explain: '沒辦法更新的舊 Windows，至少要做到「只有原廠的程式能執行」：病毒就算進來了也跑不起來。',
+          run(s, inc) { s.fab.allow = s.time; G.bus.emit('change', { what: 'fab' }); E().log(inc, '機台應用程式白名單部署完成。'); } },
+        { id: 'patch', label: '幫所有機台裝 Windows 更新', time: 60, verdict: 'bad',
+          explain: '機台電腦是原廠驗證過的封閉系統：自己裝更新會失去保固，還可能讓機台控制程式當掉。要靠隔離、掃毒與白名單。' },
+        { id: 'shutdown', label: '關掉整座晶圓廠的網路', time: 5, verdict: 'bad',
+          explain: '反應過度：沒中毒的機台也跟著停下來，製程中的晶圓整批報廢。只要隔離中毒的機台就夠了。',
+          run(s, inc) { inc.data.contained = true; s.fab.scrap += 60; s.rating = Math.max(0, s.rating - 3); E().log(inc, '整座晶圓廠斷網：擴散停了，但所有機台跟著停線，製程中約 60 片晶圓報廢。'); } },
+      ],
+      review(s, inc) {
+        const d = inc.data;
+        if (d.blocked) return ['應用程式白名單讓不能更新的舊 Windows 也能擋下惡意程式。'];
+        const out = [`${d.infected.length} 台機台中毒停機。`];
+        if (d.via === '4g') out.push('病毒是從接在機台上的 4G 分享器進來的：原廠遠端維護一定要走 DMZ 的跳板機。');
+        else if (d.via === 'hotspot') out.push('病毒是從工程師的手機熱點進來的：無塵室要禁止私人手機。');
+        else out.push('原廠裝機用的 USB、筆電都要先經過進廠掃毒站。');
+        if (!G.Fab.allowReady()) out.push('機台沒有應用程式白名單：病毒在不能更新的舊 Windows 之間暢行無阻。');
+        return out;
+      },
+    },
+    /* 機密外洩：無塵室裡有人用私人手機拍下機台畫面（製程配方），傳到通訊軟體群組 */
+    'fab-leak': {
+      name: '機密外洩：無塵室裡的手機照片', cat: 'sec', sev: 'high', kb: 'k-nophone', minCh: 10, cooldown: 4320,
+      weight: (s) => (s.fab && s.fab.open && s.fab.phone !== 'ban' && s.floors.FAB.movedIn > 0 ? 0.35 : 0),
+      init(s, inc) {
+        const F = s.fab;
+        if (!F || !F.open || s.floors.FAB.movedIn <= 0) return false;
+        if (F.phone === 'ban' && G.Fab.gateReady()) {
+          inc.data.blocked = true; inc.sev = 'low';
+          E().log(inc, '安檢門的金屬探測器在一位工程師的無塵衣口袋裡發現私人手機：保全請他回更衣室鎖進置物櫃。機台畫面沒有被拍走。');
+          E().detect(inc, '無塵室安檢門');
+          return;
+        }
+        E().log(inc, '一位工程師用私人手機拍下蝕刻機的配方畫面，傳到了「製程討論」的通訊軟體群組，群組裡還有已經離職、跳槽到競爭對手的前同事……');
+      },
+      detectChance: (s) => (s.trainingUntil > s.time ? 0.02 : 0.01),
+      tick(s, inc) {
+        if (inc.data.blocked) { if (s.time - inc.startedAt >= 5) E().resolve(inc, 'blocked'); return; }
+        if (inc.data.done) { E().resolve(inc, 'contained'); return; }
+        if (s.time - inc.startedAt > 1440) { E().log(inc, '競爭對手發表的新製程，和我們的配方驚人地相似……'); E().resolve(inc, 'fail'); }
+      },
+      actions: [
+        { id: 'contain', label: '找出拍照的人、請對方刪除所有照片並簽保密切結（法務介入）', time: 90, verdict: 'neutral',
+          explain: '亡羊補牢：照片已經傳出去了，只能盡量追回。真正要做的是讓這件事不會再發生。',
+          run(s, inc) { E().log(inc, '拍照的同事刪除了照片，群組也清除了。但誰已經轉存過，就不知道了。'); inc.data.done = true; } },
+        { id: 'ban', label: '無塵室全面禁止私人手機：安檢門 + 置物櫃（再配發無相機的公司手持裝置）', cost: (s) => (s.fab.gate > 0 ? 0 : CAT.fab.gate.price), time: 30, verdict: 'good',
+          explain: '晶圓廠的標準做法：私人手機、有相機的裝置一律不能帶進無塵室；現場要查 MES，就用公司配發、沒有相機的手持裝置。',
+          run(s, inc) { E().log(inc, fabBan(s)); inc.data.done = true; } },
+        { id: 'ignore', label: '只是幾張照片，不用大驚小怪', verdict: 'bad',
+          explain: '製程配方是晶圓廠最值錢的資產：一張照片就可能讓競爭對手省下好幾年的研發。' },
+      ],
+      review(s, inc) {
+        if (inc.data.blocked) return ['安檢門與置物櫃擋下了私人手機：機密沒有外流。'];
+        return ['無塵室允許私人手機：配方、機台畫面、無塵室的配置都可能被拍走。', '禁止私人手機之後，要配發無相機的公司手持裝置，現場才查得到 MES。'];
+      },
+    },
+    /* 手機熱點：工程師用自己的手機開熱點，讓機台電腦連上網際網路下載驅動程式——繞過了整個 IT / OT 防火牆 */
+    'fab-hotspot': {
+      name: '機台偷偷連上了手機熱點', cat: 'sec', sev: 'high', kb: 'k-fabsec', minCh: 10, cooldown: 4320,
+      weight: (s) => (s.fab && s.fab.open && s.fab.phone !== 'ban' && fabWin().length > 5 ? 0.3 : 0),
+      init(s, inc) {
+        const F = s.fab;
+        if (!F || !F.open || F.phone === 'ban') return false;
+        const on = fabWin();
+        if (!on.length) return false;
+        const i = U.pick(on);
+        inc.data.tool = i;
+        inc.title = `${G.Fab.code(i)} 偷偷連上了手機熱點`;
+        E().log(inc, `工程師為了幫 ${G.Fab.name(i)} 下載新的驅動程式，把機台電腦接上自己手機的熱點：這台機台現在直接連在網際網路上，完全沒經過防火牆。`);
+      },
+      detectChance: () => (Q.hasService('nac') ? 0.15 : Q.hasService('ips') ? 0.03 : 0.015),
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.done) { E().resolve(inc, 'contained'); return; }
+        if (s.time - inc.startedAt >= 90) {
+          E().log(inc, '網際網路上的掃描程式找到了這台沒有更新的機台，植入了蠕蟲……');
+          E().resolve(inc, 'fail');
+          if (!E().active().some((x) => x.type === 'fab-malware')) E().start('fab-malware', { tool: d.tool, via: 'hotspot' });
+        }
+      },
+      actions: [
+        { id: 'remove', label: '斷開手機熱點，這台機台掃毒後再接回 OT 網路', time: 20, verdict: 'good',
+          explain: '機台只能透過 OT 網路連到 MES / EAP：任何「另外的網路出口」都繞過了防火牆。',
+          run(s, inc) { inc.data.done = true; E().log(inc, '熱點斷開了，機台掃毒後重新接回 OT 網路。'); } },
+        { id: 'ban', label: '無塵室全面禁止私人手機（安檢門 + 置物櫃）', cost: (s) => (s.fab.gate > 0 ? 0 : CAT.fab.gate.price), time: 30, verdict: 'good',
+          explain: '沒有私人手機，就沒有手機熱點這個後門。原廠要下載的東西，走 DMZ 的跳板機或更新伺服器。',
+          run(s, inc) { E().log(inc, fabBan(s)); inc.data.done = true; } },
+        { id: 'ignore', label: '下載完驅動程式就好，沒關係', verdict: 'bad',
+          explain: '不能更新的舊 Windows 直接暴露在網際網路上：幾分鐘內就會被掃描、植入惡意程式。' },
+      ],
+      review() { return ['機台連上手機熱點＝在 OT 網路上開了一個不經過防火牆的後門。', '禁止私人手機；NAC 可以發現機台多了一個不明的網路介面。']; },
+    },
+    /* 原廠要遠端診斷機台：走跳板機，還是在機台上接 4G 分享器？ */
+    'fab-vendor': {
+      name: '機台故障：原廠要遠端診斷', cat: 'ops', sev: 'high', kb: 'k-fabsec', minCh: 10, cooldown: 4320, detect: 'auto',
+      weight: (s) => (s.fab && s.fab.open && G.Fab.counts().online > 10 ? 0.25 : 0),
+      init(s, inc) {
+        const F = s.fab;
+        if (!F || !F.open) return false;
+        const WHERE = { scanner: '荷蘭', implant: '美國', etch: '日本' };
+        const on = F.tools.map((x, i) => i).filter((i) => fabOn(i) && WHERE[G.Fab.slots()[i].type]);
+        if (!on.length) return false;
+        const i = U.pick(on);
+        F.tools[i].down = 'vendor';
+        inc.data.tool = i;
+        inc.title = `${G.Fab.code(i)} 故障：原廠要遠端診斷`;
+        E().log(inc, `${G.Fab.name(i)} 報錯停機。原廠的工程師在${WHERE[G.Fab.slots()[i].type]}，要遠端連進機台電腦看 log、調參數。這台停著，這一區的產能就少一台。`);
+        G.R.topoVer++;
+      },
+      tick(s, inc) {
+        const x = s.fab.tools[inc.data.tool];
+        if (!inc.data.done) return;
+        if (x && x.down === 'vendor') x.down = false;
+        G.R.topoVer++;
+        E().resolve(inc, 'fixed');
+      },
+      actions: [
+        { id: 'jump', label: '透過 DMZ 的跳板機讓原廠連線（MFA、全程錄影、只開這一台、用完就關）', time: 90, verdict: 'good',
+          avail: () => G.Sec.posture().jumpOk, unavail: '還沒有可用的跳板機：伺服器設成「跳板機」角色接在 DMZ、防火牆開 DMZ → OT：RDP，並啟用 MFA',
+          explain: '原廠遠端維護唯一的入口：身分驗證（MFA）、全程錄影、只能連到指定的機台、用完就關閉。',
+          run(s, inc) { inc.data.done = true; E().log(inc, '原廠經跳板機連進來，調整參數後機台恢復生產。連線紀錄與錄影都留存了。'); } },
+        { id: '4g', label: '在機台上接一台 4G 分享器，讓原廠直接連進來', time: 30, verdict: 'bad',
+          explain: '最快、但最危險：機台直接暴露在網際網路上，繞過了整個 IT / OT 防火牆。這個「後門」還常常忘了拆。',
+          run(s, inc) {
+            inc.data.done = true;
+            s.fab.g4 = inc.data.tool;
+            G.bus.emit('change', { what: 'fab' });
+            s.sched.push({ at: s.time + U.randInt(600, 1500), type: 'fab-malware', data: { tool: inc.data.tool, via: '4g' }, chapter: s.chapter });
+            E().log(inc, '原廠經 4G 分享器連進來修好了機台……分享器還插在上面。');
+          } },
+        { id: 'onsite', label: '請原廠派工程師到現場維修（最快明天到）', time: 1200, verdict: 'neutral',
+          explain: '安全，但機台要停將近一天，這一區的產能少一台。有跳板機的話，今天就能修好。',
+          run(s, inc) { inc.data.done = true; E().log(inc, '原廠工程師到場修好了機台。'); } },
+      ],
+      review(s, inc) {
+        const a = inc.acts;
+        if (a['4g']) return ['4G 分享器是繞過防火牆的後門：病毒、駭客都可能從這裡進來。原廠遠端維護要走 DMZ 的跳板機。'];
+        if (a.jump) return ['跳板機讓原廠可以安全地遠端維修：MFA、錄影、只開指定的機台、用完就關。'];
+        return ['原廠遠端維護要有安全的管道：DMZ 的跳板機 + MFA + 錄影，否則就只能等原廠到現場。'];
       },
     },
 

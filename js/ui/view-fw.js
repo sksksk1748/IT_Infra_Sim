@@ -63,7 +63,11 @@
       ['據點分機', { src: 'WAN', dst: 'SERVERS', svc: 'SIP', action: 'allow' }],
       ['分機註冊', { src: 'LAN', dst: 'SERVERS', svc: 'SIP', action: 'allow' }],
       ['智慧廁所感測器', { src: 'IOT', dst: 'SERVERS', svc: 'MQTT', action: 'allow' }],
-    ];
+    ].concat(Q.unlocked(CAT.fab) ? [
+      ['工程師看 MES', { src: 'LAN', dst: 'OT', svc: 'WEB', action: 'allow' }],
+      ['MES 連 ERP', { src: 'OT', dst: 'SERVERS', svc: 'SQL', action: 'allow' }],
+      ['跳板機連機台', { src: 'DMZ', dst: 'OT', svc: 'RDP', action: 'allow' }],
+    ] : []);
     const form = h('div', { class: 'card col', style: { gap: '10px' } },
       h('h3', {}, '新增規則'),
       h('div', { class: 'grid c4' },

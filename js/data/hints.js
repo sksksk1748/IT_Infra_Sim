@@ -28,6 +28,8 @@
     return !!other && pred(other) && (!zone || l.zone === zone);
   });
   const coverage = (fid) => G.Wifi.get(fid, G.Wifi.powered(fid, G.Net.floorUp(fid))).good;
+  /** 可用覆蓋（≥ −75 dBm）：無塵室的手持裝置只要這個 */
+  const usableCov = (fid) => G.Wifi.get(fid, G.Wifi.powered(fid, G.Net.floorUp(fid))).usable;
   const portsOk = (fid) => G.S.floors[fid].idf.count > 0 && Q.floorPorts(fid) >= Q.floorPortNeed(fid).total;
   const uplinked = (fid) => Q.linksOf('F:' + fid).some((l) => Q.nodeKind(Q.other(l, 'F:' + fid)) === 'switch');
   const TAB = { net: '網路設備', srv: '伺服器', sys: '系統', wifi: '無線網路', facility: '機房設施', ai: 'AI 運算', isp: 'ISP 專線' };
@@ -68,7 +70,8 @@
     }, done });
   /** 防火牆規則：用快速範本新增 */
   const TPL = { 'LAN>INTERNET:WEB': '員工上網', 'LAN>INTERNET:DNS': '員工 DNS', 'SERVERS>INTERNET:DNS': 'AD 轉送 DNS', 'INTERNET>DMZ:WEB': '客戶連官網', 'DMZ>SERVERS:SQL': '官網查資料庫',
-    'GUEST>INTERNET:WEB': '訪客上網', 'GUEST>INTERNET:DNS': '訪客 DNS', 'IOT>SERVERS:MQTT': '智慧廁所感測器', 'WAN>SERVERS:SQL': '據點連 ERP', 'WAN>SERVERS:SMB': '據點檔案', 'WAN>SERVERS:LDAP': '據點登入', 'WAN>SERVERS:DNS': '據點 DNS', 'WAN>SERVERS:SIP': '據點分機', 'LAN>SERVERS:SIP': '分機註冊' };
+    'GUEST>INTERNET:WEB': '訪客上網', 'GUEST>INTERNET:DNS': '訪客 DNS', 'IOT>SERVERS:MQTT': '智慧廁所感測器', 'WAN>SERVERS:SQL': '據點連 ERP', 'WAN>SERVERS:SMB': '據點檔案', 'WAN>SERVERS:LDAP': '據點登入', 'WAN>SERVERS:DNS': '據點 DNS', 'WAN>SERVERS:SIP': '據點分機', 'LAN>SERVERS:SIP': '分機註冊',
+    'LAN>OT:WEB': '工程師看 MES', 'OT>SERVERS:SQL': 'MES 連 ERP', 'DMZ>OT:RDP': '跳板機連機台' };
   const rule = (src, dst, svc) => {
     const k = `${src}>${dst}:${svc}`, t = TPL[k];
     return { text: t ? `到「防火牆」按快速範本「${t}」，新增允許 ${src} → ${dst}：${svc}` : `到「防火牆」選來源 ${src}、目的 ${dst}、服務 ${svc}、動作「允許」，按「加到最下方」`,
@@ -183,6 +186,13 @@
         ? [{ text: `報修：${tk.text}。清潔人員巡不過來：到「樓層」頁的「⑤ 廁所與清潔」把白班清潔人員加到建議人數`, short: '清潔人員加到建議人數', go: 'floor:' + tk.fid, path: ['nav:floor', 'floor:' + tk.fid, 'rest-add'], done: () => !!tk.resolvedAt || G.S.rest.staff >= G.Rest.recommend() }]
         : [skip(`報修：${tk.text}。清潔人員正在巡，等他們處理（可以按 ⏭ 快轉）`, () => !!tk.resolvedAt)];
     }
+    /* 員工 Wi-Fi 位址池不夠：直接標出網段選單，算好要調成多大 */
+    if (tk && tk.kind === 'dhcpwifi' && sim.dhcp) {
+      let p = S().subnets.wifi;
+      while (p > 16 && Q.hosts(p) - 1 < sim.dhcp.wifi.need) p--;
+      return [{ text: `報修：${tk.text}。員工 Wi-Fi 的位址池不夠（尖峰要 ${G.U.num(sim.dhcp.wifi.need)} 個）：到「防火牆 → 網段規劃」把「員工無線」調大到 /${p}`, short: `調成「/${p}」`, go: 'fw:net',
+        path: ['nav:fw', 'tab:fw:net', 'subnet:wifi'], done: () => !!tk.resolvedAt || Q.hosts(S().subnets.wifi) - 1 >= G.R.sim.dhcp.wifi.need }];
+    }
     if (tk) return [{ text: `報修：${tk.text}。${tk.hint}`, short: tk.text, go: tk.goto, path: G.Hint ? G.Hint.defaultPath(tk.goto) : [], done: () => !!tk.resolvedAt }];
     return [];
   };
@@ -191,7 +201,7 @@
   G.HINTS = H;
   H.diagnose = diagnose;
   /** 一層樓的佈建步驟（緊急報修「整層斷線」時用） */
-  H.floorFix = (fid) => floorSteps(fid, G.FT[G.BLD.byId[fid].type].park ? 0.9 : 0.85);
+  H.floorFix = (fid) => (G.BLD.isFab(fid) ? H['c10-fab']() : floorSteps(fid, G.FT[G.BLD.byId[fid].type].park ? 0.9 : 0.85));
 
   /* ---------- 第一章 ---------- */
   H['c1-rack'] = () => [{ text: '到「機房」按「＋ 機櫃」買一座 42U 機櫃（網路設備都要裝在機櫃裡才能通電）', short: '買一座機櫃', go: 'rack', path: ['nav:rack', 'buy:rack'], done: () => S().racks.length > 0 }];
@@ -493,6 +503,93 @@
     return [];
   };
 
+  /* ---------- 第十章：晶圓廠（OT 網路、機台連網、無塵室保密） ---------- */
+  /** OT 核心 = 接在防火牆「OT 生產網路」介面上的 L3 交換器；還沒接任何線的 L3 交換器可以拿來當 OT 核心 */
+  const isOtCore = (d) => !!d && isCore(d) && Q.linksOf(d.id).some((l) => l.zone === 'ot');
+  const otCand = (d) => isCore(d) && (isOtCore(d) || !Q.linksOf(d.id).length);
+  const hasOtCore = () => devs().some((d) => d.rack && isOtCore(d));
+  const zoneOf = (id) => { const z = G.Net.zones().get(id); return z ? z.zone : null; };
+  const inOt = (r) => Q.roleServers(r).filter((d) => (d.rack || d.host) && G.Net.devUp(d) && zoneOf(d.id) === 'OT').length;
+  const FAB = () => S().fab;
+  const fabUp = () => Q.linksOf('F:FAB').filter((l) => isOtCore(S().devices[Q.other(l, 'F:FAB')])).length;
+  /** 連到防火牆、而且介面要選對（對話框開著時先標介面的按鈕） */
+  const linkZ = (text, getA, getB, zone, done) => {
+    const st = link(text, getA, getB, done);
+    const base = st.path;
+    st.path = () => {
+      const btn = document.querySelector(`[data-hint="zone:${zone}"]`);
+      if (document.querySelector('[data-hint="link-ok"]') && btn && !btn.classList.contains('on')) return [{ k: 'zone:' + zone, t: `介面選「${G.UI.ZONE_NAMES[zone]}」` }];
+      return base();
+    };
+    return st;
+  };
+  const fabUplink = (n) => ({ text: n > 1 ? '再拉第二條上行到 OT 核心：一條光纖斷了，無塵室也不會停線' : '把 FAB 上行到 OT 核心（不是總部的核心）：按「新增上行」→ 選標著「OT」的交換器 →「建立連線」（380 m 的校園光纖）',
+    short: '上行到 OT 核心', go: 'floor:FAB', path: ['nav:floor', 'floor:FAB', 'uplink@FAB', { k: 'pick:otcore', t: '選標著「OT」的交換器' }, 'link-ok'], done: () => fabUp() >= n });
+  const fabAp = { text: 'FAB 佈建 AP：按「自動規劃 AP」（機台與金屬壁板很擋訊號，每個 bay 都要有 AP）', short: '按「自動規劃 AP」', go: 'floor:FAB', path: ['nav:floor', 'floor:FAB', 'autoplan@FAB', 'autoplan-ok'],
+    done: () => { const fs = S().floors.FAB; return fs.aps.length > 0 && G.Wifi.get('FAB', new Set(fs.aps.map((a) => a.id))).usable >= 0.9; } };
+  const fabBuy = (k, text) => ({ text: `到「晶圓廠」建置${text}`, short: `建置${text}`, go: 'fab', path: ['nav:fab', 'fab-buy:' + k], done: () => FAB()[k] > 0 });
+
+  H['c10-otcore'] = () => [
+    buy('CX-6400', () => own(otCand), 'OT 核心：和總部的核心分開'),
+    install('switch', () => inRack(otCand), 'OT 核心交換器'),
+    linkZ('在「拓撲」把 OT 核心接到防火牆，防火牆介面選「OT 生產網路」', () => first((d) => otCand(d) && !isOtCore(d)) || first(isOtCore), () => first(catIs('firewall')), 'ot', hasOtCore),
+  ];
+  H['c10-fab'] = () => {
+    const fs = () => S().floors.FAB;
+    const steps = [
+      { text: '到「樓層 → FAB」發包布線（無塵室只能由合格的廠商施工）', short: '按「發包施工」', go: 'floor:FAB', path: ['nav:floor', 'floor:FAB', 'cabling@FAB'], done: () => fs().cabling.status !== 'none' },
+      { text: 'FAB 的 IDF：按「建議數量」再「套用」（光是機台就要 99 埠，AP 另外算）', short: '按「建議數量」再「套用」', go: 'floor:FAB', path: ['nav:floor', 'floor:FAB', 'idf-suggest@FAB', 'idf-apply@FAB'], done: () => portsOk('FAB') },
+    ];
+    if (!hasOtCore()) steps.push(...H['c10-otcore']());
+    steps.push(fabUplink(1), fabUplink(2), fabAp,
+      skip('等 FAB 的布線施工完成（可以按 ⏭ 快轉）', () => fs().cabling.status === 'done'),
+      look('FAB 還接在總部的核心上（IT 和 OT 直接相連）：到「拓撲」刪掉那條上行，只留接到 OT 核心的', 'topo', () => zoneOf('F:FAB') === 'OT'),
+      look('FAB 的 Wi-Fi 可用覆蓋還不夠 90%：在平面圖的「訊號」圖層找紅色、灰色的地方補 AP', 'floor:FAB', () => usableCov('FAB') >= 0.9));
+    return steps;
+  };
+  H['c10-servers'] = () => {
+    for (const [r, model, why, n] of [['mes', 'SV-2U', 'MES 要效能', 1], ['eap', 'SV-1U', '一台管 40 台機台，要兩台', 2], ['fdc', 'SV-2U', '感測資料量大', 1]]) {
+      if (inOt(r) >= n) continue;
+      if (!hasOtCore()) return H['c10-otcore']();
+      /* 接到 OT 核心的（開機中的也算） */
+      const onOt = () => Q.roleServers(r).filter((d) => d.rack && linkedTo(d, isOtCore)).length >= n;
+      return serverRole(r, model, why, n, isOtCore).concat([
+        look(`${CAT.roles[r].name}伺服器要接在 OT 核心上（OT 區）：接到總部核心的，到「拓撲」刪掉那條線、改接 OT 核心`, 'topo', () => inOt(r) >= n || onOt()),
+        skip(`等 ${CAT.roles[r].name}伺服器開機（可以按 ⏭ 快轉）`, () => inOt(r) >= n)]);
+    }
+    return [];
+  };
+  H['c10-rules'] = () => [rule('LAN', 'OT', 'WEB'), rule('OT', 'SERVERS', 'SQL'),
+    look('其他一律不開：LAN → OT 只留 WEB，刪掉 OT 連到網際網路、員工電腦（LAN），以及網際網路直接連進 OT 的規則', 'fw:rules',
+      () => G.Sec.posture().otIsolated && !G.Sec.allowedSvcs('LAN', 'OT').some((x) => x !== 'WEB'))];
+  H['c10-scan'] = () => [fabBuy('kiosk', '「機台進廠掃毒站」'), skip('等進廠掃毒站完工（可以按 ⏭ 快轉）', () => G.Fab.kioskReady()),
+    { text: '有機台沒掃毒就接上網路了：在「晶圓廠」按「斷線重掃」', short: '按「斷線重掃」', go: 'fab', path: ['nav:fab', 'fab-rescan'], done: () => !G.Fab.counts().skipped }];
+  H['c10-tools'] = () => {
+    const F = FAB(), c = G.Fab.counts(), R = G.R.fab;
+    if (!F.open) return [];
+    const needEap = Math.ceil(F.tools.length / CAT.roles.eap.capTools);
+    if (inOt('eap') < needEap) return serverRole('eap', 'SV-1U', `一台管 ${CAT.roles.eap.capTools} 台機台`, needEap, isOtCore);
+    if (c.scan && !G.Fab.kioskReady()) return H['c10-scan']().slice(0, 2);
+    const fs = S().floors.FAB;
+    if ((c.ready || c.scan) && !(fs.cabling.status === 'done' && fs.idf.count > 0 && fabUp() > 0)) return H['c10-fab']();
+    if (c.ready) return [{ text: `${c.ready} 台機台在等交換器埠：到「樓層 → FAB」按「建議數量」再「套用」`, short: '按「建議數量」再「套用」', go: 'floor:FAB', path: ['nav:floor', 'floor:FAB', 'idf-suggest@FAB', 'idf-apply@FAB'], done: () => !G.Fab.counts().ready }];
+    if (R && R.online > R.auto) return [look('有機台連不上 EAP（只能人工操作）：EAP 要在 OT 區、接在 OT 核心上，到「晶圓廠」看 Purdue 圖哪一段是紅的', 'fab', () => { const x = G.R.fab; return !!x && x.auto >= x.online; })];
+    return [skip('機台分三個工作天陸續進廠、裝機、掃毒（可以按 ⏭ 快轉）', () => { const x = G.R.fab; return !!x && x.total > 0 && x.auto >= x.total; })];
+  };
+  H['c10-phone'] = () => [fabBuy('gate', '「安檢門與手機置物櫃」'), skip('等安檢門與置物櫃完工（可以按 ⏭ 快轉）', () => G.Fab.gateReady()),
+    { text: '在「晶圓廠」把私人手機改成「禁止（鎖在置物櫃）」', short: '按「禁止」', go: 'fab', path: ['nav:fab', 'fab-phone:ban'], done: () => FAB().phone === 'ban' },
+    { text: `配發無相機的公司手持裝置：按「補到 ${G.Fab.handNeed()} 台」`, short: '補到建議數量', go: 'fab', path: ['nav:fab', 'fab-hand-fill'], done: () => FAB().hand >= G.Fab.handNeed() },
+    fabAp, look('FAB 的 Wi-Fi 可用覆蓋還不夠 90%（手持裝置要連 Wi-Fi 才查得到 MES）：在平面圖的「訊號」圖層補 AP', 'floor:FAB', () => usableCov('FAB') >= 0.9)];
+  H['c10-vendor'] = () => {
+    const dmzSw = (o) => catIs('switch')(o) && !Q.isL3(o) && Q.linksOf(o.id).some((l) => l.zone === 'dmz');
+    const out = [];
+    if (!G.Sec.serverZones('jump').some((x) => x.zone === 'DMZ')) out.push(...serverRole('jump', 'SV-1U', '原廠遠端維護的唯一入口', 1, dmzSw),
+      look('跳板機要接在 DMZ 交換器上（DMZ 區），不能在內網或 OT 裡', 'topo', () => G.Sec.serverZones('jump').some((x) => x.zone === 'DMZ')));
+    return out.concat([rule('DMZ', 'OT', 'RDP'), svc('mfa'),
+      look('刪掉網際網路直接連進 OT 的規則（INTERNET → OT）：原廠只能經過跳板機', 'fw:rules', () => !G.Sec.allowedSvcs('INTERNET', 'OT').length)]);
+  };
+  H['c10-output'] = () => [...diagnose(), look('到「晶圓廠」看產能的瓶頸：每一區的機台都要自動化，MES、ERP、FDC 都要連得上', 'fab', () => false)];
+
   /* ---------- 沙盒：依序檢查基本建設，再來是快要進駐的樓層，最後是緊急報修 ---------- */
   H.__sandbox = (s) => {
     const out = [];
@@ -503,7 +600,9 @@
     out.push(buy('CX-6400', () => own(isCore)), install('switch', () => inRack(isCore), '核心交換器'));
     out.push(...H['c1-wire'](), ...ispSteps(), ...serverRole('ad', 'SV-1U'), rule('LAN', 'INTERNET', 'WEB'), rule('LAN', 'INTERNET', 'DNS'));
     const soon = G.BLD.floors.filter((f) => s.floors[f.id].moveInAt !== null && !G.Net.floorUp(f.id)).sort((a, b) => s.floors[a.id].moveInAt - s.floors[b.id].moveInAt);
-    for (const f of soon.slice(0, 2)) out.push(...floorSteps(f.id, 0.85));
+    for (const f of soon.slice(0, 2)) out.push(...(G.BLD.isFab(f.id) ? H['c10-fab']() : floorSteps(f.id, 0.85)));
+    /* 晶圓廠開廠之後：OT 核心、MES / EAP / FDC、進廠掃毒站 */
+    if (s.fab && s.fab.open) out.push(...H['c10-otcore'](), ...H['c10-servers'](), H['c10-scan']()[0]);
     out.push(...diagnose());
     return out;
   };

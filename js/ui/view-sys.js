@@ -69,7 +69,7 @@
     }
     if (grid.children.length) el.appendChild(grid);
     /* 建立 VM、P2V、選取的 VM */
-    const roles = CAT.devices.VM.roles;
+    const roles = CAT.devices.VM.roles.filter((r) => Q.unlocked(CAT.roles[r]));
     const [vc, ram, disk] = CAT.vmSize[V.newRole] || [4, 16, 0.2];
     const create = h('div', { class: 'card col', style: { gap: '8px' } },
       h('h3', {}, '建立 VM'),

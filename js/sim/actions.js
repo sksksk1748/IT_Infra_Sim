@@ -238,6 +238,7 @@
     if (!d) return err('找不到設備');
     const m = CAT.devices[d.model];
     if (role && !m.roles.includes(role)) return err(`${m.name} 不適合擔任 ${CAT.roles[role].name}`);
+    if (role && !Q.unlocked(CAT.roles[role])) return err(`第 ${CAT.roles[role].unlock} 章解鎖`);
     d.role = role || null;
     d.encrypted = false;
     d.bootUntil = Math.max(d.bootUntil || 0, s.time + 3);
@@ -297,6 +298,9 @@
     if (k === 'server' || k === 'wlc' || k === 'storage') return 'dmz';
     if (k === 'switch') {
       const d = G.S.devices[other];
+      /* 接著晶圓廠（FAB IDF）或 MES / EAP / FDC 的交換器 = OT 核心 */
+      const ot = Q.linksOf(other).some((l) => { const o = Q.other(l, other); const od = G.S.devices[o]; return (o.startsWith('F:') && G.BLD.isFab(o.slice(2))) || (od && ['mes', 'eap', 'fdc'].includes(od.role)); });
+      if (ot) return 'ot';
       return d && CAT.devices[d.model].layer === 2 && !Q.linksOf(other).some((l) => Q.nodeKind(Q.other(l, other)) === 'floor') ? 'dmz' : 'inside';
     }
     return 'inside';
@@ -346,6 +350,7 @@
       const other = ka === 'firewall' ? kb : ka;
       if (zone === 'outside' && other !== 'router') warns.push('外部 (OUTSIDE) 介面通常接路由器');
       if (zone === 'inside' && other === 'router') warns.push('路由器應接在防火牆的外部 (OUTSIDE) 介面');
+      if (zone === 'ot' && other !== 'switch') warns.push('OT 介面通常接晶圓廠的 OT 核心交換器');
     } else zone = null;
     let cost = 0, optics = 0;
     if (cab && aPort && bPort) {
@@ -457,7 +462,9 @@
   /* ---------- 樓層 ---------- */
   Act.floorDrops = (fid) => {
     const f = G.BLD.byId[fid], ft = G.FT[f.type];
-    return Math.ceil(f.staff * ft.wired) + Math.ceil(f.staff / 40) + (ft.pos || 0) + (ft.gates || 0) + (ft.cams || 0) + 40;
+    /* 晶圓廠：每一台機台的每個埠都要從 IDF 拉一條線（架高地板下走線） */
+    const tools = ft.fab && G.Fab ? G.Fab.portsTotal() : 0;
+    return Math.ceil(f.staff * ft.wired) + Math.ceil(f.staff / 40) + (ft.pos || 0) + (ft.gates || 0) + (ft.cams || 0) + tools + 40;
   };
   Act.cablingCost = (fid, std) => Act.floorDrops(fid) * CAT.horizontal[std].perDrop;
   Act.startCabling = (fid, std) => {

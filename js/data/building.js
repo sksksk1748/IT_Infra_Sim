@@ -25,6 +25,10 @@
      * 地下室收不到 GPS、手機訊號也很差 → 手機打卡要靠公司 Wi-Fi 確認位置。
      * gates = 車道的車牌辨識攝影機與柵欄機（有線）；cams = 監視器（PoE 供電） */
     parking:    { name: '停車場', wired: 0.5, phones: 1.0, inet: [0.2, 0.05], intra: [0.1, 0.05], parkPeak: 150, gates: 4, cams: 24, park: true, color: '#7d8a93' },
+    /* 晶圓廠無塵室（第十章，js/sim/fab.js）：編制是輪班的操作員與工程師（24 小時運轉）；
+     * 有線的是控制室的 MES 終端機，機台另外算（每台 1～2 個埠）；現場人員用 Wi-Fi 手持裝置查 MES。
+     * 不走一般樓層的上網 / 內部流量：機台 ⇄ EAP（SECS/GEM）、機台 → FDC、手持裝置 → MES */
+    fab:        { name: '晶圓廠無塵室', wired: 0.1, phones: 0, inet: [0, 0], intra: [0, 0], fab: true, night: 0.85, color: '#d6b84a' },
   };
 
   /* ---------- 大樓 ---------- */
@@ -58,16 +62,26 @@
       { id: '21F', level: 21, type: 'exec',       dept: '董事會 / 總經理室', staff: 300 },
       { id: '22F', level: 22, type: 'canteen',    dept: '員工餐廳（自助餐）', staff: 56 },
       { id: '23F', level: 23, type: 'foodcourt',  dept: '員工餐廳（美食街）', staff: 48 },
+      /* 大樓後方的晶圓廠（第十章）：另一棟建築，IDF 經地下的校園光纖管道連回總部 B1 */
+      { id: 'FAB', level: 1, bldg: 'fab', type: 'fab', dept: 'Fab 1 無塵室（12 吋試產線）', staff: 150 },
     ],
+    /** 校園光纖：總部 B1 機房 → 地下管道 → 晶圓廠 FAB IDF 的距離 (m) */
+    campus: 380,
   };
   G.BLD.byId = {};
   for (const f of G.BLD.floors) G.BLD.byId[f.id] = f;
-  G.BLD.totalStaff = G.BLD.floors.reduce((s, f) => s + f.staff, 0); /* 10,000 名員工 + 104 位餐廳人員 + 6 位停車場管理員 */
-  G.BLD.top = G.BLD.floors.reduce((m, f) => Math.max(m, f.level), 0);
-  /** 樓層 IDF 到 B1 機房的主幹線長度 (m)：地上樓層往上數，B2 在 B1 正下方一層 */
+  /** 總部大樓的樓層（大樓剖面、3D 大樓只畫這些）與晶圓廠的樓層 */
+  G.BLD.hq = G.BLD.floors.filter((f) => !f.bldg);
+  G.BLD.fab = G.BLD.floors.filter((f) => f.bldg === 'fab');
+  G.BLD.isFab = (fid) => { const f = G.BLD.byId[fid]; return !!f && f.bldg === 'fab'; };
+  G.BLD.totalStaff = G.BLD.floors.reduce((s, f) => s + f.staff, 0);
+  G.BLD.hqStaff = G.BLD.hq.reduce((s, f) => s + f.staff, 0); /* 10,000 名員工 + 104 位餐廳人員 + 6 位停車場管理員 */
+  G.BLD.top = G.BLD.hq.reduce((m, f) => Math.max(m, f.level), 0);
+  /** 樓層 IDF 到 B1 機房的主幹線長度 (m)：地上樓層往上數，B2 在 B1 正下方一層；晶圓廠走校園光纖 */
   G.BLD.riserLength = (floorId) => {
     const f = G.BLD.byId[floorId];
     if (!f) return 10;
+    if (f.bldg === 'fab') return G.BLD.campus;
     const up = f.level > 0 ? f.level : -f.level - 1;
     return Math.round((up * G.BLD.floorHeight + G.BLD.mdfHoriz) * 10) / 10;
   };
@@ -76,7 +90,8 @@
   const W = 72, H = 36;
   /* KITCHEN 廚房、DINE 用餐區、SERVE 餐檯 / 收銀台、COLD 冷藏冷凍庫（金屬牆，Wi-Fi 幾乎穿不透）
    * RAMP 車道、PARK 汽車停車格、MOTO 機車停車格、PILLAR 結構柱（鋼筋混凝土，擋訊號） */
-  const T = { OPEN: 0, DESK: 1, MEET: 2, CORE: 3, IDF: 4, OFFICE: 5, LAB: 6, LOBBY: 7, CAFE: 8, WALL: 9, GLASS: 10, EXT: 11, KITCHEN: 12, DINE: 13, SERVE: 14, COLD: 15, RAMP: 16, PARK: 17, MOTO: 18, PILLAR: 19, WC: 20 };
+  /* 晶圓廠：CR 無塵室走道（操作員走動的地方）、TOOL 製程機台（金屬機殼，很擋訊號）、STOCK 晶圓倉儲（整座金屬櫃） */
+  const T = { OPEN: 0, DESK: 1, MEET: 2, CORE: 3, IDF: 4, OFFICE: 5, LAB: 6, LOBBY: 7, CAFE: 8, WALL: 9, GLASS: 10, EXT: 11, KITCHEN: 12, DINE: 13, SERVE: 14, COLD: 15, RAMP: 16, PARK: 17, MOTO: 18, PILLAR: 19, WC: 20, CR: 21, TOOL: 22, STOCK: 23 };
   /* 廁所（每層樓都在核心筒裡）：北側是男廁、女廁（門開向北側走道），IDF 東邊是無障礙廁所（門開向南側走道）。
    * 無障礙廁所和 IDF 弱電室只隔一道牆：漏水沒被發現，就會淹進 IDF。 */
   const WC = [
@@ -303,11 +318,75 @@
     },
   };
 
+  /* ---------- 晶圓廠 Fab 1 ----------
+   * 西側是支援區：入口大廳（安檢門）→ 更衣室（手機置物櫃）→ 風淋室 → 無塵室；另有 FAB IDF 弱電室、機台進廠掃毒站、控制室。
+   * 無塵室：中間東西向的主走道（天車 OHT 主軌道），南北各五個製程 bay（隔牆是金屬壁板，很擋訊號）；
+   * 機台沿著 bay 兩側排列，中間是 bay 內的走道（天車支線）。W / E = bay 西側、東側的機台位置（由外牆往主走道），* = 大型機台佔兩格 */
+  const FAB_BAYS = [
+    { id: 'N1', name: '黃光區', x0: 17, north: true, W: ['scanner', 'scanner', 'scanner', null], E: ['track', 'track', 'track', null] },
+    { id: 'N2', name: '蝕刻區', x0: 28, north: true, W: ['etch', 'etch', 'etch', 'etch'], E: ['etch', 'etch', 'etch', 'etch'] },
+    { id: 'N3', name: '薄膜區', x0: 39, north: true, W: ['cvd', 'cvd', 'cvd', 'cvd'], E: ['pvd', 'pvd', 'pvd', 'pvd'] },
+    { id: 'N4', name: '擴散 / 爐管區', x0: 50, north: true, W: ['furnace', 'furnace', 'furnace', 'furnace'], E: ['furnace', 'furnace', 'rtp', 'rtp'] },
+    { id: 'N5', name: '離子植入區', x0: 61, north: true, W: ['implant*', null, 'implant*', null], E: ['implant*', null, 'implant*', null] },
+    { id: 'S1', name: 'CMP / 濕式清洗', x0: 17, north: false, W: ['cmp', 'cmp', 'cmp', null], E: ['wet', 'wet', 'wet', null] },
+    { id: 'S2', name: '量測區', x0: 28, north: false, W: ['cdsem', 'cdsem', 'thick', null], E: ['overlay', 'overlay', 'thick', null] },
+    { id: 'S3', name: '蝕刻二區', x0: 39, north: false, W: ['etch', 'etch', 'etch', null], E: ['etch', 'etch', 'etch', null] },
+    { id: 'S4', name: '薄膜二 / 缺陷檢測', x0: 50, north: false, W: ['ald', 'ald', 'cvd', 'cvd'], E: ['inspect', 'inspect', null, null] },
+    { id: 'S5', name: '晶圓倉儲（AMHS）', x0: 61, north: false, W: ['stocker*', null, 'stocker*', null], E: ['stocker*', null, 'stocker*', null] },
+  ];
+  BUILDERS.fab = (L) => {
+    L.tools = [];
+    L.bays = [];
+    L.oht = [];
+    const mark = (o) => Object.assign(L.rooms[L.rooms.length - 1], o);
+    /* 支援區 */
+    room(L, 0, 0, 15, 8, T.LOBBY, 4, '入口大廳 · 安檢門', [[5, 8]]); mark({ gate: true });
+    room(L, 0, 8, 11, 20, T.MEET, 4, '更衣室 · 手機置物櫃', [[5, 8], [11, 11], [11, 16], [8, 20]]); mark({ lockers: true, fabRoom: true });
+    room(L, 11, 8, 16, 14, T.OFFICE, 5, '無塵衣倉庫', [[11, 11]]); mark({ fabRoom: true });
+    room(L, 11, 14, 16, 18, T.MEET, 6, '風淋室', [[11, 16], [16, 17]]); mark({ shower: true, fabRoom: true });
+    room(L, 0, 20, 7, 27, T.LAB, 5, '機台進廠掃毒站', [[7, 24]]); mark({ scan: true, fabRoom: true });
+    room(L, 9, 21, 14, 26, T.IDF, 7, 'FAB IDF 弱電室', [[9, 24]]); mark({ fabRoom: true });
+    L.idf = { x: 11, y: 23 };
+    room(L, 0, 27, 15, 35, T.OFFICE, 5, 'FAB 控制室（MES / 天車監控）', [[8, 27]]); mark({ control: true, fabRoom: true });
+    for (const y of [30, 32]) for (let x = 2; x <= 13; x++) if (x % 4 !== 1) set(L, x, y, T.DESK, 0);
+    /* 無塵室：和支援區之間的外牆、主走道、bay 隔牆（金屬壁板） */
+    for (let y = 1; y <= 34; y++) set(L, 16, y, T.WALL, 8);
+    for (let x = 17; x <= 70; x++) { set(L, x, 15, T.WALL, 8); set(L, x, 19, T.WALL, 8); for (let y = 16; y <= 18; y++) set(L, x, y, T.CR, 0); }
+    for (const bx of [27, 38, 49, 60]) { for (let y = 1; y <= 14; y++) set(L, bx, y, T.WALL, 8); for (let y = 20; y <= 34; y++) set(L, bx, y, T.WALL, 8); }
+    set(L, 16, 17, T.OPEN, 0);
+    L.rooms.push({ x0: 17, y0: 16, x1: 70, y1: 18, kind: T.CR, label: '主走道（天車 OHT 主軌道）', aisle: true });
+    L.oht.push({ x0: 17.5, y0: 17.5, x1: 70.5, y1: 17.5, main: true });
+    for (const b of FAB_BAYS) {
+      const y0 = b.north ? 1 : 20, y1 = b.north ? 14 : 34;
+      for (let y = y0; y <= y1; y++) for (let x = b.x0; x <= b.x0 + 9; x++) set(L, x, y, T.CR, 0);
+      /* bay 入口：接到主走道 */
+      for (let x = b.x0 + 3; x <= b.x0 + 6; x++) set(L, x, b.north ? 15 : 19, T.CR, 0);
+      L.rooms.push({ x0: b.x0, y0, x1: b.x0 + 9, y1, kind: T.CR, label: b.name, bay: b.id });
+      L.bays.push({ id: b.id, name: b.name, x0: b.x0, x1: b.x0 + 9, y0, y1, north: b.north });
+      L.oht.push({ x0: b.x0 + 5, y0: 17.5, x1: b.x0 + 5, y1: b.north ? 1.5 : 34.5, bay: b.id });
+      const SL = b.north ? [[1, 3], [5, 7], [9, 11], [13, 14]] : [[21, 23], [25, 27], [29, 31], [33, 34]];
+      for (const side of ['W', 'E']) {
+        const xs = side === 'W' ? b.x0 : b.x0 + 7;
+        b[side].forEach((ty, k) => {
+          if (!ty) return;
+          const big = ty.endsWith('*'), type = big ? ty.slice(0, -1) : ty;
+          const ya = SL[k][0], yb = big ? SL[k + 1][1] : SL[k][1];
+          const t = type === 'stocker' ? T.STOCK : T.TOOL;
+          for (let y = ya; y <= yb; y++) for (let x = xs; x <= xs + 2; x++) set(L, x, y, t, t === T.STOCK ? 14 : 10);
+          L.tools.push({ i: L.tools.length, type, bay: b.id, side, x0: xs, y0: ya, x1: xs + 2, y1: yb });
+        });
+      }
+    }
+  };
+  G.FAB_BAYS = FAB_BAYS;
+
   function finalize(L, type) {
     const n = W * H;
     L.occ = new Float32Array(n);
     L.guest = new Float32Array(n);
     const sw = Object.assign({}, STAFF_W);
+    /* 晶圓廠：操作員在無塵室的走道與 bay 裡走動，控制室有人盯著 MES 與天車 */
+    if (G.FT[type] && G.FT[type].fab) { for (const k in sw) sw[k] = 0; sw[T.CR] = 1.0; sw[T.DESK] = 0.6; sw[T.OFFICE] = 0.12; sw[T.LAB] = 0.2; sw[T.MEET] = 0.08; sw[T.LOBBY] = 0.03; }
     if (type === 'conference') sw[T.MEET] = 1.0;
     if (type === 'exec') sw[T.MEET] = 0.3;
     if (type === 'lobby') { sw[T.DESK] = 2.5; sw[T.OFFICE] = 1.0; sw[T.MEET] = 0.05; }
@@ -334,10 +413,13 @@
     get(type) {
       if (!cache[type]) {
         const L = blank();
-        core(L);
+        /* 晶圓廠是另一棟建築：沒有總部的核心筒（電梯、廁所），IDF 在支援區 */
+        const fab = !!(G.FT[type] && G.FT[type].fab);
+        if (!fab) core(L);
+        L.hasCore = !fab;
         (BUILDERS[type] || BUILDERS.office)(L);
         /* 廁所門口一定要通（停車場的電梯廳玻璃牆剛好蓋過無障礙廁所的門） */
-        for (const w of WC) set(L, w.door[0], w.door[1], T.OPEN, 0);
+        for (const w of L.wc || []) set(L, w.door[0], w.door[1], T.OPEN, 0);
         finalize(L, type);
         cache[type] = L;
       }
@@ -347,7 +429,7 @@
     canPlaceAp(L, x, y) {
       if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) return false;
       const t = L.type[y * W + x];
-      return t !== T.WALL && t !== T.GLASS && t !== T.CORE && t !== T.IDF && t !== T.EXT && t !== T.COLD && t !== T.WC;
+      return t !== T.WALL && t !== T.GLASS && t !== T.CORE && t !== T.IDF && t !== T.EXT && t !== T.COLD && t !== T.WC && t !== T.TOOL && t !== T.STOCK;
     },
     WC,
     /** AP 到 IDF 的線長估算（曼哈頓距離 + 上下天花板 4m） */

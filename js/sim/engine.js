@@ -60,6 +60,8 @@
     G.Phys.ensure();
     /* 舊存檔：補上廁所與清潔 */
     G.Rest.ensure();
+    /* 舊存檔：補上晶圓廠（沙盒模式所有樓層進駐之後開廠） */
+    G.Fab.ensure();
     G.Fac.update(0);
     G.Stor.update();
     G.Ev.applyEffects();
@@ -110,6 +112,8 @@
     G.Cut.tick(s);
     /* 廁所：使用、清潔人員巡邏 / 依感測器派工、夜班整理 */
     G.Rest.tick(s);
+    /* 晶圓廠：機台進廠、掃毒、連網、產出累計 */
+    G.Fab.tick(s);
     if (s.time % 5 === 0) G.Ops.monitor();
     rating(s);
     if (s.time % 1440 === 0) daily(s);
@@ -183,6 +187,12 @@
       s.rating -= 0.002 * Math.min(crit, 5);
     }
     if (G.Campaign.websiteLive() && sim.web.demand > 0) s.rating += (sim.web.ratio - 0.95) * 0.004;
+    /* 晶圓廠：機台都接好了，卻因為網路或 MES 停線 → 評價一直掉；穩定量產 → 慢慢加分 */
+    const fr = G.R.fab;
+    if (fr && fr.online > 0 && s.floors.FAB.movedIn > 0) {
+      if (fr.itStop) s.rating -= 0.01;
+      else if (fr.rate >= CAT.fab.wspd * 0.8) s.rating += 0.002;
+    }
     s.rating = U.clamp(s.rating, 0, 100);
   }
 
@@ -205,7 +215,9 @@
     const ai = G.R.ai ? G.R.ai.pflops * 60000 : 0;
     /* 清潔：白班清潔人員（外包）+ 衛生紙與洗手乳 */
     const clean = G.Rest.dailyCost();
-    return { isp, svc, maint, power, clean, income: income + ai, ai };
+    /* 晶圓廠：今天的良品晶圓，公司撥給 IT 部門的營運預算 */
+    const fab = G.Fab.dailyIncome();
+    return { isp, svc, maint, power, clean, income: income + ai + fab, ai, fab };
   };
 
   function daily(s) {
@@ -214,12 +226,14 @@
     s.power.kwh = 0;
     const cost = Math.round(c.isp + c.svc + c.maint + c.clean + power);
     G.Rest.resetDay();
+    const fabGood = s.fab ? Math.round(s.fab.day.good) : 0;
+    G.Fab.resetDay();
     const income = Math.round(c.income);
     s.money += income - cost;
     s.stats.income += income;
     s.stats.spent += cost;
     s.lastDaily = { t: s.time, income, isp: Math.round(c.isp), svc: Math.round(c.svc), maint: Math.round(c.maint), clean: Math.round(c.clean), power: Math.round(power) };
-    G.Act.log(`每日結算：營運預算 +${U.money(income)}${c.ai > 0 ? `（含 AI 平台效益 ${U.money(c.ai)}）` : ''}；電信（ISP、WAN、SIP）${U.money(c.isp)}、訂閱服務 ${U.money(c.svc)}、維護 ${U.money(c.maint)}、清潔 ${U.money(c.clean)}、電費 ${U.money(power)}`, 'money');
+    G.Act.log(`每日結算：營運預算 +${U.money(income)}${c.ai > 0 ? `（含 AI 平台效益 ${U.money(c.ai)}）` : ''}${c.fab > 0 ? `（含晶圓良品 ${U.num(fabGood)} 片 ${U.money(c.fab)}）` : ''}；電信（ISP、WAN、SIP）${U.money(c.isp)}、訂閱服務 ${U.money(c.svc)}、維護 ${U.money(c.maint)}、清潔 ${U.money(c.clean)}、電費 ${U.money(power)}`, 'money');
     for (const k in s.ruleHits) s.ruleHits[k] = Math.round(s.ruleHits[k] * 0.5);
   }
 
@@ -228,6 +242,9 @@
     if (!sim) return;
     let fwU = 0;
     for (const id in sim.nodes) if (Q.nodeKind(id) === 'firewall') fwU = Math.max(fwU, sim.nodes[id].util);
+    /* 晶圓廠的產能（片 / 日）：舊存檔補一條和時間軸一樣長的紀錄 */
+    if (!h.fab) h.fab = h.t.map(() => null);
+    h.fab.push(G.R.fab ? Math.round(G.R.fab.rate) : null);
     h.t.push(s.time);
     h.wanIn.push(Math.round(sim.wan.in));
     h.wanOut.push(Math.round(sim.wan.out));

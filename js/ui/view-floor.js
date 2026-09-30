@@ -33,19 +33,29 @@
         h('span', { class: 'dot ' + c }), 'B1', h('span', { class: 'go' }, '機房 ↗'));
     };
     let b1Done = false;
-    for (const x of G.BLD.floors.slice().reverse()) {
-      if (!b1Done && x.level < 0) { pick.appendChild(b1Btn()); b1Done = true; }
+    const floorBtn = (x) => {
       const stt = G.Views.building.floorStatus(x.id);
-      pick.appendChild(h('button', { class: x.id === V.fid ? 'on' : '', 'data-hint': 'floor:' + x.id, onclick: () => { if (x.id !== V.fid) { V.fid = x.id; V.selAp = null; V.stage = null; UI.refresh(); } } },
-        h('span', { class: 'dot ' + stt.c }), x.id));
+      return h('button', { class: x.id === V.fid ? 'on' : '', 'data-hint': 'floor:' + x.id, onclick: () => { if (x.id !== V.fid) { V.fid = x.id; V.selAp = null; V.stage = null; UI.refresh(); } } },
+        h('span', { class: 'dot ' + stt.c }), x.id);
+    };
+    for (const x of G.BLD.hq.slice().reverse()) {
+      if (!b1Done && x.level < 0) { pick.appendChild(b1Btn()); b1Done = true; }
+      pick.appendChild(floorBtn(x));
     }
     if (!b1Done) pick.appendChild(b1Btn());
+    /* 大樓後方的晶圓廠（第十章） */
+    if (Q.unlocked(CAT.fab) || G.BLD.isFab(V.fid)) {
+      pick.appendChild(h('span', { class: 'sep' }, '晶圓廠'));
+      for (const x of G.BLD.fab) pick.appendChild(floorBtn(x));
+    }
     el.appendChild(pick);
     const open = ft.park ? '啟用' : '進駐';
     const mi = fs.moveInAt !== null && fs.movedIn < f.staff ? (fs.moveInAt > s.time ? `預計 ${U.stamp(fs.moveInAt)} ${open}（${U.dur(fs.moveInAt - s.time)} 後）` : `${open}中`) : fs.movedIn ? `已${open}` : `尚未排定${open}`;
     const use3d = UI.pref3d('floor');
     el.appendChild(h('div', { class: 'view-h' },
-      h('div', {}, h('h2', {}, `${f.id} ${f.dept}`), h('div', { class: 'desc' }, ft.dine
+      h('div', {}, h('h2', {}, ft.fab ? f.dept : `${f.id} ${f.dept}`), h('div', { class: 'desc' }, ft.fab
+        ? `總部後方的晶圓廠 · ${G.Fab.slots().length} 台製程機台（每台 1～2 個網路埠）· 24 小時兩班制，操作員 ${U.num(f.staff)} 人 · 經 ${G.BLD.campus} m 校園光纖連回總部 B1 · ${mi}`
+        : ft.dine
         ? `${ft.name} · 廚師與服務人員 ${U.num(f.staff)} 人 · 午餐尖峰約 ${U.num(ft.diners)} 人同時用餐（人人滑手機）· 收銀機 ${ft.pos} 台 · ${mi}`
         : ft.park
           ? `地下停車場 · 管理員 ${f.staff} 人 · 上下班尖峰約 ${U.num(ft.parkPeak)} 人同時進出（地下室收不到 GPS，手機打卡要靠 Wi-Fi）· 柵欄機 / 車牌辨識 ${ft.gates} 埠 · PoE 監視器 ${ft.cams} 台 · ${mi}`
@@ -109,6 +119,8 @@
     if (V.layer === 'rssi') return h('div', { class: 'legend' }, [['rgba(70,209,127,0.8)', '≥ −60 極佳'], ['rgba(160,214,80,0.8)', '≥ −67 良好（語音 / 視訊）'], ['rgba(240,190,58,0.8)', '≥ −72 普通'], ['rgba(240,130,58,0.8)', '≥ −75 偏弱'], ['rgba(242,80,80,0.8)', '≥ −78 很弱'], ['rgba(110,120,130,0.6)', '無法連線']].map(([c, t]) => h('span', {}, h('i', { style: { background: c } }), t)));
     if (V.layer === 'load') return h('div', { class: 'legend' }, [['rgba(70,209,127,0.8)', 'AP 負載 < 70%'], ['rgba(240,166,58,0.8)', '70～100%'], ['rgba(242,95,92,0.8)', '超載']].map(([c, t]) => h('span', {}, h('i', { style: { background: c } }), t)), h('span', { class: 'dim' }, '（依目前在座人數計算）'));
     if (V.layer === 'cci') return h('div', { class: 'legend' }, h('span', {}, h('i', { style: { background: 'var(--bad)' } }), '紅色虛線：兩台 AP 使用相同頻道且互相聽得到（同頻干擾）'));
+    if (G.BLD.isFab(V.fid)) return h('div', { class: 'legend' }, Object.values(CAT.fab.areas).map((a) => h('span', {}, h('i', { style: { background: a.color } }), a.name)),
+      h('span', { class: 'dim' }, '外框：綠 = 自動化生產、橘 = 連不上 EAP、紅 = 停機、虛線 = 還沒接上網路　虛線軌道 = 天車（OHT）　金屬機台與 bay 壁板很擋訊號'));
     return h('div', { class: 'legend' }, h('span', { class: 'dim' }, '灰色格：座位區　深色：核心筒（電梯 / 樓梯，訊號幾乎無法穿透）　藍灰：廁所（磁磚牆與水管）'),
       G.Rest.hasIot(V.fid) ? h('span', {}, h('i', { style: { background: 'var(--ok)' } }), '廁所外框：感測器回報的狀況（綠好 / 橘該補 / 紅很糟）') : null,
       h('span', {}, h('i', { style: { background: 'var(--info)', borderRadius: '50%' } }), '清潔人員'));
@@ -140,6 +152,7 @@
     col[T.CORE] = tk.core; col[T.IDF] = tk.core; col[T.WALL] = tk.wall; col[T.GLASS] = tk.glass; col[T.EXT] = tk.line2;
     col[T.KITCHEN] = tk.kitchen; col[T.SERVE] = tk.serve; col[T.DINE] = tk.dine; col[T.COLD] = tk.cold;
     col[T.RAMP] = tk.ramp; col[T.PARK] = tk.park; col[T.MOTO] = tk.moto; col[T.PILLAR] = tk.pillar; col[T.WC] = tk.wc;
+    col[T.CR] = tk.bg2; col[T.TOOL] = tk.bg4; col[T.STOCK] = tk.core;
     for (let y = 0; y < L.H; y++) {
       for (let x = 0; x < L.W; x++) {
         const t = L.type[y * L.W + x];
@@ -159,7 +172,7 @@
         for (let x = 0; x < L.W; x++) {
           const i = y * L.W + x;
           const t = L.type[i];
-          if (t === T.WALL || t === T.GLASS || t === T.CORE || t === T.IDF || t === T.EXT || t === T.WC) continue;
+          if (t === T.WALL || t === T.GLASS || t === T.CORE || t === T.IDF || t === T.EXT || t === T.WC || t === T.TOOL || t === T.STOCK) continue;
           const r = wr.best[i];
           if (V.layer === 'rssi') ctx.fillStyle = heat(r);
           else {
@@ -185,6 +198,7 @@
       }
     }
     drawWc(ctx, L, cs, tk);
+    if (L.tools) drawFab(ctx, L, cs, tk);
     ctx.fillStyle = tk.accent;
     ctx.font = `bold ${Math.max(9, cs * 0.9)}px ${tk.mono}`;
     ctx.fillText('IDF', (L.idf.x + 0.5) * cs, (L.idf.y + 0.5) * cs);
@@ -227,6 +241,46 @@
     }
     if (V.tool === 'cable') drawDiy(ctx, L, cs, tk);
   };
+
+  /* ---------- 晶圓廠：機台（顏色 = 製程區；外框 = 狀態）、天花板上的天車（OHT）軌道 ---------- */
+  function fabStroke(i, tk) {
+    const F = G.S.fab, x = F && F.tools[i];
+    if (!x || x.st === 'coming') return { c: tk.text3, dash: [2, 3], a: 0.25 };
+    if (x.down) return { c: tk.bad, a: 1 };
+    if (x.st === 'online') { const inf = G.Fab.info(i); return inf.run ? { c: inf.eapOk ? tk.ok : tk.warn, a: 1 } : { c: tk.bad, a: 1 }; }
+    if (x.st === 'install') return { c: tk.info, dash: [3, 2], a: 0.7 };
+    return { c: tk.accent, dash: [4, 2], a: 0.85 };
+  }
+  function drawFab(ctx, L, cs, tk) {
+    ctx.save();
+    /* 天車軌道 */
+    ctx.strokeStyle = G.Charts.withAlpha(tk.text2, 0.45);
+    ctx.lineWidth = Math.max(1, cs * 0.18);
+    ctx.setLineDash([cs * 0.6, cs * 0.4]);
+    for (const r of L.oht) { ctx.beginPath(); ctx.moveTo(r.x0 * cs, r.y0 * cs); ctx.lineTo(r.x1 * cs, r.y1 * cs); ctx.stroke(); }
+    ctx.setLineDash([]);
+    /* 機台 */
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const t of L.tools) {
+      const def = CAT.fab.types[t.type], area = CAT.fab.areas[def.area];
+      const x0 = t.x0 * cs, y0 = t.y0 * cs, w = (t.x1 - t.x0 + 1) * cs, hh = (t.y1 - t.y0 + 1) * cs;
+      const st = fabStroke(t.i, tk);
+      ctx.globalAlpha = st.a;
+      ctx.fillStyle = G.Charts.withAlpha(area.color, 0.5);
+      ctx.fillRect(x0 + 1, y0 + 1, w - 2, hh - 2);
+      ctx.strokeStyle = st.c; ctx.lineWidth = Math.max(1.2, cs * 0.18); ctx.setLineDash(st.dash || []);
+      ctx.strokeRect(x0 + 1.5, y0 + 1.5, w - 3, hh - 3);
+      ctx.setLineDash([]);
+      if (cs >= 7) {
+        const [ca, cb] = G.Fab.code(t.i).split('-');
+        ctx.fillStyle = tk.text; ctx.font = `600 ${Math.max(7, Math.min(10, cs * 0.7))}px ${tk.mono}`;
+        ctx.fillText(ca, x0 + w / 2, y0 + hh / 2 - cs * 0.42);
+        ctx.fillText(cb, x0 + w / 2, y0 + hh / 2 + cs * 0.42);
+      }
+      ctx.globalAlpha = 1;
+    }
+    ctx.restore();
+  }
 
   /* ---------- 廁所：男 / 女 / 無障礙的標示；有智慧廁所時外框顏色＝狀況（綠好、橘要補、紅很糟），清潔人員是門口的小圓點 ---------- */
   function drawWc(ctx, L, cs, tk) {
@@ -425,6 +479,9 @@
       const wr = wifiPlan();
       const i = c.y * L.W + c.x;
       const r = wr.best[i];
+      /* 晶圓廠：滑過機台顯示名稱與狀態 */
+      const tool = L.tools && (L.type[i] === T.TOOL || L.type[i] === T.STOCK) ? L.tools.find((q) => c.x >= q.x0 && c.x <= q.x1 && c.y >= q.y0 && c.y <= q.y1) : null;
+      if (tool && G.S.fab && G.S.fab.tools[tool.i]) { const inf = G.Fab.info(tool.i); V.tip.textContent = `${inf.name}（${inf.area}）　${inf.status}　${inf.def.ports} 埠 · FDC ${inf.def.fdc} Mbps`; return; }
       const wc = L.type[i] === T.WC && L.wc ? L.wc.find((q) => c.x >= q.x0 && c.x <= q.x1 && c.y >= q.y0 && c.y <= q.y1) : null;
       V.tip.textContent = `(${c.x}, ${c.y}) m　${wc ? wc.name + '　' : ''}${r > -110 ? `訊號 ${r.toFixed(0)} dBm` : '沒有訊號'}${wc ? '（廁所裡不裝 AP，靠走道的 AP 蓋進來）' : ''}`;
     });
@@ -459,17 +516,24 @@
     R.appendChild(h('div', { class: 'card' },
       h('div', { class: 'card-h' }, h('h3', {}, '樓層狀態'), h('span', { class: 'chip ' + G.Views.building.floorStatus(V.fid).c }, G.Views.building.floorStatus(V.fid).t)),
       h('div', { class: 'kv' },
-        h('span', { class: 'k' }, ft.dine ? '餐廳人員（進駐 / 編制）' : ft.park ? '管理員（到職 / 編制）' : '已進駐 / 編制'), h('span', { class: 'v mono' }, `${U.num(fs.movedIn)} / ${U.num(f.staff)}`),
-        h('span', { class: 'k' }, ft.dine ? '用餐人數' : ft.park ? '停車場人潮' : '目前在座'), h('span', { class: 'v mono' }, live(() => { const x = st(); if (!x) return '—'; if (ft.dine) return `${U.num(Math.round(x.diners || 0))} 人（尖峰約 ${U.num(ft.diners)}）`; if (ft.park) return `${U.num(Math.round(x.parkers || 0))} 人（上班尖峰約 ${U.num(ft.parkPeak)}）`; return U.num(Math.round(x.present)) + ' 人' + (x.guests > 1 ? `＋訪客 ${Math.round(x.guests)}` : ''); })),
+        h('span', { class: 'k' }, ft.dine ? '餐廳人員（進駐 / 編制）' : ft.park ? '管理員（到職 / 編制）' : ft.fab ? '操作員與工程師（到職 / 編制）' : '已進駐 / 編制'), h('span', { class: 'v mono' }, `${U.num(fs.movedIn)} / ${U.num(f.staff)}`),
+        h('span', { class: 'k' }, ft.dine ? '用餐人數' : ft.park ? '停車場人潮' : ft.fab ? '現場人員（兩班制）' : '目前在座'), h('span', { class: 'v mono' }, live(() => { const x = st(); if (!x) return '—'; if (ft.dine) return `${U.num(Math.round(x.diners || 0))} 人（尖峰約 ${U.num(ft.diners)}）`; if (ft.park) return `${U.num(Math.round(x.parkers || 0))} 人（上班尖峰約 ${U.num(ft.parkPeak)}）`; return U.num(Math.round(x.present)) + ' 人' + (x.guests > 1 ? `＋訪客 ${Math.round(x.guests)}` : ''); })),
         ft.park ? h('span', { class: 'k' }, '手機打卡成功率') : null, ft.park ? h('span', { class: 'v mono' }, live(() => { const x = st(); if (!x || !fs.movedIn) return '—'; if (!x.up) return '0%（整層沒有網路）'; return `${U.pct(x.clockOk)}${x.parkers > 5 ? '' : '（離峰）'}`; })) : null,
         ft.gates ? h('span', { class: 'k' }, '柵欄機 / 車牌辨識') : null, ft.gates ? h('span', { class: 'v mono' }, live(() => { const x = st(); return !x ? '—' : x.gateOk ? '連線中' : '連不上系統'; })) : null,
         ft.cams ? h('span', { class: 'k' }, `監視器（${ft.cams} 台）`) : null, ft.cams ? h('span', { class: 'v mono' }, live(() => { const x = st(); return !x ? '—' : `${Math.round((x.camOk || 0) * ft.cams)} / ${ft.cams} 台有畫面`; })) : null,
         ft.dine ? h('span', { class: 'k' }, '用餐 Wi-Fi 容量') : null, ft.dine ? h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.diners > 5 ? U.pct(x.dinerRatio) : '—（非用餐時間）'; })) : null,
         ft.pos ? h('span', { class: 'k' }, `收銀 POS（${ft.pos} 台）`) : null, ft.pos ? h('span', { class: 'v mono' }, live(() => { const x = st(); return !x || !fs.movedIn ? '—' : x.posOk ? '可刷卡' : '無法連線'; })) : null,
-        h('span', { class: 'k' }, '可連線比例'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? U.pct(x.conn) : '—'; })),
-        h('span', { class: 'k' }, '頻寬滿足率'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? U.pct(x.thr) : '—'; })),
-        h('span', { class: 'k' }, '延遲'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? `${x.lat.toFixed(1)} ms` : '—'; })),
-        h('span', { class: 'k' }, '滿意度'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.sat !== null && x.present > 1 ? U.pct(x.sat) : '—'; })))));
+        /* 晶圓廠：看機台連網、自動化與產能，不看員工的上網體驗 */
+        ...(ft.fab ? [
+          h('span', { class: 'k' }, '機台連網 / 自動化'), h('span', { class: 'v mono' }, live(() => { const R = G.R.fab; const c = G.Fab.counts(); return R ? `${c.online} / ${R.total} 台 · 自動化 ${R.auto}` : `${c.online} 台`; })),
+          h('span', { class: 'k' }, '產能'), h('span', { class: 'v mono' }, live(() => { const R = G.R.fab; return R ? `${U.num(Math.round(R.rate))} 片 / 日${R.itStop ? '（' + R.itStop + '）' : ''}` : '—'; })),
+          h('span', { class: 'k' }, '手持裝置 Wi-Fi'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.wifi ? `可用覆蓋 ${U.pct(x.wifi.usable || 0)}` : '—'; })),
+        ] : [
+          h('span', { class: 'k' }, '可連線比例'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? U.pct(x.conn) : '—'; })),
+          h('span', { class: 'k' }, '頻寬滿足率'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? U.pct(x.thr) : '—'; })),
+          h('span', { class: 'k' }, '延遲'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.present > 1 ? `${x.lat.toFixed(1)} ms` : '—'; })),
+          h('span', { class: 'k' }, '滿意度'), h('span', { class: 'v mono' }, live(() => { const x = st(); return x && x.sat !== null && x.present > 1 ? U.pct(x.sat) : '—'; })),
+        ]))));
 
     /* ① 水平布線 */
     const cab = h('div', { class: 'card' }, h('div', { class: 'card-h' }, h('h3', {}, '① 水平布線'), h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-mdf') }, '什麼是水平布線？')));
@@ -481,7 +545,11 @@
       cab.append(seg,
         h('p', { class: 'small muted', style: { margin: '8px 0' } }, hz.desc),
         h('div', { class: 'kv' },
-          h('span', { class: 'k' }, '資訊點'), h('span', { class: 'v mono' }, `${drops} 個（座位 + 印表機 + 40 個 AP 點${ft.gates ? ' + 車道設備與監視器' : ft.pos ? ' + 收銀機' : ''}）`)),
+          h('span', { class: 'k' }, '資訊點'), h('span', { class: 'v mono' }, ft.fab ? `${drops} 個（機台 ${G.Fab.portsTotal()} 埠 + 控制室 MES 終端機 + 印表機 + 40 個 AP 點）` : `${drops} 個（座位 + 印表機 + 40 個 AP 點${ft.gates ? ' + 車道設備與監視器' : ft.pos ? ' + 收銀機' : ''}）`)),
+        ft.fab ? h('div', { class: 'col', style: { marginTop: '10px', gap: '4px' } },
+          h('span', { class: 'tiny muted' }, `${U.money(drops * hz.perDrop)} · 約 ${U.dur(hz.buildMin)}`),
+          h('span', { class: 'tiny dim' }, '無塵室裡施工要穿無塵衣、申請施工許可，由合格的無塵室工程廠商在架高地板下走線：只能發包。'),
+          h('button', { class: 'btn primary sm', style: { alignSelf: 'flex-start' }, 'data-hint': 'cabling@' + V.fid, onclick: () => UI.res(G.Act.startCabling(V.fid, V.cabStd)) }, '發包施工')) :
         h('div', { class: 'grid c2', style: { marginTop: '10px', gap: '8px' } },
           h('div', { class: 'col', style: { gap: '4px' } },
             h('b', { class: 'small' }, '發包施工'),
@@ -557,7 +625,10 @@
       partial ? h('div', { class: 'note warn small' }, `${fs.aps.length - powered.size} 台 AP 尚未供電（要等布線完工、裝好接入交換器，且 PoE 預算足夠）。平面圖顯示的是預測訊號。`) : null,
       h('div', { class: 'kv' },
         h('span', { class: 'k' }, 'AP（供電中 / 總數）'), h('span', { class: 'v mono ' + (partial ? 'warn-t' : '') }, `${powered.size} / ${fs.aps.length}`),
-        h('span', { class: 'k' }, '良好覆蓋（≥ −67 dBm）'), h('span', { class: 'v mono ' + (plan.good >= 0.9 ? 'ok-t' : 'warn-t') }, partial ? `預測 ${U.pct(plan.good)}・實際 ${U.pct(wr.good)}` : U.pct(wr.good)),
+        h('span', { class: 'k' }, '良好覆蓋（≥ −67 dBm）'), h('span', { class: 'v mono ' + (ft.fab ? '' : plan.good >= 0.9 ? 'ok-t' : 'warn-t') }, partial ? `預測 ${U.pct(plan.good)}・實際 ${U.pct(wr.good)}` : U.pct(wr.good)),
+        /* 無塵室：手持裝置查 MES 只要「可用」的訊號（任務看這一項） */
+        ft.fab ? h('span', { class: 'k' }, '可用覆蓋（≥ −75 dBm，手持裝置）') : null,
+        ft.fab ? h('span', { class: 'v mono ' + (plan.usable >= 0.9 ? 'ok-t' : 'warn-t') }, partial ? `預測 ${U.pct(plan.usable)}・實際 ${U.pct(wr.usable)}` : U.pct(wr.usable)) : null,
         h('span', { class: 'k' }, '可連線（≥ −78 dBm）'), h('span', { class: 'v mono' }, U.pct(partial ? plan.cover : wr.cover)),
         h('span', { class: 'k' }, '同頻干擾'), h('span', { class: 'v mono ' + (plan.conflicts.length ? 'warn-t' : '') }, `${plan.conflicts.length} 組`),
         h('span', { class: 'k' }, '連線裝置'), h('span', { class: 'v mono' }, live(() => { const x = st(); if (!x) return '—'; return U.num(Math.round(U.sum(Object.values(x.apStats), (a) => a.clients))); })),
@@ -568,7 +639,7 @@
         h('button', { class: 'btn sm', 'data-hint': 'autochan@' + V.fid, onclick: () => UI.res(G.Act.autoChannels(V.fid)) }, 'WLC 自動頻道'),
         h('button', { class: 'btn sm', 'data-hint': 'copy-floor@' + V.fid, onclick: () => copyDialog() }, '複製此樓層設計…')));
     R.appendChild(wifi);
-    R.appendChild(restCard());
+    R.appendChild(ft.fab ? fabCard() : restCard());
 
     /* AP 詳情 */
     if (V.selAp) {
@@ -596,6 +667,22 @@
       }
     }
   };
+
+  /* ---------- ⑤ 機台連網（晶圓廠）：接上交換器的機台、等著的機台、埠數；詳細的在「晶圓廠」頁 ---------- */
+  function fabCard() {
+    const F = G.S.fab, c = G.Fab.counts();
+    const card = h('div', { class: 'card col', style: { gap: '8px' } },
+      h('div', { class: 'card-h', style: { marginBottom: '0' } }, h('h3', {}, '⑤ 機台連網'), h('button', { class: 'btn ghost xs', onclick: () => UI.openKb('k-fab') }, 'SECS/GEM 與 EAP')));
+    if (!F || !F.open) { card.appendChild(h('div', { class: 'small muted' }, '晶圓廠還沒開始進機台。')); return card; }
+    card.appendChild(h('div', { class: 'kv' },
+      h('span', { class: 'k' }, '機台'), h('span', { class: 'v mono' }, live(() => { const x = G.Fab.counts(); return `已連網 ${x.online} · 裝機 ${x.install} · 等掃毒 ${x.scan} · 等交換器埠 ${x.ready}`; })),
+      h('span', { class: 'k' }, '機台用掉的埠'), h('span', { class: 'v mono' }, live(() => `${G.Fab.portsUsed()} / ${G.Fab.portsTotal()} 埠（交換器共 ${Q.floorPorts(V.fid)} 埠，AP 先接）`)),
+      h('span', { class: 'k' }, '進廠掃毒站'), h('span', { class: 'v' }, G.Fab.kioskReady() ? '✓ 啟用中' : G.Fab.building('kiosk') ? '施工中' : '還沒有')));
+    if (c.ready && G.S.floors[V.fid].cabling.status === 'done' && G.S.floors[V.fid].idf.count > 0) card.appendChild(h('div', { class: 'note warn small' }, `${c.ready} 台機台裝好了，卻沒有交換器埠可以接：在「② IDF 接入交換器」增加交換器。`));
+    card.appendChild(h('button', { class: 'btn sm primary', style: { alignSelf: 'flex-start' }, 'data-hint': 'fab-go', onclick: () => UI.go('fab') }, '到「晶圓廠」看每一台機台'));
+    card.appendChild(h('div', { class: 'tiny dim' }, '機台的網路線從架高地板下拉到 FAB IDF；機台和 MES / EAP 在 OT 網路裡，不和總部的員工電腦混在一起。無塵室不裝監視器以外的攝影設備，也不准帶私人手機。'));
+    return card;
+  }
 
   /* ---------- ⑤ 廁所與清潔：清潔人員（全大樓）、智慧廁所（本層）、三間廁所的狀況 ---------- */
   function restCard() {

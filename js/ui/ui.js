@@ -13,6 +13,7 @@
     { id: 'sys', label: '系統' },
     { id: 'topo', label: '拓撲' },
     { id: 'wan', label: '據點' },
+    { id: 'fab', label: '晶圓廠' },
     { id: 'noc', label: '監控' },
     { id: 'fw', label: '防火牆' },
     { id: 'inc', label: '事件' },
@@ -121,6 +122,8 @@
         h('span', { class: 'lbl' }, n.label),
         h('span', { class: 'badge' }, ''));
       navCache[n.id] = b;
+      /* 晶圓廠：第十章才開放 */
+      if (n.id === 'fab') b.hidden = !!G.S && !Q.unlocked(CAT.fab);
       els.rail.appendChild(b);
     });
     els.main = h('main', { id: 'main' });
@@ -236,9 +239,17 @@
     const s = G.S, sim = G.R.sim;
     if (!sim) return;
     const t = s.time;
-    const floorsBad = G.BLD.floors.some((f) => sim.floors[f.id] && sim.floors[f.id].present > 20 && !sim.floors[f.id].up);
-    const soon = G.BLD.floors.some((f) => { const fs = s.floors[f.id]; return fs.moveInAt !== null && fs.moveInAt > t && fs.moveInAt - t < 720 && !G.Net.floorUp(f.id); });
+    const floorsBad = G.BLD.hq.some((f) => sim.floors[f.id] && sim.floors[f.id].present > 20 && !sim.floors[f.id].up);
+    const soon = G.BLD.hq.some((f) => { const fs = s.floors[f.id]; return fs.moveInAt !== null && fs.moveInAt > t && fs.moveInAt - t < 720 && !G.Net.floorUp(f.id); });
     led('building', floorsBad ? 'crit' : soon ? 'blink' : '');
+    /* 晶圓廠：第十章才出現；停線或中毒 → 紅燈；有機台在等掃毒 / 交換器埠 → 閃爍 */
+    if (navCache.fab) {
+      navCache.fab.hidden = !Q.unlocked(CAT.fab);
+      const FR = G.R.fab, fc = s.fab && s.fab.open ? G.Fab.counts() : null;
+      const fabBad = !!FR && (!!FR.itStop || FR.down > 0);
+      const wait = fc ? fc.scan + fc.ready : 0;
+      led('fab', fabBad ? 'crit' : wait ? 'blink' : '', wait ? String(wait) : '');
+    }
     const failed = Object.values(s.devices).some((d) => d.rack && d.status !== 'ok');
     const inv = Object.values(s.devices).filter((d) => !d.rack && !d.host).length;
     led('rack', failed || s.temp >= 32 ? 'crit' : inv ? 'blink' : '', inv ? String(inv) : '');
@@ -442,13 +453,26 @@
     const last = idx === G.Campaign.chapters.length - 1;
     UI.modal({
       kicker: '章節完成', title: ch.title, wide: true, dismissible: false, onClose: () => { UI._doneOpen = false; },
-      body: [...ch.outro.map((p) => h('p', {}, p)), ch.id === 'c9' && G.CutUI ? G.CutUI.reportBlock() : null, statsBlock(),
+      body: [...ch.outro.map((p) => h('p', {}, p)), ch.id === 'c9' && G.CutUI ? G.CutUI.reportBlock() : null, ch.id === 'c10' ? fabBlock() : null, statsBlock(),
         h('div', { class: 'note info' }, h('b', {}, '章節小測驗　'), '用 5 題檢查這一章的觀念，答錯會附上解說與知識卡。')],
       actions: [
         { label: '做本章小測驗', kind: 'ghost', close: false, onClick: () => { UI.quiz(idx); return false; } },
         { label: last ? '查看結局' : '前往下一章', kind: 'primary', onClick: () => { G.Campaign.nextChapter(s); UI.renderSide(); } }],
     });
   };
+  /** 第十章的成績：晶圓產出、報廢、自動化與機台資安 */
+  function fabBlock() {
+    const F = G.S.fab, R = G.R.fab, c = G.Fab.counts();
+    const caught = F.tools.filter((x) => x.caught).length;
+    const bad = G.S.incidents.filter((i) => i.type === 'fab-malware' && i.outcome !== 'blocked').length;
+    return h('div', { class: 'grid c3' },
+      h('div', { class: 'tile' }, h('div', { class: 'k' }, '累計良品晶圓'), h('div', { class: 'v' }, `${U.num(Math.round(F.good))} 片`)),
+      h('div', { class: 'tile' }, h('div', { class: 'k' }, '停線報廢'), h('div', { class: 'v' }, `${U.num(F.scrap)} 片`)),
+      h('div', { class: 'tile' }, h('div', { class: 'k' }, '自動化機台'), h('div', { class: 'v' }, R ? `${R.auto} / ${R.total}` : '—')),
+      h('div', { class: 'tile' }, h('div', { class: 'k' }, '掃毒站攔下的惡意程式'), h('div', { class: 'v' }, `${caught} 次`)),
+      h('div', { class: 'tile' }, h('div', { class: 'k' }, '機台中毒事件'), h('div', { class: 'v' }, `${bad} 次`)),
+      h('div', { class: 'tile' }, h('div', { class: 'k' }, '略過掃毒的機台'), h('div', { class: 'v' }, `${c.skipped} 台`)));
+  }
   function statsBlock() {
     const s = G.S;
     const avg = (a) => (a.length ? U.dur(U.sum(a) / a.length) : '—');
@@ -467,7 +491,7 @@
     UI.modal({
       kicker: '全劇情完成', title: '萬人企業網路，建設完成', wide: true, dismissible: false,
       body: [
-        h('p', {}, '從一間空蕩蕩的 B1 機房開始，你規劃了機櫃、路由、防火牆、23 層樓的布線與 Wi-Fi、DMZ、備援與縱深防禦，在攻擊中守住了公司；建好 AI 運算中心，把四個據點、電話與雲端串起來，讓虛擬化、備份、修補與弱點管理都經得起稽核；最後在凌晨的維護窗口裡，親手把一整台核心交換器的線一條條搬到新設備上。'),
+        h('p', {}, '從一間空蕩蕩的 B1 機房開始，你規劃了機櫃、路由、防火牆、23 層樓的布線與 Wi-Fi、DMZ、備援與縱深防禦，在攻擊中守住了公司；建好 AI 運算中心，把四個據點、電話與雲端串起來，讓虛擬化、備份、修補與弱點管理都經得起稽核；在凌晨的維護窗口裡，親手把一整台核心交換器的線一條條搬到新設備上；最後在大樓後方的晶圓廠，讓六十多台機台安全地連上 OT 網路，也守住了無塵室裡的機密。'),
         h('div', { class: 'row wrap', style: { gap: '16px' } }, h('div', {}, h('div', { class: 'label' }, '最終分數'), h('div', { class: 'grade mono' }, U.num(score))), h('div', {}, h('div', { class: 'label' }, '資安健檢'), h('div', { class: 'grade' }, g))),
         statsBlock(),
         h('p', { class: 'muted' }, '你可以繼續營運這個網路（隨機事件仍會發生），或回到標題畫面挑戰沙盒模式。'),
@@ -600,7 +624,7 @@
       else go();
     };
     menu.append(
-      h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '九章，從空機房到萬人企業、AI 運算中心、集團 IT 與核心割接')),
+      h('button', { class: 'btn' + (peek ? '' : ' primary'), onclick: () => startNew('campaign') }, '劇情模式', h('small', {}, '十章，從空機房到萬人企業、AI 運算中心、集團 IT、核心割接與晶圓廠')),
       h('button', { class: 'btn', onclick: () => startNew('sandbox') }, '沙盒模式', h('small', {}, '預算 1.5 億，自由建設')),
       h('button', { class: 'btn', onclick: () => UI.scenPicker() }, '情境挑戰', h('small', {}, '限時處理事件 · 評分')),
       G.Cloud && G.Cloud.configured() ? h('button', { class: 'btn ghost', onclick: () => UI.cloud() }, '雲端存檔', h('small', {}, '用 Google 帳號在別台裝置接著玩')) : null,
