@@ -21,6 +21,8 @@
     G.bus.emit('hint');
   };
   const safe = (fn) => { try { return !!fn(); } catch (e) { return false; } };
+  /** 只是等待的步驟（按 ⏭ 快轉、等施工完成） */
+  const isWait = (st) => !!st.wait || (Array.isArray(st.path) && st.path.includes('speed-skip'));
 
   /** 目前的任務與下一步：{ o, step, idx, total } */
   Hint.current = () => {
@@ -29,7 +31,8 @@
     let o = null, steps = [];
     const ch = G.Campaign.current();
     if (ch && !s.won) {
-      o = ch.objectives.find((x) => !s.obj[x.id] && !G.Campaign.ready(x));
+      const open = ch.objectives.filter((x) => !s.obj[x.id] && !G.Campaign.ready(x));
+      o = open[0] || null;
       /* 條件都達成了、但遊戲暫停中（任務要等時間走一分鐘才會結算）：提示按 ▶ */
       if (!o) {
         if (s.speed === 0 && !s.flags['done-' + ch.id] && ch.objectives.some((x) => !s.obj[x.id])) {
@@ -37,7 +40,16 @@
         }
         return null;
       }
-      try { steps = G.HINTS[o.id] ? G.HINTS[o.id](s) : []; } catch (e) { console.error(e); steps = []; }
+      const stepsOf = (x) => { try { return (G.HINTS[x.id] ? G.HINTS[x.id](s) : []).filter(Boolean); } catch (e) { console.error(e); return []; } };
+      steps = stepsOf(o);
+      /* 這個任務只剩等待（施工、快轉）：先看後面的任務有沒有現在就能做的事，等待的事情同時進行 */
+      const waiting = (list) => { const st = list.find((x) => !safe(x.done)); return !st || isWait(st); };
+      if (waiting(steps)) {
+        for (const x of open.slice(1)) {
+          const st2 = stepsOf(x);
+          if (!waiting(st2)) { o = x; steps = st2; break; }
+        }
+      }
     } else if (s.mode === 'sandbox' && G.HINTS.__sandbox) {
       try { steps = G.HINTS.__sandbox(s) || []; } catch (e) { console.error(e); steps = []; }
       steps = steps.filter(Boolean);
@@ -68,7 +80,16 @@
       }
       return { text: `緊急報修：${tk.text}。${tk.hint}`, short: tk.text, go: tk.goto, path: Hint.defaultPath(tk.goto), done: () => !!tk.resolvedAt };
     }
-    if (s.temp >= 30 && s.racks.length) return { text: `機房 ${s.temp.toFixed(1)}°C 過熱：到「採購 → 機房設施」加裝精密空調`, short: '加裝精密空調', go: 'shop:facility', path: ['nav:shop', 'tab:shop:facility', 'buy:CRAC-25'], done: () => G.S.temp < 29 };
+    if (s.temp >= 30 && s.racks.length) {
+      /* 已經買了（含安裝中）足夠的空調就算完成，等它裝好降溫，不要一直叫人再買 */
+      const planned = () => {
+        const S = G.S, F = G.R.fac;
+        const kw = U.sum(S.room.filter((r) => G.CAT.room[r.model].kind === 'cooling' && r.status === 'ok'), (r) => G.CAT.room[r.model].coolKW);
+        const mul = S.room.some((r) => G.CAT.room[r.model].kind === 'contain' && r.status === 'ok') ? 1.2 : 1;
+        return !!F && kw * mul >= F.airHeat * 1.2;
+      };
+      if (!planned()) return { text: `機房 ${s.temp.toFixed(1)}°C 過熱：到「採購 → 機房設施」加裝精密空調`, short: '加裝精密空調', go: 'shop:facility', path: ['nav:shop', 'tab:shop:facility', 'buy:CRAC-25'], done: () => G.S.temp < 29 || planned() };
+    }
     return null;
   }
   /** 只有「前往哪一頁」的時候：導覽列 → 分頁 / 樓層 / 據點 */
@@ -76,7 +97,7 @@
     if (!go) return [];
     const [v, p] = go.split(':');
     const out = ['nav:' + v];
-    if (p && ['shop', 'fw', 'sys'].includes(v)) out.push(`tab:${v}:${p}`);
+    if (p && ['shop', 'fw', 'sys', 'plant'].includes(v)) out.push(`tab:${v}:${p}`);
     if (p && v === 'floor') out.push('floor:' + p);
     if (p && v === 'wan') out.push('wan-site:' + p);
     if (p && v === 'rack') out.push('mode:' + p);

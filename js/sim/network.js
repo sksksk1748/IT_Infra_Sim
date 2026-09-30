@@ -247,7 +247,7 @@
       /* IT 與 OT 沒隔離：晶圓廠與 MES / EAP / FDC 仍算 OT，其他照原本的區域 */
       case 'OTBRIDGE': {
         const d = G.S.devices[nodeId];
-        if ((isFloor && G.BLD.isFab(nodeId.slice(2))) || (d && ['mes', 'eap', 'fdc'].includes(d.role))) return 'OT';
+        if ((isFloor && G.BLD.isFab(nodeId.slice(2))) || (d && ['mes', 'eap', 'fdc', 'fmcs'].includes(d.role))) return 'OT';
         return isFloor ? 'LAN' : 'SERVERS';
       }
       case 'DMZ': return 'DMZ';

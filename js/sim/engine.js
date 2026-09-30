@@ -62,9 +62,13 @@
     G.Rest.ensure();
     /* 舊存檔：補上晶圓廠（沙盒模式所有樓層進駐之後開廠） */
     G.Fab.ensure();
+    /* 舊存檔：補上晶圓廠的廠務（第十一章起才啟動） */
+    G.Plant.ensure();
     G.Fac.update(0);
     G.Stor.update();
     G.Ev.applyEffects();
+    /* 晶圓廠的廠務：先算好電力與供應，產能才算得出來 */
+    G.Plant.refresh();
     G.Net.simulate();
     G.bus.emit('boot');
   };
@@ -104,6 +108,8 @@
     G.Acc.tick();
     heatFailures(s);
     G.Ev.tick();
+    /* 晶圓廠的廠務（第十一章）：電力、配電盤、純水、氣體、化學品——要在網路模擬之前算好，產能才會跟著變 */
+    G.Plant.tick(s);
     if (s.scen && G.Scen) G.Scen.pre(s);
     G.Net.simulate();
     if (s.scen && G.Scen) G.Scen.post(s);
@@ -190,7 +196,7 @@
     /* 晶圓廠：機台都接好了，卻因為網路或 MES 停線 → 評價一直掉；穩定量產 → 慢慢加分 */
     const fr = G.R.fab;
     if (fr && fr.online > 0 && s.floors.FAB.movedIn > 0) {
-      if (fr.itStop) s.rating -= 0.01;
+      if (fr.itStop || fr.plantStop) s.rating -= 0.01;
       else if (fr.rate >= CAT.fab.wspd * 0.8) s.rating += 0.002;
     }
     s.rating = U.clamp(s.rating, 0, 100);
@@ -245,6 +251,9 @@
     /* 晶圓廠的產能（片 / 日）：舊存檔補一條和時間軸一樣長的紀錄 */
     if (!h.fab) h.fab = h.t.map(() => null);
     h.fab.push(G.R.fab ? Math.round(G.R.fab.rate) : null);
+    /* 晶圓廠的用電（MW） */
+    if (!h.fabMW) h.fabMW = h.t.map(() => null);
+    h.fabMW.push(G.R.plant ? Math.round(G.R.plant.power.load.kw / 100) / 10 : null);
     h.t.push(s.time);
     h.wanIn.push(Math.round(sim.wan.in));
     h.wanOut.push(Math.round(sim.wan.out));

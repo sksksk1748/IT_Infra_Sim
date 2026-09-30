@@ -47,12 +47,13 @@
         rest: G.Rest.newState(mode === 'sandbox' ? 4 : 1),
         /* 晶圓廠（fab.js）：劇情模式第十章開廠；沙盒模式在所有樓層進駐之後開廠 */
         fab: G.Fab.newState(),
+        plant: G.Plant.newState(),
         /* 電話：沙盒模式從週一上班開始要有自己的電話交換機（之前用大樓的舊總機） */
         voice: { qos: false, trunk: 0, next: 0, nextAt: 0, graceUntil: mode === 'sandbox' ? U.at(3, 9) : 0 },
         stor: { snap: false, extraTB: 0 },
         bkp: { freq: 24, keep: 30, jobs: [], lastOk: null, lastTape: null, lastCloud: null, fault: null, drillAt: null, drillOk: null, drillUntil: 0 },
         incidents: [], tickets: [], alerts: [], log: [],
-        hist: { t: [], wanIn: [], wanOut: [], wanCap: [], intra: [], users: [], sat: [], lat: [], loss: [], fw: [], temp: [], kw: [], web: [], fab: [] },
+        hist: { t: [], wanIn: [], wanOut: [], wanCap: [], intra: [], users: [], sat: [], lat: [], loss: [], fw: [], temp: [], kw: [], web: [], fab: [], fabMW: [] },
         stats: { breaches: 0, incResolved: 0, incFailed: 0, ticketsResolved: 0, spent: 0, income: 0, mttd: [], mttr: [], ransomPaid: 0 },
         kb: { unlocked: {}, seen: {} },
         settings: { autoPause: true },
@@ -224,7 +225,9 @@
     const iot = G.Rest && G.Rest.hasIot(fid) ? 1 : 0;
     /* 晶圓廠：每一台機台 1～2 個埠（全部機台都要算進去，交換器才夠） */
     const tools = ft.fab && G.Fab ? G.Fab.portsTotal() : 0;
-    return { seats, printers, pos, gates, cams, iot, tools, aps: fs.aps.length, total: seats + printers + pos + gates + cams + iot + tools + fs.aps.length };
+    /* 廠務（第十一章）：每一套廠務設備的 PLC 也接在 FAB IDF 上 */
+    const plc = ft.fab && G.Plant ? G.Plant.plcCount() : 0;
+    return { seats, printers, pos, gates, cams, iot, tools, plc, aps: fs.aps.length, total: seats + printers + pos + gates + cams + iot + tools + plc + fs.aps.length };
   };
   /** 辦公樓層的進駐人數（不含餐廳、停車場人員與晶圓廠） */
   Q.officeStaff = () => U.sum(G.BLD.floors.filter((f) => !G.FT[f.type].dine && !G.FT[f.type].park && !G.FT[f.type].fab), (f) => G.S.floors[f.id].movedIn);

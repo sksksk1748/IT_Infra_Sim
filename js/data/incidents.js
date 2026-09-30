@@ -16,6 +16,12 @@
   /* 晶圓廠：正在線上生產的機台、其中跑 Windows 的（蠕蟲的目標） */
   const fabOn = (i) => { const x = G.S.fab && G.S.fab.tools[i]; return !!x && x.st === 'online' && !x.down; };
   const fabWin = () => (G.S.fab ? G.S.fab.tools.map((x, i) => i).filter((i) => fabOn(i) && /Windows/.test(G.Fab.type(i).os)) : []);
+  /* 廠務（第十一章）：廠務系統啟動了沒、統包商撤場了沒 */
+  const plantOn = () => !!(G.Plant && G.Plant.active());
+  const plantPerm = () => plantOn() && !G.Plant.temp();
+  const fabRunning = () => !!G.R.fab && G.R.fab.online > 0;
+  const GASN = { etch: 'Cl₂（氯氣）', dep: 'NH₃（氨氣）', clean: 'NF₃（三氟化氮）', dope: 'PH₃（磷化氫）' };
+  const pcir = (id) => (id === 'N' ? '中性線匯流排' : `${id} ${G.Panel.def(id).name}`);
   /** 事件應變：無塵室禁止私人手機（安檢門還沒蓋就先動工，完工後自動生效） */
   function fabBan(s) {
     const F = s.fab;
@@ -421,6 +427,386 @@
         if (a.jump) return ['跳板機讓原廠可以安全地遠端維修：MFA、錄影、只開指定的機台、用完就關。'];
         return ['原廠遠端維護要有安全的管道：DMZ 的跳板機 + MFA + 錄影，否則就只能等原廠到現場。'];
       },
+    },
+
+    /* ---------- 廠務（第十一章） ---------- */
+    /* 電壓驟降：雷擊輸電線路，電壓掉到五、六成、幾百毫秒——沒有 DUPS 的機台跳機（Plant.tick 處理跳機與報廢） */
+    'fab-sag': {
+      name: '電壓驟降：雷擊台電輸電線路', cat: 'ops', sev: 'high', kb: 'k-fabpower', minCh: 11, cooldown: 2880, detect: 'auto',
+      weight: () => (plantOn() && fabRunning() ? 0.3 : 0),
+      init(s, inc) {
+        if (!plantOn()) return false;
+        inc.data.until = s.time + 1;
+        inc.data.v = inc.data.v || U.pick([55, 60, 65, 70]);
+        inc.data.ms = inc.data.ms || U.pick([150, 200, 300]);
+        E().log(inc, `午後雷雨，雷擊台電的 161 kV 輸電線路：晶圓廠的電壓瞬間掉到 ${inc.data.v}%、持續 ${inc.data.ms} 毫秒（電燈只閃了一下）。`);
+      },
+      effects(s, inc, mods) { if (s.time <= inc.data.until) mods.fabGrid = 'sag'; },
+      tick(s, inc) {
+        const d = inc.data, R = G.R.plant;
+        if (!R) { E().resolve(inc, 'auto'); return; }
+        if (s.time > d.until && !d.hit) {
+          d.hit = true;
+          d.tripped = R.tripped.slice();
+          E().log(inc, d.tripped.length ? `${d.tripped.map((a) => CAT.fab.areas[a].name).join('、')}的機台跳機：要重新開機、升溫、校正；製程中的晶圓報廢。` : '接在 DUPS 後面的製程區都撐住了：飛輪在幾毫秒內接手，機台沒有感覺。');
+        }
+        /* 復歸計畫定好了（或各區都重新開機完成）就結案：之後各區自己照時間恢復 */
+        if (d.hit && (!R.tripped.length || (inc.acts.sequence && inc.acts.sequence.done))) E().resolve(inc, d.tripped.length ? 'fixed' : 'blocked');
+      },
+      actions: [
+        { id: 'sequence', label: '依序復歸：先確認排氣與洗滌塔、再純水與化學品，最後才開機台', time: 10, verdict: 'good',
+          explain: '排氣沒恢復就開機台，有毒廢氣沒有地方排；大量馬達同時起動，湧入電流可能讓主斷路器再跳一次。依序復歸最快、也最安全。',
+          run(s) { const P = s.plant; for (const a in P.trip) if (P.trip[a] > s.time) P.trip[a] -= Math.round((P.trip[a] - s.time) * 0.2); } },
+        { id: 'all', label: '所有機台同時重新開機，越快越好', time: 5, verdict: 'bad',
+          explain: '上百台馬達、加熱器同時起動，湧入電流讓主斷路器再跳一次；排氣還沒恢復就開機，機台會因為安全連鎖停下來。',
+          run(s) { const P = s.plant; for (const a in P.trip) if (P.trip[a] > s.time) P.trip[a] += 30; } },
+        { id: 'pq', label: '調閱電力品質紀錄，請台電說明事故原因', time: 30, verdict: 'neutral',
+          explain: '電力品質紀錄（電壓驟降的深度與時間）可以用來評估要不要加裝 DUPS、要求機台符合 SEMI F47。但是改變不了這一次的損失。' },
+      ],
+      review(s, inc) {
+        const d = inc.data, D = G.Plant.dups();
+        if (!d.tripped || !d.tripped.length) return ['DUPS 撐住了關鍵製程區：電壓驟降只有幾百毫秒，但沒有保護的機台就會跳機。'];
+        const out = [`${d.tripped.length} 個製程區跳機。電壓驟降只有 ${d.ms} 毫秒，機台重新開機、升溫、校正卻要好幾個小時（擴散爐管要 4 小時）。`];
+        out.push(D.cap ? `DUPS 容量 ${U.num(D.cap)} kVA：把最怕停電的區域（擴散、植入、黃光）接到 DUPS。` : '沒有 DUPS：電壓驟降一來，全廠跳機。');
+        out.push('雙回路受電擋不住電壓驟降——雷擊時整個電網的電壓都會掉。');
+        return out;
+      },
+    },
+    /* 台電停電：沒有第二回路就全廠停電；有第二回路就自動切換（只有一瞬間的驟降） */
+    'fab-outage': {
+      name: '台電停電：晶圓廠的供電線路故障', cat: 'ops', sev: 'crit', kb: 'k-fabpower', minCh: 11, cooldown: 4320, detect: 'auto',
+      weight: () => (plantPerm() && fabRunning() ? 0.18 : 0),
+      init(s, inc) {
+        if (!plantOn()) return false;
+        const dur = inc.data.dur || U.randInt(40, 110);
+        inc.data.until = s.time + dur;
+        inc.data.f2 = G.Plant.count('feeder2') > 0;
+        const pw = G.Plant.pw();
+        inc.data.gen = G.Plant.gen().ok && G.Plant.count('gen') > 0;
+        inc.data.dups = pw.dups.ok;
+        E().log(inc, inc.data.f2 ? '台電 A 路饋線故障（變電所的斷路器跳脫）：自動切換到 B 路，只有一瞬間的電壓驟降。' : `台電饋線故障，晶圓廠全廠停電，預計 ${dur} 分鐘後復電。`);
+        if (!inc.data.f2) E().log(inc, inc.data.dups || inc.data.gen ? `緊急電源：${inc.data.dups ? 'DUPS 接手' : '發電機約 1 分鐘後啟動'}，排氣、洗滌塔、氣體偵測繼續運轉。` : '沒有 DUPS、也沒有發電機：排氣、洗滌塔、氣體偵測全部停擺！');
+      },
+      effects(s, inc, mods) { if (s.time < inc.data.until) mods.fabGrid = 'out'; },
+      tick(s, inc) { if (s.time >= inc.data.until) E().resolve(inc, inc.data.f2 ? 'blocked' : 'auto'); },
+      actions: [
+        { id: 'safe', label: '依緊急應變程序：確認排氣、洗滌塔、GDS 在緊急電源上運轉，關閉非必要的特殊氣體', time: 10, verdict: 'good',
+          explain: '停電時最危險的不是產能，而是有毒氣體：排氣與氣體偵測一定要在緊急電源上。' },
+        { id: 'restart', label: '復電後依序復歸：排氣 → 純水 → 化學品 → 機台', time: 10, verdict: 'good',
+          explain: '依序復歸避免湧入電流再次跳電，也確保機台開機時排氣已經恢復。' },
+        { id: 'gen', label: '派人手動啟動發電機', time: 10, verdict: 'neutral', explain: '發電機有自動切換開關（ATS），正常會自己啟動；沒有發電機的話，派人也沒用。' },
+      ],
+      review(s, inc) {
+        const d = inc.data;
+        if (d.f2) return ['雙回路受電：一條線路故障就自動切換到另一條，只有一瞬間的電壓驟降。沒有接 DUPS 的機台還是會跳，但不會長時間停電。'];
+        const out = ['只有一條台電線路：線路一故障，全廠停電到復電為止。加一條雙回路受電，就只剩切換瞬間的驟降。'];
+        out.push(d.dups || d.gen ? '緊急電源撐住了排氣、洗滌塔與氣體偵測。' : '沒有 DUPS、沒有發電機：停電時排氣與氣體偵測都停了，這是工安大忌。');
+        return out;
+      },
+    },
+    /* 主變壓器故障：N+1 的話沒感覺，沒有備援就要卸載 */
+    'fab-tx': {
+      name: '主變壓器故障', cat: 'ops', sev: 'high', kb: 'k-fabpower', minCh: 11, cooldown: 4320, detect: 'auto',
+      weight: () => (plantPerm() && G.Plant.count('tx') > 0 ? 0.12 : 0),
+      init(s, inc) {
+        if (!plantPerm() || G.Plant.count('tx') < 1) return false;
+        inc.data.until = s.time + 8 * 60;
+        const n1 = (G.Plant.count('tx') - 1) * CAT.plant.eq.tx.kva * CAT.plant.txLoad >= G.Plant.load(false).kva;
+        inc.data.n1 = n1;
+        E().log(inc, `一台主變壓器的絕緣油溫度異常、保護電驛跳脫，要停機檢修約 8 小時。${n1 ? '剩下的變壓器容量夠：N+1 發揮作用。' : '剩下的變壓器撐不住全廠負載！'}`);
+      },
+      effects(s, inc, mods) { if (s.time < inc.data.until) mods.fabTxOut = 1; },
+      tick(s, inc) { if (s.time >= inc.data.until || (inc.data.n1 && s.time - inc.startedAt >= 10)) E().resolve(inc, inc.data.n1 ? 'blocked' : 'fixed'); },
+      actions: [
+        { id: 'rush', label: '請變壓器廠商夜間搶修（縮短 3 小時）', cost: 450000, time: 20, verdict: 'good', explain: '事先簽好維護合約，搶修才叫得到人。',
+          run(s, inc) { inc.data.until = Math.max(s.time + 30, inc.data.until - 180); } },
+        { id: 'shed', label: '先停掉非必要負載（辦公區空調、照明）', time: 10, verdict: 'neutral', explain: '能省一點是一點，但真正的解法是主變壓器要有 N+1。' },
+      ],
+      review(s, inc) { return inc.data.n1 ? ['主變壓器 N+1：少一台也撐得住全廠負載。'] : ['主變壓器沒有 N+1：壞一台就要卸載，製程區跟著減產。'] ; },
+    },
+    /* 配電盤的迴路跳脫（js/sim/panel.js 觸發）：起動電流、過載、短路 */
+    'plant-trip': {
+      name: '配電盤迴路跳脫', cat: 'ops', sev: 'med', kb: 'k-panel', minCh: 11, random: false, detect: 'auto',
+      init(s, inc) {
+        const d = G.Panel.def(inc.data.cid);
+        if (!d) return false;
+        inc.title = `${d.id} ${d.name}：斷路器跳脫`;
+        const W = { short: '一送電就「碰」一聲跳脫，出線端有燒焦的痕跡', start: '馬達一起動就跳脫', overload: '運轉幾分鐘後跳脫' };
+        E().log(inc, `配電盤 DP-UT1 的 ${d.id} ${d.name}：${W[inc.data.why] || '跳脫'}。`);
+      },
+      tick(s, inc) {
+        /* 原因排除（斷路器換對了、電纜換新了）而且重新送電，才算修好 */
+        const id = inc.data.cid, c = G.Panel.c(id), d = G.Panel.def(id);
+        const fixed = inc.data.why === 'short' ? c.ins >= 1 : c.at >= G.Panel.flc(d) * (inc.data.why === 'start' ? 1.5 : 1.05);
+        if (fixed && c.on && !c.trip) E().resolve(inc, 'fixed');
+      },
+      actions: [
+        { id: 'find', label: '先查原因：鉤表量電流、核對斷路器與負載的額定、量絕緣電阻', time: 10, verdict: 'good',
+          explain: '斷路器跳脫一定有原因：選太小（馬達起動電流大約是額定的 6 倍）、過載、還是絕緣破損短路？沒找到原因就送電，只會再跳一次，甚至燒掉設備。',
+          run(s, inc) {
+            const d = G.Panel.def(inc.data.cid), c = G.Panel.c(inc.data.cid), r = G.Panel.range(d);
+            const W = { short: `絕緣電阻只有 ${c.ins} MΩ：電纜破損，要停電換電纜`, start: `額定電流 ${G.Panel.flc(d).toFixed(0)} A，斷路器只有 ${c.at} A：馬達要 ${Math.ceil(r.min)}～${Math.floor(r.max)} A 的斷路器`, overload: `負載 ${G.Panel.flc(d).toFixed(0)} A 超過斷路器 ${c.at} A` };
+            E().log(inc, `原因：${W[inc.data.why] || '不明'}。到「廠務 → 配電盤」停電（LOTO）後修正。`);
+          } },
+        { id: 'reset', label: '直接復歸，重新送電試試看', time: 2, verdict: 'bad',
+          explain: '沒排除原因就硬送電：斷路器會再跳一次；如果是短路，電弧會把電纜和斷路器一起燒壞。',
+          run(s, inc) { const c = G.Panel.c(inc.data.cid); if (!c.lock) { c.trip = false; c.on = true; } } },
+      ],
+      review(s, inc) {
+        const W = { short: '絕緣不良：送電前一定要做絕緣電阻測試（≥ 1 MΩ），拉線時刮傷的電纜會直接短路。', start: '馬達的起動電流是額定的 5～7 倍：斷路器要選 1.5～2.5 倍額定電流，太小會一起動就跳。', overload: '負載超過斷路器額定：斷路器與電纜都要照負載電流選。' };
+        return [W[inc.data.why] || '跳脫的原因要找出來再送電。'];
+      },
+    },
+    /* 配電盤過熱冒煙：電纜太細、端子沒鎖緊、中性線電流太大 */
+    'plant-hot': {
+      name: '配電盤過熱冒煙', cat: 'ops', sev: 'crit', kb: 'k-panel', minCh: 11, random: false, detect: 'auto',
+      init(s, inc) {
+        const id = inc.data.cid;
+        if (id !== 'N' && !G.Panel.def(id)) return false;
+        inc.title = `配電盤 DP-UT1 冒煙：${pcir(id)}`;
+        const W = { cable: '電纜的外皮發燙、冒出焦味（電纜太細，電流超過安培容量）', loose: '端子附近冒煙、有燒焦的痕跡（端子沒鎖緊，接觸電阻發熱）', neutral: '中性線匯流排發燙、變色（單相負載都擠在同一相，中性線電流太大）' };
+        E().log(inc, `巡檢人員聞到焦味：${pcir(id)} ${W[inc.data.cause]}。再不處理就會起火。`);
+      },
+      tick(s, inc) {
+        const d = inc.data, id = d.cid;
+        const cool = id === 'N' ? G.Panel.phases(false).N < 30 : !G.Panel.running(id);
+        if (cool) { E().resolve(inc, 'contained'); return; }
+        if (s.time - inc.startedAt >= 60 && !d.fire) {
+          d.fire = true;
+          E().log(inc, '🔥 起火了！電纜燒毀，整個電源區的主斷路器跳脫。');
+          const pn = G.Panel.st();
+          if (id === 'N') { pn.inc.N.on = false; }
+          else { const c = G.Panel.c(id); c.ins = 0.1; c.trip = true; c.heat = 0; }
+          s.money -= 800000;
+          G.Act.log('配電盤火災：損失 NT$80 萬', 'bad');
+          E().resolve(inc, 'fail');
+        }
+      },
+      actions: [
+        { id: 'isolate', label: '立刻把冒煙的迴路停電（OFF）', time: 1, verdict: 'good',
+          explain: '電氣過熱第一步就是斷電：沒有電流就不會再發熱。之後再依 LOTO 程序處理根本原因（換電纜、鎖緊端子、重新分配相位）。',
+          run(s, inc) {
+            const id = inc.data.cid;
+            if (id === 'N') { for (const x of G.Panel.DEF) if (x.ph === 1) G.Panel.c(x.id).on = false; E().log(inc, '先把單相迴路都關掉，中性線電流降下來了。'); }
+            else G.Panel.c(id).on = false;
+          } },
+        { id: 'co2', label: '拿 CO₂ 滅火器在旁邊待命', time: 2, verdict: 'good', explain: '電氣火災用 CO₂ 或乾粉滅火器：不導電、不留殘渣。' },
+        { id: 'water', label: '拉消防水管過來灑水降溫', time: 5, verdict: 'bad',
+          explain: '帶電的配電盤灑水：水會導電，救火的人可能感電，短路還會讓事故擴大。電氣設備絕對不能用水滅火。',
+          run(s) { s.rating = Math.max(0, s.rating - 3); } },
+      ],
+      review(s, inc) {
+        const W = { cable: '電纜太細：安培容量要大於斷路器的額定（斷路器才保護得了電線）。', loose: '端子沒鎖緊：施工後要依規定扭力鎖緊，並定期用紅外線熱像檢查。', neutral: '單相負載要平均分到 R / S / T 三相：不平衡時中性線電流變大、發熱。' };
+        return [W[inc.data.cause] || '', '紅外線熱像檢查可以在冒煙之前就找到過熱點。'].filter(Boolean);
+      },
+    },
+    /* 帶電作業：沒有停電、上鎖掛牌、驗電就施工（js/sim/panel.js 觸發） */
+    'plant-arc': {
+      name: '帶電作業：電弧閃絡', cat: 'ops', sev: 'crit', kb: 'k-loto', minCh: 11, random: false, detect: 'auto',
+      init(s, inc) {
+        const id = inc.data.cid;
+        inc.title = `${G.Panel.def(id) ? pcir(id) : '配電盤'}：帶電施工發生電弧閃絡`;
+        E().log(inc, '技術員沒有停電就動手，工具碰到帶電的端子：瞬間的電弧溫度上萬度，強光與爆風灼傷了手臂和臉。');
+        const c = G.Panel.def(id) ? G.Panel.c(id) : null;
+        if (c) { c.trip = true; }
+        s.rating = Math.max(0, s.rating - 6);
+        s.money -= 1200000;
+        G.Act.log('職災：帶電作業電弧灼傷（醫療、補償、停工調查 NT$120 萬）', 'bad');
+      },
+      tick(s, inc) {
+        if (inc.acts.aid && inc.acts.aid.done && inc.acts.report && inc.acts.report.done) E().resolve(inc, 'contained');
+        else if (s.time - inc.startedAt > 180) E().resolve(inc, 'fail');
+      },
+      actions: [
+        { id: 'aid', label: '急救：確認已斷電，用大量冷水沖洗灼傷處，送醫', time: 10, verdict: 'good', explain: '電弧灼傷要立刻冷卻、送醫；救人之前一定先確認電源已經切斷，避免二次傷害。' },
+        { id: 'report', label: '職災通報、全面停工檢討，重新訓練停電作業程序（LOTO）', time: 60, verdict: 'good', explain: '依法要通報重大職災；這種事故幾乎都是「沒有停電、沒有上鎖掛牌、沒有驗電」造成的。' },
+        { id: 'hide', label: '私下處理，不要通報，趕快繼續施工', time: 5, verdict: 'bad', explain: '隱匿職災違法，而且同樣的錯誤一定會再發生。' },
+      ],
+      review() { return ['停電作業程序（LOTO）：斷電 → 上鎖掛牌 → 驗電 → 施工 → 拆除掛牌 → 送電，一步都不能省。', '換斷路器、改接匯流排要動到電源側：整個電源區的進線都要停電。'] ; },
+    },
+    /* 濕區插座沒有漏電斷路器：有人感電 */
+    'plant-shock': {
+      name: '濕區插座漏電：有人感電', cat: 'ops', sev: 'high', kb: 'k-panel', minCh: 11, random: false, detect: 'auto',
+      init(s, inc) {
+        const id = inc.data.cid, d = G.Panel.def(id);
+        if (!d) return false;
+        inc.title = `${d.name}漏電：清潔人員感電`;
+        E().log(inc, `清潔人員在${d.name.replace('（濕區）', '')}用濕手插上高壓清洗機，插座漏電：沒有漏電斷路器，電流一直流過人體，旁邊的人趕緊拉下總開關。`);
+        s.rating = Math.max(0, s.rating - 4);
+        s.money -= 500000;
+        G.Act.log('職災：濕區插座感電（NT$50 萬）', 'bad');
+      },
+      tick(s, inc) { if (inc.acts.aid && inc.acts.aid.done) E().resolve(inc, 'contained'); },
+      actions: [
+        { id: 'aid', label: '確認斷電後再救人：檢查呼吸心跳、CPR 與 AED、送醫', time: 10, verdict: 'good', explain: '救感電的人之前一定先斷電，否則救人的人也會感電。' },
+        { id: 'grab', label: '衝過去把感電的人拉開', time: 1, verdict: 'bad', explain: '沒有斷電就碰感電的人：電流會經過救人的人，變成兩個人受傷。' },
+        { id: 'elcb', label: '安排停電，把濕區迴路換成漏電斷路器（30 mA）', cost: 9000, time: 40, verdict: 'good',
+          explain: '漏電斷路器偵測到 30 mA 的漏電流，在 0.1 秒內跳脫，人就不會有生命危險：濕區、戶外、插座迴路一定要裝。',
+          run(s, inc) { const c = G.Panel.c(inc.data.cid); c.elcb = true; G.Panel.st().stats.fixes++; G.Panel.log(`${inc.data.cid}：換成漏電斷路器（事故後停電更換）`); } },
+      ],
+      review() { return ['濕區（純水室、化學品室、沖淋洗眼器）的插座與電熱迴路，一定要用漏電斷路器（30 mA）。']; },
+    },
+    /* 特殊氣體洩漏：GDS + ESO 幾秒內自動遮斷；只有 GDS 要人工關閥；什麼都沒有就只能靠人聞 */
+    'plant-gas': {
+      name: '特殊氣體洩漏', cat: 'ops', sev: 'crit', kb: 'k-gas', minCh: 11, cooldown: 4320,
+      weight: () => (plantPerm() && G.Plant.SG.some((g) => G.Plant.count('gc:' + g) > 0) ? 0.15 : 0),
+      init(s, inc) {
+        if (!plantOn()) return false;
+        const gs = G.Plant.SG.filter((g) => G.Plant.count('gc:' + g) > 0);
+        const g = inc.data.g && G.Plant.count('gc:' + inc.data.g) ? inc.data.g : gs.length ? U.pick(gs) : inc.data.g || 'dep';
+        inc.data.g = g;
+        const gas = GASN[g];
+        inc.title = `${gas} 洩漏：${CAT.plant.sg[g].name}的氣瓶櫃`;
+        const gds = G.Plant.count('gds') > 0 && G.Panel.factor('GDS') > 0, eso = G.Plant.count('eso') > 0;
+        E().log(inc, `${CAT.plant.sg[g].name}氣瓶櫃的接頭墊片老化，${gas} 開始洩漏。`);
+        if (gds && eso) {
+          inc.data.blocked = true; inc.sev = 'low';
+          E().log(inc, '氣瓶櫃裡的偵測器 2 秒內偵測到洩漏：ESO 自動關閉緊急遮斷閥，啟動警報與疏散廣播，排氣把殘氣抽到洗滌塔處理。沒有人受傷。');
+          E().detect(inc, 'GDS 自動偵測');
+          return;
+        }
+        if (gds) { E().detect(inc, 'GDS 告警'); E().log(inc, 'GDS 告警！但沒有緊急遮斷連鎖（ESO）：要有人穿上呼吸器去現場關閥。'); }
+        else E().log(inc, '沒有氣體偵測器（或 GDS 主機沒電）：沒有人知道氣體正在外洩。');
+      },
+      detectChance: () => 0.04,
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.blocked) { if (s.time - inc.startedAt >= 5) E().resolve(inc, 'blocked'); return; }
+        if (d.closed) { E().resolve(inc, 'contained'); return; }
+        if (s.time - inc.startedAt >= 90) {
+          E().log(inc, '洩漏持續太久：現場人員吸入有毒氣體送醫，消防局與環保局到場，特殊氣體全面停止供應。');
+          s.money -= 2500000;
+          G.Act.log('特殊氣體洩漏：人員送醫、停工調查（NT$250 萬）', 'bad');
+          E().resolve(inc, 'fail');
+        }
+      },
+      actions: [
+        { id: 'evac', label: '啟動疏散廣播，人員撤離到上風處集合點名', time: 3, verdict: 'good', explain: '先保護人：撤離、點名，確認沒有人還在現場。' },
+        { id: 'close', label: '兩人一組穿自給式空氣呼吸器（SCBA），進去關閉氣瓶櫃的閥門', time: 15, verdict: 'good',
+          explain: '進入洩漏區一定要穿呼吸器、兩人一組互相照應；有 ESO 的話，這一步在洩漏的 2 秒內就自動完成了。', run(s, inc) { inc.data.closed = true; } },
+        { id: 'sniff', label: '派人先去現場聞聞看是不是真的漏氣', time: 10, verdict: 'bad',
+          explain: '很多特殊氣體極低濃度就致命（砷化氫、磷化氫），有些無色無味，SiH₄ 碰到空氣會自燃：絕對不能用鼻子確認。',
+          run(s) { s.rating = Math.max(0, s.rating - 3); } },
+      ],
+      review(s, inc) {
+        if (inc.data.blocked) return ['GDS + 緊急遮斷連鎖（ESO）：從偵測到切斷只要幾秒，人不用冒險進去關閥。'];
+        const out = [];
+        if (!G.Plant.count('gds')) out.push('沒有氣體偵測系統：洩漏只能等有人不舒服才發現。');
+        if (!G.Plant.count('eso')) out.push('沒有緊急遮斷連鎖（ESO）：偵測到了也要人穿呼吸器進去關閥。');
+        if (G.Plant.count('gds') && G.Panel.st().cir.GDS.bus !== 'E') out.push('GDS 主機接在一般電源：停電時氣體偵測也跟著停了。');
+        return out.length ? out : ['特殊氣體洩漏：先疏散，再由穿呼吸器的人員關閥。'];
+      },
+    },
+    /* 化學品洩漏：氫氟酸從閥箱的接頭滲漏 */
+    'plant-chem': {
+      name: '化學品洩漏：氫氟酸', cat: 'ops', sev: 'crit', kb: 'k-chem', minCh: 11, cooldown: 4320,
+      weight: () => (plantPerm() && G.Plant.count('acid') > 0 ? 0.15 : 0),
+      init(s, inc) {
+        if (!plantOn() || !G.Plant.count('acid')) return false;
+        inc.title = '氫氟酸（HF）從化學品閥箱滲漏';
+        E().log(inc, 'CDS 化學品閥箱的接頭鬆動，49% 氫氟酸開始滲漏到雙套管的外管。');
+        if (G.Plant.count('leak')) { E().detect(inc, '洩漏感測器'); E().log(inc, '雙套管裡的洩漏感測器立刻告警，FMCS 自動關閉這一路的供應閥。'); inc.data.auto = true; }
+        else E().log(inc, '沒有洩漏偵測：化學品慢慢從外管滲出來，流到閥箱下方……');
+      },
+      detectChance: () => 0.03,
+      tick(s, inc) {
+        const d = inc.data;
+        if ((inc.acts.ppe && inc.acts.ppe.done) || (d.auto && inc.acts.isolate && inc.acts.isolate.done)) { E().resolve(inc, 'contained'); return; }
+        if (s.time - inc.startedAt >= (d.auto ? 240 : 120)) {
+          E().log(inc, '一位技術員沒穿防護裝備就去擦拭，手指沾到氫氟酸：幾個小時後劇痛、送醫。');
+          s.money -= 2000000;
+          G.Act.log('化學品職災：氫氟酸灼傷（NT$200 萬）', 'bad');
+          E().resolve(inc, 'fail');
+        }
+      },
+      actions: [
+        { id: 'isolate', label: '關閉 CDS 這一路的供應閥，隔離洩漏的閥箱', time: 10, verdict: 'good', explain: '先切斷來源：洩漏不會再擴大。' },
+        { id: 'ppe', label: '穿耐酸防護衣、面罩與手套，用吸液棉與中和劑處理', time: 40, verdict: 'good', explain: '處理氫氟酸一定要全套防護；洩漏區要先圍起來，不相關的人不要靠近。' },
+        { id: 'gluconate', label: '準備葡萄糖酸鈣凝膠：有人接觸就立刻沖水、塗抹、送醫', time: 5, verdict: 'good', explain: '氫氟酸會穿透皮膚、和體內的鈣結合（低血鈣、心律不整）：沖水之後塗葡萄糖酸鈣凝膠是標準急救。' },
+        { id: 'wipe', label: '拿抹布擦乾就好，不用大驚小怪', time: 5, verdict: 'bad', explain: '氫氟酸一開始不痛，幾小時後才劇痛，而且會傷到骨頭與心臟：一定要穿防護裝備處理。', run(s) { s.rating = Math.max(0, s.rating - 3); } },
+      ],
+      review(s, inc) { return G.Plant.count('leak') ? ['雙套管 + 洩漏感測器：一滲漏就告警、自動關閥。'] : ['沒有洩漏偵測：化學品滲漏要等有人看到才發現。']; },
+    },
+    /* 超純水水質變差：拋光樹脂快飽和，電阻率慢慢下降 */
+    'plant-upw': {
+      name: '超純水水質異常', cat: 'ops', sev: 'high', kb: 'k-upw', minCh: 11, cooldown: 4320,
+      weight: () => (plantPerm() && G.Plant.count('polish') > 0 ? 0.22 : 0),
+      init(s, inc) {
+        if (!plantPerm() || !G.Plant.count('polish')) return false;
+        inc.data.level = 0.05;
+        E().log(inc, '拋光混床的樹脂快飽和了，有機物與離子開始穿透：超純水的電阻率慢慢往下掉。');
+        if (G.Plant.count('upwmon')) E().detect(inc, '線上水質監測：電阻率 17.9 MΩ·cm、TOC 上升');
+      },
+      detectChance: (s, inc) => (inc.data.level > 0.6 ? 0.03 : 0.002),
+      effects(s, inc, mods) { if (!inc.data.fixed) mods.upwBad = Math.max(mods.upwBad || 0, inc.data.level); },
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.fixed) { E().resolve(inc, 'fixed'); return; }
+        d.level = Math.min(1, d.level + 0.004);
+        if (!inc.detected && d.level > 0.6) E().detect(inc, '晶圓缺陷檢測：金屬與顆粒污染異常');
+        if (d.level >= 1 && s.time - inc.startedAt > 720) { E().log(inc, '好幾批晶圓因為水質問題報廢。'); if (s.fab) s.fab.scrap += 80; E().resolve(inc, 'fail'); }
+      },
+      actions: [
+        { id: 'switch', label: '切換到備援的拋光機組，隔離這一組', time: 15, verdict: 'good',
+          avail: () => G.Plant.count('polish') >= 2, unavail: '只有一組拋光機組：沒有備援可以切換',
+          explain: '拋光機組做 N+1：一組出問題，馬上切到另一組，水質不受影響。', run(s, inc) { inc.data.fixed = true; } },
+        { id: 'resin', label: '更換拋光混床樹脂', cost: 350000, time: 180, verdict: 'good', explain: '樹脂是耗材，要定期更換；有線上水質監測，就能在水質變差之前安排更換。', run(s, inc) { inc.data.fixed = true; } },
+        { id: 'ignore', label: '電阻率還有 17 以上，先繼續生產', time: 0, verdict: 'bad', explain: '先進製程對金屬離子與有機物極度敏感：水質一變差，晶圓缺陷就增加、良率下降。' },
+      ],
+      review(s, inc) { return G.Plant.count('upwmon') ? ['線上水質監測讓問題在影響晶圓之前就被發現。'] : ['沒有線上水質監測：要等晶圓缺陷增加才發現水質變差。']; },
+    },
+    /* 限水：枯水期自來水減量供應；有回收水系統就撐得住 */
+    'plant-drought': {
+      name: '枯水期限水：工業用水減量供應', cat: 'ops', sev: 'high', kb: 'k-upw', minCh: 11, cooldown: 10080, detect: 'auto',
+      weight: () => (plantPerm() && G.Plant.count('ro') > 0 ? 0.1 : 0),
+      init(s, inc) {
+        if (!plantPerm()) return false;
+        inc.data.until = s.time + 2 * 1440;
+        E().log(inc, '水庫蓄水率偏低，自來水公司對工業用戶減量供水 30%，為期兩天。');
+        if (G.Plant.count('reclaim')) { inc.data.blocked = true; inc.sev = 'low'; E().log(inc, '回收水系統把自來水用量壓低六成：減量供水之後還是夠用。'); }
+      },
+      effects(s, inc, mods) { if (s.time < inc.data.until && !inc.data.truck && !G.Plant.count('reclaim')) mods.drought = true; },
+      tick(s, inc) {
+        if (inc.data.blocked && s.time - inc.startedAt >= 30) { E().resolve(inc, 'blocked'); return; }
+        /* 叫了水車、或回收水系統蓋好了：撐得過去 */
+        if (inc.data.truck || G.Plant.count('reclaim')) { E().resolve(inc, 'contained'); return; }
+        if (s.time >= inc.data.until) E().resolve(inc, 'auto');
+      },
+      actions: [
+        { id: 'reclaim', label: '緊急建置回收水系統', cost: () => CAT.plant.eq.reclaim.price, time: () => CAT.plant.eq.reclaim.buildMin, verdict: 'good',
+          avail: () => !G.Plant.total('reclaim'), unavail: '回收水系統已經有了（或正在施工）',
+          explain: '把清洗水分類回收再利用：平常就能省水，限水時更是保命。', run(s) { (s.plant.eq.reclaim = s.plant.eq.reclaim || []).push(s.time); } },
+        { id: 'truck', label: '叫水車運水（兩天 NT$160 萬）', cost: 1600000, time: 120, verdict: 'neutral', explain: '2021 年大旱時，晶圓廠真的是靠水車撐過去的：有效，但很貴。', run(s, inc) { inc.data.truck = true; } },
+        { id: 'cut', label: '先停掉非必要的用水（景觀、辦公區、洗車）', time: 30, verdict: 'good', explain: '省下來的每一噸水都能留給製程。' },
+      ],
+      review() { return G.Plant.count('reclaim') ? ['回收水系統讓晶圓廠不怕限水。'] : ['沒有回收水：限水時 RO 的原水不夠，純水產量跟著減少。']; },
+    },
+    /* 特殊氣體鋼瓶更換：依 SOP 吹驅、洩漏測試，還是趕時間直接換？ */
+    'plant-cyl': {
+      name: '特殊氣體鋼瓶要更換', cat: 'ops', sev: 'med', kb: 'k-gas', minCh: 11, cooldown: 2880, detect: 'auto',
+      weight: () => (plantPerm() && G.Plant.SG.some((g) => G.Plant.count('gc:' + g) > 0) ? 0.3 : 0),
+      init(s, inc) {
+        const gs = G.Plant.SG.filter((g) => G.Plant.count('gc:' + g) > 0);
+        if (!plantOn() || !gs.length) return false;
+        const g = U.pick(gs);
+        inc.data.g = g;
+        inc.title = `${GASN[g]} 鋼瓶快用完了`;
+        E().log(inc, `${CAT.plant.sg[g].name}氣瓶櫃的 ${GASN[g]} 鋼瓶壓力剩 10%：已經自動切換到備用瓶，要在備用瓶用完之前換上新鋼瓶。`);
+      },
+      effects(s, inc, mods) { if (inc.data.empty && !inc.data.done) mods.sgOut = inc.data.g; },
+      tick(s, inc) {
+        const d = inc.data;
+        if (d.done) { E().resolve(inc, d.quick ? 'contained' : 'fixed'); return; }
+        if (!d.empty && s.time - inc.startedAt >= 16 * 60) { d.empty = true; E().log(inc, `備用瓶也用完了：${CAT.plant.sg[d.g].name}停止供應，用到的機台全部停下來。`); }
+      },
+      actions: [
+        { id: 'sop', label: '依 SOP：兩人一組、穿防護具，換瓶前用氮氣吹驅管路，換好做洩漏測試', time: 60, verdict: 'good',
+          explain: '吹驅（purge）把管路裡殘留的特殊氣體換成氮氣，拆接頭時才不會外洩；換好之後的洩漏測試確認接頭密合。', run(s, inc) { inc.data.done = true; } },
+        { id: 'quick', label: '趕時間：不吹驅、不測漏，直接換', time: 15, verdict: 'bad',
+          explain: '拆接頭時管路裡的殘氣會直接外洩；接頭沒測漏，之後還會慢慢漏。大部分的特殊氣體事故都發生在換瓶。',
+          run(s, inc) { inc.data.done = true; inc.data.quick = true; s.sched.push({ at: s.time + U.randInt(20, 180), type: 'plant-gas', data: { g: inc.data.g }, chapter: s.chapter }); } },
+      ],
+      review(s, inc) { return inc.data.quick ? ['換瓶沒有吹驅、沒有測漏：這就是特殊氣體洩漏最常見的原因。'] : ['依 SOP 換瓶：吹驅、兩人一組、洩漏測試。']; },
     },
 
     'hw-fail': {

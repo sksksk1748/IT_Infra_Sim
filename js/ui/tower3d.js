@@ -391,6 +391,79 @@
     fabTag.pos.set((FB.x0 + FB.x1) / 2 + 6, FB.h + 5, (FB.z0 + FB.z1) / 2);
     const campusTag = api.tag(`校園光纖 ${G.BLD.campus} m（地下管溝）`, 'info', 'center', 1);
     campusTag.pos.set(TRX, 1.4, (FB.z1 - D / 2) / 2);
+
+    /* ---------- 中央廠務區（第十一章）：晶圓廠北側的變電站、DUPS 與發電機、液氮儲槽、冷卻水塔、化學品槽區 ----------
+     * 蓋了幾組就出現幾組（主變壓器、DUPS、發電機、大宗氣體站、化學品系統） */
+    const cubG = new T.Group();
+    root.add(cubG);
+    const CZ = FB.z0 - 4;
+    const cub = { tx: [], dups: [], gen: [], n2: [], chem: [], towers: [], fans: [] };
+    {
+      const pick = { kind: 'cub' };
+      const pad = K.box(FB.x1 - FB.x0, 0.2, 7.6, K.std('#9ea5aa', { roughness: 0.95, metalness: 0 }));
+      pad.position.set((FB.x0 + FB.x1) / 2, 0.1, CZ);
+      pad.userData.pick = pick;
+      cubG.add(pad);
+      /* 主變壓器：本體 + 散熱片 + 套管 */
+      const txM = K.std('#7d8a93', { metalness: 0.5, roughness: 0.5 }), finM = K.std('#5d6870', { metalness: 0.5, roughness: 0.5 }), bushM = K.std('#c79a5a', { roughness: 0.6 });
+      for (let i = 0; i < 4; i++) {
+        const g = new T.Group();
+        g.position.set(FB.x0 + 1.8 + i * 2.9, 0, CZ + 1.7);
+        const b = K.box(2, 2.3, 1.5, txM); b.position.y = 1.35; b.userData.pick = pick; g.add(b);
+        for (let k = -3; k <= 3; k++) { const f = K.box(0.07, 1.7, 2.1, finM); f.position.set(k * 0.28, 1.25, 0); f.raycast = () => {}; g.add(f); }
+        for (const x of [-0.5, 0, 0.5]) { const u = K.cylY(0.09, 0.6, bushM, 8); u.position.set(x, 2.8, 0); u.raycast = () => {}; g.add(u); }
+        cubG.add(g); cub.tx.push(g);
+      }
+      /* DUPS（紫色條紋的貨櫃）與緊急發電機（黃色） */
+      const dupsM = K.std('#3b4450', { metalness: 0.4, roughness: 0.5 }), dupsS = K.glow('#a78bfa', 0.5), genM = K.std('#d4ad3f', { metalness: 0.3, roughness: 0.5 });
+      for (let i = 0; i < 4; i++) {
+        const g = new T.Group();
+        g.position.set(FB.x0 + 1.9 + i * 3.1, 0, CZ - 2);
+        const b = K.box(2.8, 2.4, 2.1, dupsM); b.position.y = 1.4; b.userData.pick = pick; g.add(b);
+        const st = K.box(2.82, 0.18, 2.12, dupsS); st.position.y = 2.1; st.raycast = () => {}; g.add(st);
+        cubG.add(g); cub.dups.push(g);
+      }
+      for (let i = 0; i < 3; i++) {
+        const g = new T.Group();
+        g.position.set(-5.2 + i * 3.4, 0, CZ - 2);
+        const b = K.box(3, 2.3, 2, genM); b.position.y = 1.35; b.userData.pick = pick; g.add(b);
+        const p = K.cylY(0.14, 1.1, K.std('#5a5f63', { metalness: 0.8 }), 10); p.position.set(0.9, 3, 0.3); p.raycast = () => {}; g.add(p);
+        cubG.add(g); cub.gen.push(g);
+      }
+      /* 大宗氣體站：液氮儲槽（直立白色） */
+      const tankM = K.std('#eef1f3', { metalness: 0.35, roughness: 0.35 });
+      for (let i = 0; i < 4; i++) {
+        const g = new T.Group();
+        g.position.set(-5.5 + i * 2.6, 0, CZ + 1.6);
+        const c = K.cylY(0.95, 6.5, tankM, 20); c.position.y = 3.65; c.userData.pick = pick; g.add(c);
+        const top = new T.Mesh(new T.SphereGeometry(0.95, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), tankM); top.position.y = 6.9; top.raycast = () => {}; g.add(top);
+        cubG.add(g); cub.n2.push(g);
+      }
+      /* 冷卻水塔（無塵室空調的冰水主機散熱）：頂上的風扇在轉 */
+      const towM = K.std('#c3cbd0', { metalness: 0.2, roughness: 0.7 }), fanM = K.std('#2c3136', { metalness: 0.5 });
+      for (let i = 0; i < 2; i++) {
+        const g = new T.Group();
+        g.position.set(6.5 + i * 4, 0, CZ);
+        const b = K.box(3.4, 3.2, 3.4, towM); b.position.y = 1.8; b.userData.pick = pick; g.add(b);
+        const sh = K.cylY(1.3, 0.8, fanM, 20); sh.position.y = 3.8; sh.raycast = () => {}; g.add(sh);
+        const fan = K.box(2.2, 0.06, 0.3, K.std('#8b949a')); fan.position.y = 4.25; fan.raycast = () => {}; g.add(fan);
+        cubG.add(g); cub.towers.push(g); cub.fans.push(fan);
+      }
+      /* 化學品槽區：防溢堤裡的儲槽 */
+      const dike = K.box(7, 0.5, 5.4, K.std('#8b99a3', { roughness: 0.9, metalness: 0 }));
+      dike.position.set(17.6, 0.35, CZ);
+      dike.userData.pick = pick;
+      cubG.add(dike);
+      const CC = ['#f1ecd9', '#f1ecd9', '#e3eef7', '#e3eef7', '#d9d2c3', '#d9d2c3'];
+      for (let i = 0; i < 6; i++) {
+        const c = K.cylY(0.6, 2.2, K.std(CC[i], { roughness: 0.55 }), 16);
+        c.position.set(15.4 + (i % 3) * 2.2, 1.7, CZ - 1.2 + Math.floor(i / 3) * 2.4);
+        c.userData.pick = pick;
+        cubG.add(c); cub.chem.push(c);
+      }
+    }
+    const cubTag = api.tag('中央廠務區', 'info', 'center', 1);
+    cubTag.pos.set(FB.x0 + 12, 9, CZ);
     const FX = fx.emitter(700, 1.1);
     root.add(FX.obj);
     const fxState = {};
@@ -759,6 +832,20 @@
         fabLamp.material.color.copy(C(hex)); fabLamp.material.emissive.copy(C(hex));
         fabTag.set(R && R.online ? `Fab 1 · ${U.num(Math.round(R.rate))} 片 / 日 · 機台 ${R.online} / ${R.total}` : 'Fab 1 晶圓廠（機台進廠中）', R && R.itStop ? 'bad' : 'info');
       } else if (prog > 0) fabTag.set(`Fab 1 晶圓廠 · 興建中 ${U.pct(prog)}`, 'info');
+      /* 中央廠務區（第十一章起）：蓋了幾組就出現幾組 */
+      const cubOn = fabOpen && !!(s.plant && s.plant.on);
+      cubG.visible = cubOn; cubTag.show = cubOn;
+      if (cubOn) {
+        const cnt = (k) => G.Plant.count(k);
+        cub.tx.forEach((g, i) => { g.visible = i < cnt('tx'); });
+        cub.dups.forEach((g, i) => { g.visible = i < cnt('dups'); });
+        cub.gen.forEach((g, i) => { g.visible = i < cnt('gen'); });
+        cub.n2.forEach((g, i) => { g.visible = i < cnt('bulk'); });
+        const chemN = ['acid', 'solv', 'slurry'].filter((k) => cnt(k)).length * 2;
+        cub.chem.forEach((c, i) => { c.visible = i < chemN; });
+        const PR = G.R.plant;
+        cubTag.set(PR ? `中央廠務區 · ${(PR.power.load.kw / 1000).toFixed(1)} MW${PR.temp ? ' · 臨時供應中' : ''}` : '中央廠務區', PR && !PR.temp && PR.alarms.some((a) => a.sev === 'crit') ? 'bad' : 'info');
+      }
       /* ISP */
       for (const x of isps.values()) {
         const c = x.c, st = sim.isp[c.id];
@@ -867,6 +954,12 @@
         const R = G.R.fab, c = G.Fab.counts();
         return ['Fab 1 晶圓廠（12 吋試產線）', R && R.online ? `產能 ${U.num(Math.round(R.rate))} 片 / 日 · 良率 ${U.pct(R.yield, 1)}` : '機台陸續進廠中', `機台 ${c.online} / ${s.fab.tools.length} 連網 · 等掃毒 ${c.scan} · 等交換器埠 ${c.ready}`, `經 ${G.BLD.campus} m 校園光纖連回總部 B1`];
       }
+      if (p.kind === 'cub') {
+        const R = G.R.plant;
+        if (!R) return ['中央廠務區（CUB）', '第十一章啟用'];
+        return ['中央廠務區（CUB）', `主變壓器 ${G.Plant.count('tx')} 台 · 晶圓廠用電 ${(R.power.load.kw / 1000).toFixed(1)} MW`, `DUPS ${G.Plant.count('dups')} 組 · 發電機 ${G.Plant.count('gen')} 台 · 液氮 / CDA ${G.Plant.count('bulk')} 組`,
+          R.temp ? `統包商的臨時供應到 ${U.stamp(R.tempUntil)}` : `超純水 ${R.water.deliver.toFixed(0)} / ${R.water.demand.toFixed(0)} m³/h · 化學品系統 ${['acid', 'solv', 'slurry'].filter((k) => G.Plant.count(k)).length} / 3`];
+      }
       if (p.kind === 'fablot') {
         const pr = G.Fab.buildProgress();
         /* 完工了：工地不見了，選取的卡片跟著關掉 */
@@ -900,6 +993,7 @@
         if (opts.onFloor3d) acts.push(btn('走進無塵室（3D）', () => opts.onFloor3d('FAB')));
         acts.push(btn('拉近', () => api.focus(fabBody, 0.5)));
       } else if (cur.kind === 'fablot') acts.push(btn('拉近', () => api.focus(fabBody, 0.5), true));
+      else if (cur.kind === 'cub') acts.push(btn('廠務（電力、純水、氣體、化學品）', () => opts.onPlant && opts.onPlant(), true), btn('拉近', () => api.focus(cub.towers[0], 0.35)));
       const title = U.h('b', {}, L[0]), lines = U.h('div', { class: 'ls' });
       U.mount(panel, U.h('div', { class: 'hd' }, title, U.h('button', { class: 'btn ghost xs', 'aria-label': '取消選取', onclick: () => { sel = null; renderSel(); } }, '✕')), lines, U.h('div', { class: 'row wrap' }, ...acts));
       selEls = { title, lines };
@@ -1042,6 +1136,8 @@
         for (const m of marks) m.s.material.emissiveIntensity = Math.sin(t * 6) > 0 ? 2.4 : 0.3;
         for (const sp of strips) if (sp.blink) sp.st.visible = Math.sin(t * Math.PI * sp.blink) > -0.2; else if (!sp.st.visible) sp.st.visible = true;
         beacon.material.emissiveIntensity = Math.sin(t * 3) > 0.6 ? 2.4 : 0.3;
+        /* 冷卻水塔的風扇：有電才轉 */
+        if (cubG.visible && G.R.plant && G.R.plant.power.normal) for (const f of cub.fans) f.rotation.y = t * 2.4;
         /* 工地的塔式起重機：吊臂在工地上方來回轉、吊車前後移動，吊鉤吊著鋼梁到鋼構的最上面 */
         if (siteG.visible && site.jib) {
           site.jib.rotation.y = -2 + 0.6 * Math.sin(t * 0.045);
@@ -1066,6 +1162,7 @@
         if (p.kind === 'floor') { const fl = floors.find((x) => x.f.id === p.id); return fl ? fl.glass : null; }
         if (p.kind === 'b1' || p.kind === 'dev' || p.kind === 'rack') return b1Floor;
         if (p.kind === 'fabb' || p.kind === 'fablot') return fabBody;
+        if (p.kind === 'cub') return cub.towers[0];
         return null;
       },
       clickable: (p) => p.kind !== 'inet',
@@ -1084,7 +1181,7 @@
         for (const fl of floors) fl.tag.remove();
         for (const a of atks) if (a.tag) a.tag.remove();
         for (const m of marks) if (m.tag) m.tag.remove();
-        for (const t of [shaftTag, inetTag, ispTag, b1Tag, genTag, alertTag, fabTag, campusTag]) t.remove();
+        for (const t of [shaftTag, inetTag, ispTag, b1Tag, genTag, alertTag, fabTag, campusTag, cubTag]) t.remove();
         for (const m of Object.values(stripM)) m.dispose();
         for (const m of matCache.values()) m.dispose();
       },

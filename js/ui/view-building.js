@@ -52,6 +52,7 @@
       onTopo: () => UI.go('topo'),
       onInc: () => UI.go('inc'),
       onFab: () => UI.go('fab'),
+      onPlant: () => UI.go('plant'),
     });
     return V.m3d;
   }

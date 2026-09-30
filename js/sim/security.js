@@ -29,8 +29,9 @@
     SIP:  { name: 'SIP 語音', port: 'UDP 5060 / TLS 5061 + RTP' },
     MQTT: { name: 'MQTT 物聯網', port: 'TCP 1883 / TLS 8883' },
     SECS: { name: 'SECS/GEM 機台通訊與資料', port: 'TCP 5000（HSMS）' },
+    SCADA: { name: 'Modbus / BACnet 廠務監控', port: 'TCP 502 / UDP 47808' },
   };
-  const CONCRETE = ['WEB', 'DNS', 'SMB', 'LDAP', 'SQL', 'RDP', 'SSH', 'SMTP', 'NTP', 'ICMP', 'SIP', 'MQTT', 'SECS'];
+  const CONCRETE = ['WEB', 'DNS', 'SMB', 'LDAP', 'SQL', 'RDP', 'SSH', 'SMTP', 'NTP', 'ICMP', 'SIP', 'MQTT', 'SECS', 'SCADA'];
 
   const Sec = {};
   G.Sec = Sec;
@@ -232,6 +233,18 @@
       if (s.fab.g4 !== undefined && s.fab.g4 !== null) add('crit', `${G.Fab.code(s.fab.g4)} 上還接著 4G 分享器`, '原廠遠端維修時接上的 4G 分享器沒有拆：這台機台直接連在網際網路上，完全繞過了 IT / OT 防火牆。', '到「晶圓廠」拆除 4G 分享器；原廠遠端維護一律走 DMZ 的跳板機。', 'k-fabsec');
       if (s.fab.phone !== 'ban') add('med', '無塵室允許帶私人手機', '製程配方、機台畫面、無塵室的配置都是公司最高機密：手機一拍就外洩，還可能被拿來當熱點，讓機台偷偷連上網際網路。', '在「晶圓廠」裝好安檢門與手機置物櫃、禁止私人手機，並配發無相機的公司手持裝置。', 'k-nophone');
       if (!Sec.serverZones('jump').some((x) => x.zone === 'DMZ')) add('low', '沒有原廠遠端維護用的跳板機', '原廠要遠端診斷機台時沒有安全的管道：很容易有人在機台上偷接 4G 分享器。', '在 DMZ 放一台跳板機（JMP 角色），開 DMZ → OT：RDP，並啟用 MFA。', 'k-fabsec');
+      /* 第十一章：廠務監控（FMCS / PLC 用的 Modbus、BACnet 完全沒有認證） */
+      if (G.Plant && G.Plant.active()) {
+        if (fw) {
+          const sc = [];
+          for (const z of ['INTERNET', 'LAN', 'DMZ', 'GUEST', 'IOT', 'WAN', 'SERVERS']) if (Sec.allows(z, 'OT', 'SCADA')) sc.push(z);
+          if (sc.length) add(sc.includes('INTERNET') ? 'crit' : 'high', 'Modbus / BACnet 可以從 OT 以外連進來', `允許 ${sc.join('、')} → OT：SCADA。工控協定沒有任何認證：連得到 PLC，就能直接下指令停泵浦、開閥門、關排氣。`, '刪掉這些規則：FMCS 與 PLC 都在 OT 區裡，Modbus / BACnet 不用穿過防火牆；工程師看 FMCS 畫面走 LAN → OT：WEB。', 'k-fmcs');
+          if (Sec.allows('OT', 'SERVERS', 'SCADA')) add('med', 'PLC 的 Modbus 要穿過防火牆到 IT 區', '允許 OT → SERVERS：SCADA：代表 FMCS 放在總部的伺服器區。IT 區一中毒，攻擊者就能直接控制廠務設備。', '把 FMCS 伺服器接到 OT 核心（OT 區），再刪掉這條規則。', 'k-fmcs');
+        }
+        const fm = Sec.serverZones('fmcs');
+        for (const { d, zone } of fm) if (zone !== 'OT' && zone !== 'OTBRIDGE') add('med', `${d.name}（FMCS）不在 OT 區`, `FMCS 放在 ${zone}：配電盤、純水、氣體與化學品的 PLC 要穿過 IT / OT 防火牆，工控協定也暴露在 IT 區。`, '把 FMCS 伺服器接到 OT 核心交換器。', 'k-fmcs');
+        if (!fm.length) add('low', '沒有 FMCS 廠務監控', '配電盤跳脫、純水水質變差、特殊氣體洩漏，都要等有人巡到才發現；停電後的馬達也只能一台一台人工復歸。', '部署一台 FMCS 伺服器（接在 OT 核心），讓每一套廠務設備的 PLC 都連得到它。', 'k-fmcs');
+      }
     }
     if (ch >= 3 && fw && !Q.hasService('ips')) add('low', '沒有啟用 IPS', '防火牆只看埠號，無法辨識夾帶在允許流量中的攻擊。', '訂閱 IPS 入侵防禦（注意吞吐量下降）。', 'k-ips');
     if (ch >= 5 && !s.fw.segmentation) add('med', '內網沒有分段', '員工電腦可以直接存取所有伺服器，勒索軟體可以任意擴散。', '在防火牆頁面啟用「內部分段」，並補上 LAN → SERVERS 的必要規則。', 'k-segment');

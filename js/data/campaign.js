@@ -1,4 +1,4 @@
-/* 劇情模式：十個章節、任務目標、進駐時程、據點開幕與劇本事件 */
+/* 劇情模式：十一個章節、任務目標、進駐時程、據點開幕與劇本事件 */
 (function (G) {
   'use strict';
   const U = G.U, CAT = G.CAT, Q = G.Q;
@@ -489,7 +489,53 @@
         '資安長看完你的 OT 架構圖，只說了一句：「IT 跟 OT，終於分開了。」',
         '廠務部長卻遞來一疊報告：晶圓廠的電力、純水、特殊氣體與化學品……那又是另一個世界了。'],
     },
+    {
+      id: 'c11', title: '第十一章｜廠務與配電', grant: 120000000,
+      story: [
+        '試產成功，Fab 1 正式轉量產。可是晶圓廠開工到現在，電、水、氣體、化學品都還靠建廠統包商的臨時系統撐著——臨時電源盤、純水車、一車車的鋼瓶與化學品桶槽。',
+        '統包商後天傍晚就要撤場。廠務部長把移交清單交給你：主變壓器、純水與廢水處理、大宗與特殊氣體、化學品供應都要建好，所有設備的 PLC 都要接進 FMCS。配電盤 DP-UT1 是包商趕工接的線，送電之前要逐條檢查。',
+        '晶圓廠一天用的電，抵得上一個小鎮；電壓掉個 0.2 秒，爐管裡的晶圓就要整批報廢。還有——動配電盤之前，一定要先停電、上鎖掛牌、驗電。',
+      ],
+      learn: ['三相四線 380 / 220 V：線電壓、相電壓、功率與電流', '配電盤：斷路器、線徑、漏電斷路器、相序、三相平衡、緊急電源', '停電作業安全：LOTO 上鎖掛牌、驗電、電弧閃絡', '晶圓廠供電：主變壓器 N+1、雙回路受電、DUPS 與電壓驟降', '超純水、廢水處理與回收水', '大宗 / 特殊氣體、GDS 與緊急遮斷、洗滌塔', '化學品供應與洩漏應變（氫氟酸）', 'FMCS 廠務監控與 Modbus 資安'],
+      moveIns: [],
+      /* 統包商的臨時供應撐到第二個工作天 17:00；配電盤是包商剛接好線、還沒送電的樣子（九個缺失） */
+      begin: (s) => G.Plant.begin(s),
+      events: [
+        /* 第一個工作天 15:00 午後雷雨：電壓驟降；第三個工作天 10:00：沉積氣體櫃的氨氣洩漏 */
+        { type: 'fab-sag', at: (t0) => G.Fab.workday(t0, 1) + 6 * 60 },
+        { type: 'plant-gas', at: (t0) => G.Fab.workday(t0, 3) + 60, data: { g: 'dep' } },
+      ],
+      kb: ['k-3phase', 'k-panel', 'k-loto', 'k-fabpower', 'k-upw', 'k-gas', 'k-chem', 'k-fmcs'],
+      objectives: [
+        { id: 'c11-power', text: '電力：主變壓器 N+1（壞一台也夠用）、台電雙回路受電', hint: '到「廠務 → 電力」看單線圖：主變壓器的長期負載不要超過九成，數量要比需要的多一台；再申請台電第二回路，一條線路故障時自動切換。', goto: 'plant:power', kb: 'k-fabpower',
+          check: () => G.Plant.count('tx') >= G.Plant.needTx() + 1 && G.Plant.count('feeder2') > 0,
+          progress: () => `變壓器 ${G.Plant.count('tx')} / ${G.Plant.needTx() + 1} · 雙回路 ${G.Plant.count('feeder2') ? '✓' : G.Plant.total('feeder2') ? '施工中' : '—'}` },
+        { id: 'c11-ups', text: '電力品質：DUPS 保護擴散與植入區（容量夠）、緊急發電機撐得起維生負載', hint: '擴散爐管跳機要 4 小時才能恢復，一跳就報廢 150 片晶圓：接到 DUPS。發電機要撐得起緊急電源區的排氣、洗滌塔、氣體偵測與 FMCS。', goto: 'plant:power', kb: 'k-fabpower',
+          check: (s) => { const D = G.Plant.dups(); return D.ok && !!s.plant.dupsOn.diff && !!s.plant.dupsOn.imp && G.Plant.count('gen') > 0 && G.Plant.gen().ok; } },
+        { id: 'c11-water', text: '純水與廢水：RO 與拋光機組的產能 ≥ 需求、泵浦正常運轉、線上水質監測、廢水處理', hint: 'RO 負責造水（自來水 → 純水槽）、拋光機組負責送水（純水槽 → 機台，18.2 MΩ·cm）：兩段的容量都要大於需求。CMP 與濕式清洗的廢水要處理過才能放流。', goto: 'plant:water', kb: 'k-upw',
+          check: () => { const R = G.R.plant; if (!R) return false; const w = R.water; return w.roCap >= w.need && w.polCap >= w.need && w.roF >= 0.99 && w.polF >= 0.99 && w.mon && w.wwt >= 0.99; } },
+        { id: 'c11-gas', text: '氣體與排氣：大宗氣體夠用、每一類特殊氣體的氣瓶櫃夠用、GDS + 緊急遮斷、洗滌塔夠用、排氣正常', hint: '沒有氣體偵測（GDS）不准供應特殊氣體；每一類氣體分開存放，一座櫃子經閥箱分給幾台機台。蝕刻、沉積、擴散、植入的廢氣都要經洗滌塔處理。', goto: 'plant:gas', kb: 'k-gas',
+          check: () => { const R = G.R.plant; if (!R) return false; const g = R.gas; return g.bulkCap >= g.bulkNeed && G.Plant.SG.every((x) => g.sg[x].cab >= g.sg[x].needCab) && g.gds && g.eso && g.gdsRun && g.gcPow >= 0.99 && G.Plant.count('scrub') >= G.Plant.needScrub() && G.Panel.factor('SC1') > 0 && g.exh >= 0.99; } },
+        { id: 'c11-chem', text: '化學品：酸鹼、溶劑 / 顯影液、研磨液三套供應系統運轉，裝好洩漏偵測與緊急沖淋', hint: '濕式清洗要酸鹼、黃光的塗佈顯影機要溶劑與顯影液、CMP 要研磨液；雙套管與閥箱要有洩漏偵測。', goto: 'plant:chem', kb: 'k-chem',
+          check: () => { const R = G.R.plant; return !!R && R.chem.acid >= 0.99 && R.chem.solv >= 0.99 && R.chem.slurry >= 0.99 && R.chem.leak; } },
+        { id: 'c11-fmcs', text: 'FMCS 廠務監控：伺服器在 OT 區，所有廠務設備的 PLC 都連得上', hint: '一台伺服器設成 FMCS 角色、接在 OT 核心；每一套廠務設備的 PLC 都接在 FAB IDF 的交換器上（埠數要夠），PLC 盤要有電。Modbus 沒有認證，不能讓 OT 以外的區域連進來。', goto: 'plant', kb: 'k-fmcs',
+          check: () => G.Plant.fmcs().ok && H.inOt('fmcs') >= 1 && portsFree('FAB') },
+        { id: 'c11-loto', text: '依停電作業程序（LOTO）完成一次配電盤施工：斷電 → 上鎖掛牌 → 驗電 → 施工', hint: '到「廠務 → 配電盤」：要改的迴路（或整個電源區的進線）先扳到 OFF、上鎖掛牌、驗電確認沒電，才能動手。', goto: 'plant:panel', kb: 'k-loto',
+          check: () => G.Panel.st().stats.loto > 0 },
+        { id: 'c11-energize', text: '配電盤 DP-UT1 送電：每一迴路都做過絕緣電阻測試（≥ 1 MΩ），兩條進線都送電', hint: '絕緣電阻計會送出 500 V 的直流高壓：要在停電、上鎖掛牌之後測。絕緣不良的電纜（拉線時刮傷）一送電就短路。', goto: 'plant:panel', kb: 'k-panel',
+          check: () => { const st = G.Panel.st(); return st.inc.N.on && st.inc.E.on && G.Panel.DEF.every((d) => !!st.cir[d.id].meg && st.cir[d.id].ins >= 1); } },
+        { id: 'c11-panel', text: '配電盤驗收合格：斷路器與線徑、漏電斷路器、緊急電源、三相平衡、馬達相序、沒有過熱點，每一迴路都送電', hint: '用相序計、鉤表、紅外線熱像儀找出包商接錯的地方：馬達反轉、斷路器太小或太大、電纜太細、濕區沒有漏電斷路器、單相負載都接在 R 相、端子沒鎖緊、維生負載接在一般電源。', goto: 'plant:panel', kb: 'k-panel',
+          check: () => G.Panel.defects().length === 0, progress: () => { const n = G.Panel.defects().length; return n ? `驗收清單還有 ${n} 項未完成` : ''; } },
+        { id: 'c11-output', text: '統包商撤場後，全靠自己的廠務系統量產：產能 ≥ 500 片 / 日、良率 ≥ 90%，累積 12 小時', hint: '每一區的電、純水、氣體、化學品、排氣都要夠：到「廠務 → 總覽」看哪一區、缺哪一項。', goto: 'plant', kb: 'k-fabpower',
+          sustain: 720, cond: () => { const R = G.R.fab; return G.Plant.active() && !G.Plant.temp() && !!R && R.rate >= 500 && R.yield >= 0.9; } },
+      ],
+      outro: ['最後一台泵浦的相序也改正了，配電盤的熱像一片藍綠。統包商的臨時電源盤吊上卡車的時候，產線一片晶圓都沒掉。',
+        '廠務部長遞給你一疊點檢表：配電盤每季熱像、每年絕緣電阻測試、特氣換瓶 SOP、化學品洩漏演練……',
+        '「廠務沒有下班時間。但只要系統對了，它會安靜得讓人忘記它的存在。」'],
+    },
   ];
+  /** FAB IDF 的交換器埠夠不夠（機台 + 廠務 PLC + AP） */
+  function portsFree(fid) { return Q.floorPorts(fid) >= Q.floorPortNeed(fid).total; }
 
   /* ---------- 劇情控制 ---------- */
   const Campaign = { chapters, H };

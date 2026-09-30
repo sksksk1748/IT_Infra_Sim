@@ -69,10 +69,10 @@
 
     /* 伺服器（角色在安裝後設定） */
     'SV-1U': { cat: 'server', name: 'SV-1U 通用伺服器', price: 220000, u: 1, watts: 350,
-      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'pbx', 'vscan', 'upd', 'iot', 'eap', 'jump'], unlock: 1,
+      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 10000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'pbx', 'vscan', 'upd', 'iot', 'eap', 'jump', 'fmcs'], unlock: 1,
       desc: '1U 雙路伺服器，2 × 10G 網卡。可擔任 AD/DNS/DHCP、網站、網管、資料庫，以及電話交換機、弱點掃描、更新派送。' },
     'SV-2U': { cat: 'server', name: 'SV-2U 高效能伺服器', price: 520000, u: 2, watts: 750,
-      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'siem', 'vscan', 'upd', 'iot', 'mes', 'eap', 'fdc', 'jump'], unlock: 1,
+      ports: { rj45: 2, sfp: 2, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['ad', 'web', 'nms', 'db', 'siem', 'vscan', 'upd', 'iot', 'mes', 'eap', 'fdc', 'jump', 'fmcs'], unlock: 1,
       desc: '2U 高效能伺服器，2 × 25G 網卡。可擔任 SIEM 等重負載角色。' },
     'ST-4U': { cat: 'server', name: 'ST-4U 儲存伺服器', price: 980000, u: 4, watts: 900, rawTB: 192,
       ports: { rj45: 2, sfp: 4, qsfp: 0 }, sfpMax: 25000, qsfpMax: 0, roles: ['file', 'backup'], unlock: 2,
@@ -328,6 +328,100 @@
       desc: '在機台電腦上只允許原廠的程式執行（Application Allowlisting）：沒辦法更新的舊 Windows，至少不會被惡意程式執行起來、到處擴散。' },
   };
 
+  /* ---------- 廠務（第十一章）：晶圓廠的電力、純水與廢水、氣體與排氣、化學品 ----------
+   * 價格照遊戲的比例縮小（真實晶圓廠的廠務系統動輒數十億）；用電、用水、用氣的量級接近一條 12 吋試產線 */
+  CAT.plant = {
+    unlock: 11,
+    /* 各型機台的用電（kW）、純水（m³/h）、大宗氣體（N₂ / CDA，Nm³/h）、要用到的特殊氣體類別、排氣要不要經洗滌塔 */
+    tool: {
+      scanner: { kw: 150, upw: 1, bulk: 60 },
+      track:   { kw: 60, upw: 1.5, bulk: 20 },
+      etch:    { kw: 70, upw: 0.3, bulk: 40, sg: ['etch'], scrub: true },
+      cvd:     { kw: 70, upw: 0.3, bulk: 50, sg: ['dep', 'clean'], scrub: true },
+      pvd:     { kw: 60, upw: 0.3, bulk: 40 },
+      ald:     { kw: 50, upw: 0.3, bulk: 40, sg: ['dep', 'clean'], scrub: true },
+      furnace: { kw: 110, upw: 0.5, bulk: 80, sg: ['dep'], scrub: true },
+      rtp:     { kw: 120, upw: 0.5, bulk: 60 },
+      implant: { kw: 180, upw: 0.5, bulk: 30, sg: ['dope'], scrub: true },
+      cmp:     { kw: 45, upw: 5, bulk: 10 },
+      wet:     { kw: 80, upw: 8, bulk: 20 },
+      cdsem:   { kw: 12, upw: 0, bulk: 10 },
+      thick:   { kw: 5, upw: 0, bulk: 10 },
+      overlay: { kw: 10, upw: 0, bulk: 10 },
+      inspect: { kw: 15, upw: 0, bulk: 10 },
+      stocker: { kw: 20, upw: 0, bulk: 0 },
+    },
+    /* 各製程區要用到的廠務供應（電力每一區都要）：upw 純水（浸潤式曝光、清洗）、bulk 大宗氣體、sg 特殊氣體（依機台）、scrub 洗滌塔、exh 排氣、
+     * acid 酸鹼化學品、solv 溶劑 / 顯影液、slurry 研磨液、wwt 廢水處理 */
+    area: {
+      litho: ['upw', 'bulk', 'solv', 'exh'],
+      etch:  ['bulk', 'sg', 'scrub', 'exh'],
+      film:  ['bulk', 'sg', 'scrub', 'exh'],
+      diff:  ['bulk', 'sg', 'scrub', 'exh'],
+      imp:   ['bulk', 'sg', 'scrub', 'exh'],
+      cmp:   ['upw', 'bulk', 'acid', 'slurry', 'wwt', 'exh'],
+      metro: ['bulk'],
+      amhs:  [],
+    },
+    /* 跳電之後各區重新開機、升溫、校正要多久（分鐘），以及還在製程中、一跳電就報廢的晶圓（片） */
+    recover: { litho: 120, etch: 60, film: 90, diff: 240, imp: 180, cmp: 30, metro: 30, amhs: 20 },
+    wip: { litho: 20, etch: 30, film: 30, diff: 150, imp: 30, cmp: 15, metro: 0, amhs: 0 },
+    /* 固定負載（kW）：無塵室空調（MAU / FFU）與冰水主機、製程冷卻水；照明與資訊設備；大宗氣體站每組的空壓機 */
+    base: { hvac: 2300, misc: 150, bulkKW: 250, life: 150 },
+    /* 變壓器長期負載不超過額定的九成；功率因數 */
+    txLoad: 0.9, pf: 0.92,
+    /* 純水槽（m³）：RO 停機時，拋光迴路還能撐一陣子 */
+    tank: 120,
+    /* 特殊氣體：每一類分開存放，一座氣瓶櫃經閥箱（VMB）分給幾台機台 */
+    sg: {
+      etch:  { name: '蝕刻氣體', gases: 'Cl₂、HBr、CF₄、C₄F₈', per: 8, hazard: '腐蝕性、毒性；含氟氣體的溫室效應是 CO₂ 的數千倍，排氣一定要經洗滌塔' },
+      dep:   { name: '沉積氣體', gases: 'SiH₄、NH₃、WF₆、SiH₂Cl₂', per: 8, hazard: 'SiH₄（矽甲烷）碰到空氣會自燃，NH₃、WF₆ 有毒' },
+      clean: { name: '腔體清潔氣體', gases: 'NF₃', per: 12, hazard: '強氧化性，高溫下會分解出有毒的氟化物' },
+      dope:  { name: '植入摻雜氣體', gases: 'AsH₃、PH₃、BF₃', per: 6, hazard: '劇毒：砷化氫、磷化氫極低濃度就會致命' },
+    },
+    /* 設備：都要施工（buildMin），多數可以買好幾組（max） */
+    eq: {
+      tx:      { name: '主變壓器 5,000 kVA', group: 'power', price: 4200000, buildMin: 720, max: 5, kva: 5000,
+        desc: '把台電送來的 22.8 kV 降成工廠用的 380 / 220 V。長期負載不要超過額定的九成；晶圓廠一定要 N+1——壞掉一台，其他台也撐得住。' },
+      feeder2: { name: '台電第二回路（雙回路受電）', group: 'power', price: 3800000, buildMin: 1440, max: 1,
+        desc: '從另一座變電所再拉一條 22.8 kV 饋線：一條線路故障就自動切換到另一條，只會有一瞬間的電壓驟降，不會長時間停電。' },
+      dups:    { name: '動態 UPS（DUPS）1,000 kVA', group: 'power', price: 6500000, buildMin: 600, max: 6, kva: 1000,
+        desc: '飛輪儲能 + 柴油引擎：電壓驟降或停電的瞬間由飛輪接手，接著柴油引擎發電。接在 DUPS 後面的製程區不會跳機；容量有限，要挑最怕停電的區域。配電盤的緊急電源區也由它供電。' },
+      gen:     { name: '緊急柴油發電機 750 kW', group: 'power', price: 4200000, buildMin: 480, max: 3, kw: 750,
+        desc: '停電約 1 分鐘後啟動，經自動切換開關（ATS）供電給緊急電源：排氣、洗滌塔、氣體偵測、緊急照明、FMCS——這些是維生負載，停電時也不能停。' },
+      ro:      { name: 'RO 逆滲透機組 40 m³/h（含前處理）', group: 'water', price: 5600000, buildMin: 720, max: 4, cap: 40,
+        desc: '自來水經過砂濾、活性碳、軟水，再用高壓泵推過 RO 膜，去除 98% 以上的離子、有機物與微粒，送進純水槽。' },
+      polish:  { name: '拋光機組 40 m³/h（EDI + 混床 + UV + UF）', group: 'water', price: 4800000, buildMin: 600, max: 4, cap: 40,
+        desc: '純水槽的水再經過 EDI 電除鹽、拋光混床樹脂、紫外線分解有機物、超過濾膜去除微粒，變成 18.2 MΩ·cm 的超純水，循環送到每一台機台。' },
+      upwmon:  { name: '線上水質監測（電阻率 / TOC / 微粒）', group: 'water', price: 1200000, buildMin: 180, max: 1,
+        desc: '在拋光迴路出口即時量測電阻率、總有機碳（TOC）與微粒：水質一變差就告警、切換備援，不用等晶圓出問題才發現。' },
+      reclaim: { name: '回收水系統', group: 'water', price: 6500000, buildMin: 720, max: 1,
+        desc: '把機台排出的清洗水分類回收、處理後再送回 RO：自來水用量少六成。台灣 2021 年大旱時，晶圓廠靠回收水與水車撐過限水。' },
+      wwt:     { name: '廢水處理（酸鹼中和 + 含氟廢水）', group: 'water', price: 7200000, buildMin: 900, max: 1,
+        desc: '酸鹼廢水中和、含氟廢水（氫氟酸）加鈣沉澱成氟化鈣、CMP 研磨廢水去除懸浮固體，水質合格才能放流。沒有它，CMP 與濕式清洗就不能生產。' },
+      bulk:    { name: '大宗氣體站 1,500 Nm³/h（液氮 + CDA）', group: 'gas', price: 4500000, buildMin: 600, max: 4, cap: 1500,
+        desc: '液態氮儲槽 + 汽化器、無油空壓機 + 乾燥機（CDA）：幾乎每一台機台都要用氮氣吹淨、用壓縮空氣驅動閥件。' },
+      gc:      { name: '特殊氣體櫃（含閥箱 VMB）', group: 'gas', price: 1500000, buildMin: 240, max: 4,
+        desc: '密閉、負壓排氣的鋼瓶櫃：雙鋼瓶自動切換、換瓶前用氮氣吹驅，經閥箱（VMB）分配到機台。每一類氣體都要分開存放。' },
+      gds:     { name: '氣體偵測系統 GDS', group: 'gas', price: 3200000, buildMin: 360, max: 1,
+        desc: '在氣瓶櫃、閥箱、機台與排氣管裝上毒性 / 可燃性氣體偵測器，集中到 GDS 主機。工安規定：沒有氣體偵測，特殊氣體不准供氣。' },
+      eso:     { name: '緊急遮斷連鎖（ESO）', group: 'gas', price: 1500000, buildMin: 240, max: 1, needs: 'gds',
+        desc: 'GDS 一偵測到洩漏，就自動關閉氣瓶櫃與閥箱的緊急遮斷閥、啟動警報與疏散廣播：從偵測到切斷只要幾秒。GDS 斷電時也會自動關閉（失效安全）。' },
+      scrub:   { name: '廢氣洗滌塔（中央 + 現址）', group: 'gas', price: 3800000, buildMin: 480, max: 4, cap: 12,
+        desc: '蝕刻、沉積、擴散、植入機台排出的有毒、可燃、含氟廢氣，先經機台旁的現址洗滌塔（燃燒 / 水洗）再進中央洗滌塔，處理乾淨才能排到大氣。一組約可處理 12 台機台。' },
+      acid:    { name: '酸鹼化學品供應系統（CDS）', group: 'chem', price: 6800000, buildMin: 720, max: 1,
+        desc: '硫酸、雙氧水、氫氟酸、氨水、鹽酸的儲槽、泵浦與雙套管，經化學品閥箱送到濕式清洗機與 CMP。' },
+      solv:    { name: '溶劑 / 顯影液供應系統', group: 'chem', price: 3500000, buildMin: 480, max: 1,
+        desc: 'IPA（異丙醇）、光阻稀釋劑與顯影液（TMAH）：易燃或有毒，儲存區要防爆、通風。黃光區的塗佈顯影機少了它就不能動。' },
+      slurry:  { name: 'CMP 研磨液供應系統', group: 'chem', price: 4200000, buildMin: 480, max: 1,
+        desc: '研磨液是懸浮著奈米顆粒的液體：要一直攪拌、循環、過濾，顆粒一沉澱或結塊就會刮傷晶圓。' },
+      leak:    { name: '化學品洩漏偵測 + 緊急沖淋', group: 'chem', price: 1800000, buildMin: 240, max: 1,
+        desc: '雙套管與閥箱裡的洩漏感測器、防溢堤，加上緊急沖淋與洗眼器（氫氟酸暴露要立刻沖水、塗葡萄糖酸鈣凝膠）。' },
+    },
+    /* 配電盤施工的材料：斷路器、漏電斷路器、每公尺電纜（依線徑） */
+    breaker: 6000, elcb: 9000, cablePerM: { 3.5: 60, 5.5: 85, 8: 120, 14: 190, 22: 280, 38: 460, 60: 700 },
+  };
+
   /* ---------- 水平布線（IDF → 座位 / AP） ---------- */
   CAT.horizontal = {
     cat6:  { name: 'Cat6 水平布線', perDrop: 2200, diyPerDrop: 900, buildMin: 8 * 60, maxSpeed: 5000,
@@ -395,6 +489,9 @@
       desc: 'Fault Detection & Classification：即時收集每一台機台的感測資料（溫度、壓力、氣體流量、射頻功率……），一有偏移就停機告警，避免整批晶圓報廢。資料量很大。' },
     jump:   { name: '跳板機（遠端存取閘道）', short: 'JMP', unlock: 10,
       desc: '原廠要遠端維修機台時唯一的入口：放在 DMZ，要 MFA 登入、全程錄影、用完就關，只能連到指定的機台。' },
+    /* 廠務（第十一章）：FMCS 也放在 OT 區 */
+    fmcs:   { name: 'FMCS 廠務監控（SCADA）', short: 'FMCS', unlock: 11,
+      desc: 'Facility Monitoring & Control System：透過 Modbus / BACnet 收集配電盤、純水、氣體、化學品、排氣與洗滌塔每一台 PLC 的狀態與告警，停電後依序自動復歸馬達。Modbus 沒有任何認證，所以 FMCS 和 PLC 一定要放在 OT 區、不能碰到網際網路。' },
   };
   /* ---------- 電話語音：SIP 中繼（向電信業者租用的外線路數） ---------- */
   CAT.voice = {
@@ -406,7 +503,7 @@
     kbps: 90,
   };
   /** 各角色的 VM 規格：[vCPU, 記憶體 GB, 系統碟 TB]（檔案與備份的資料量另計） */
-  CAT.vmSize = { mes: [16, 64, 2], eap: [8, 32, 0.3], fdc: [16, 64, 6], jump: [4, 8, 0.2], iot: [4, 16, 0.3], ad: [4, 16, 0.2], web: [8, 32, 0.3], db: [16, 128, 3], nms: [8, 32, 0.5], siem: [16, 64, 4], file: [8, 32, 0.2], backup: [8, 32, 0.2], pbx: [4, 16, 0.2], sbc: [4, 8, 0.1], sdwan: [4, 8, 0.1], vscan: [4, 16, 0.3], upd: [4, 16, 1.5] };
+  CAT.vmSize = { fmcs: [8, 32, 0.5], mes: [16, 64, 2], eap: [8, 32, 0.3], fdc: [16, 64, 6], jump: [4, 8, 0.2], iot: [4, 16, 0.3], ad: [4, 16, 0.2], web: [8, 32, 0.3], db: [16, 128, 3], nms: [8, 32, 0.5], siem: [16, 64, 4], file: [8, 32, 0.2], backup: [8, 32, 0.2], pbx: [4, 16, 0.2], sbc: [4, 8, 0.1], sdwan: [4, 8, 0.1], vscan: [4, 16, 0.3], upd: [4, 16, 1.5] };
   CAT.vmCfg = { license: 45000, osLicense: 30000, bootMin: 6, haDelay: 3, p2vFee: 50000, p2vMin: 60 };
   /** RAID：可用比例、可容忍同時壞幾顆、說明 */
   CAT.raid = {

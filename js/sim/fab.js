@@ -271,6 +271,12 @@
         }
       }
     }
+    /* 廠務（第十一章）：配電盤、純水、氣體、化學品的 PLC → FMCS（Modbus TCP / BACnet，都在 OT 區） */
+    const plc = G.Plant ? G.Plant.plcCount() : 0;
+    if (up && plc > 0) {
+      const fl = { id: nid + '>FMCS', stage: 3, kind: 'fmcs', floor: FID, src: nid, dst: 'ROLE:fmcs', fwd: 0.02 * plc, rev: 0.01 * plc, zs, zd: null, svc: ['SCADA'] };
+      flows.push(fl); ctx.fmcs = fl;
+    }
     /* EAP → MES（機台事件、上下貨、配方）；MES → ERP（工單與出貨） */
     for (const d of Q.roleServers('eap')) {
       if (!g.nodes.has(d.id)) continue;
@@ -326,11 +332,14 @@
     });
     const areas = {};
     let base = Infinity;
+    /* 廠務（第十一章）：每一區的電力、純水、氣體、化學品供應比例 */
+    const PA = G.Plant ? G.Plant.areaAvail() : null;
     for (const a of Object.keys(CAT.fab.areas)) {
       const n = total[a] || 0;
       if (!n) continue;
-      const r = (run[a] || 0) / n;
-      areas[a] = { total: n, run: r, auto: auto[a] || 0, eap: ratio(ctx.eap[a]) };
+      const pa = PA ? PA[a] : 1;
+      const r = (run[a] || 0) / n * pa;
+      areas[a] = { total: n, run: r, auto: auto[a] || 0, eap: ratio(ctx.eap[a]), plant: pa };
       base = Math.min(base, r);
     }
     if (!isFinite(base)) base = 0;
@@ -348,15 +357,17 @@
     const fdcR = fdcOff > 0 ? fdcDel / fdcOff : 0;
     const factor = (mesUp ? 1 : 0) * (erpOk ? 1 : 0.75) * handF * (engOk ? 1 : 0.95);
     const rate = staffIn ? CAT.fab.wspd * base * factor : 0;
-    const yld = 0.84 + 0.095 * fdcR;
+    /* 超純水水質變差（第十一章）：晶圓表面的缺陷增加 */
+    const yld = 0.84 + 0.095 * fdcR - (G.Plant ? G.Plant.yieldLoss() : 0);
     /* 是不是「IT 造成的」停線：機台都接好了，卻因為網路 / MES 停下來 */
     let itStop = null;
     if (online > 0 && staffIn) {
       if (!fsUp) itStop = 'FAB 網路中斷';
       else if (!mesUp) itStop = 'MES 連不上';
     }
+    const plantStop = online > 0 && staffIn && G.Plant ? G.Plant.stopWhy() : null;
     const R = { rate, yield: yld, base, factor, areas, online, down, arrived, total: F.tools.length, mesUp, erpOk, engOk, eapN, eapCap, eapF, secsTools, handF, handR, fdcR, itStop, up: fsUp,
-      auto: U.sum(Object.values(auto), (x) => x) };
+      auto: U.sum(Object.values(auto), (x) => x), fmcs: !!ctx.fmcs && !ctx.fmcs.blocked, plantStop };
     G.R.fab = R;
     if (st) { st.fab = R; st.present = st.present || 0; }
     return R;
@@ -368,9 +379,11 @@
     const s = G.S, x = s.fab.tools[i], slot = Fab.slots()[i], d = CAT.fab.types[slot.type];
     const R = G.R.fab;
     const eapOk = !!R && !!R.areas[d.area] && R.areas[d.area].eap > 0.9;
-    const run = x.st === 'online' && !x.down && !!R && R.up;
-    return { i, code: Fab.code(i), name: Fab.name(i), def: d, slot, x, run, eapOk, area: CAT.fab.areas[d.area].name,
-      status: x.down ? (x.down === 'vendor' ? '故障停機（等原廠診斷）' : '中毒停機') : x.st === 'online' ? (!R || !R.up ? '網路中斷' : eapOk ? '自動化生產中' : '連不上 EAP（人工操作）') : x.st === 'scan' && x.scanUntil ? '掃毒中' : x.st === 'ready' && x.scan === 'skip' ? '等待接上網路（未掃毒）' : Fab.ST[x.st] };
+    /* 廠務（第十一章）：這一區的電、水、氣、化學品供應 */
+    const pa = R && R.areas[d.area] && R.areas[d.area].plant !== undefined ? R.areas[d.area].plant : 1;
+    const run = x.st === 'online' && !x.down && !!R && R.up && pa >= 0.5;
+    return { i, code: Fab.code(i), name: Fab.name(i), def: d, slot, x, run, eapOk, area: CAT.fab.areas[d.area].name, plant: pa,
+      status: x.down ? (x.down === 'vendor' ? '故障停機（等原廠診斷）' : '中毒停機') : x.st === 'online' ? (!R || !R.up ? '網路中斷' : pa < 0.5 ? '停線：廠務供應中斷' : eapOk ? '自動化生產中' : '連不上 EAP（人工操作）') : x.st === 'scan' && x.scanUntil ? '掃毒中' : x.st === 'ready' && x.scan === 'skip' ? '等待接上網路（未掃毒）' : Fab.ST[x.st] };
   };
   /** 各狀態的機台數 */
   Fab.counts = () => {

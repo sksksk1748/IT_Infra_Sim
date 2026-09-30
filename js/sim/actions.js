@@ -299,7 +299,7 @@
     if (k === 'switch') {
       const d = G.S.devices[other];
       /* 接著晶圓廠（FAB IDF）或 MES / EAP / FDC 的交換器 = OT 核心 */
-      const ot = Q.linksOf(other).some((l) => { const o = Q.other(l, other); const od = G.S.devices[o]; return (o.startsWith('F:') && G.BLD.isFab(o.slice(2))) || (od && ['mes', 'eap', 'fdc'].includes(od.role)); });
+      const ot = Q.linksOf(other).some((l) => { const o = Q.other(l, other); const od = G.S.devices[o]; return (o.startsWith('F:') && G.BLD.isFab(o.slice(2))) || (od && ['mes', 'eap', 'fdc', 'fmcs'].includes(od.role)); });
       if (ot) return 'ot';
       return d && CAT.devices[d.model].layer === 2 && !Q.linksOf(other).some((l) => Q.nodeKind(Q.other(l, other)) === 'floor') ? 'dmz' : 'inside';
     }

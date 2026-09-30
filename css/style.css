@@ -443,6 +443,21 @@ table.t td.r, table.t th.r { text-align: right; }
 .tchip.off { opacity: 0.5; }
 .tchip.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
 .tchip.skip::after { content: '!'; color: var(--bad); font-weight: 800; margin-left: 2px; }
+
+/* 廠務（第十一章）：設備列、供應矩陣、單線圖與流程圖、配電盤 */
+.eq-row { display: flex; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.eq-row:first-of-type { border-top: none; }
+.sld svg, .pnl-svg svg { width: 100%; height: auto; display: block; }
+.pnl-svg { overflow-x: auto; }
+.pnl-svg svg { min-width: 560px; }
+.scroll-x { overflow-x: auto; }
+table.t td.center, table.t th.center, .center { text-align: center; }
+table.plant-mx td { white-space: nowrap; }
+.meter { height: 8px; border-radius: 4px; background: var(--bg-2); border: 1px solid var(--line); overflow: hidden; }
+.meter > i { display: block; height: 100%; }
+.loto { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px; border-radius: 8px; background: var(--bg-2); border: 1px dashed var(--line-2); }
+.field.inline { flex-direction: row; align-items: center; gap: 6px; }
+.field.inline select { max-width: 190px; }
 .floor-pick .sep { flex: none; align-self: center; font-size: 11px; color: var(--text-3); padding: 0 4px 0 8px; border-left: 1px solid var(--line-2); margin-left: 4px; white-space: nowrap; }
 .chart { width: 100%; height: 200px; display: block; }
 .locked { position: relative; }

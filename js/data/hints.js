@@ -590,6 +590,196 @@
   };
   H['c10-output'] = () => [...diagnose(), look('到「晶圓廠」看產能的瓶頸：每一區的機台都要自動化，MES、ERP、FDC 都要連得上', 'fab', () => false)];
 
+  /* ---------- 第十一章：廠務與配電 ---------- */
+  const PTAB = { power: '電力', water: '純水與廢水', gas: '氣體與排氣', chem: '化學品' };
+  const PL = () => G.Plant, PN = () => G.Panel;
+  /** 到「廠務」建置一項設備（可以買好幾組的，按到數量夠為止） */
+  const plantBuy = (k, done, why) => {
+    const tab = PL().def(k).group;
+    return { text: `到「廠務 → ${PTAB[tab]}」建置 ${PL().label(k)}${why ? `（${why}）` : ''}`, short: `建置 ${PL().label(k)}`, go: 'plant:' + tab, path: ['nav:plant', 'tab:plant:' + tab, 'plant-buy:' + k], done };
+  };
+  /** 要等配電盤修好、送電才會好的事：配電盤還有缺失時先當作「等待」，提示改帶去做配電盤 */
+  const needPanel = (text, done) => ({ text, short: '到配電盤', go: 'plant:panel', path: ['nav:plant', 'tab:plant:panel'], wait: PN().defects().length > 0, done });
+  const pnLabel = (id) => (id === 'N' || id === 'E' ? PN().INC[id].name : `${id} ${PN().def(id).name}`);
+  const pnGo = (id) => () => { if (id) G.PanelUI.sel = id; G.Views.plant.tab = 'panel'; G.UI.go('plant:panel'); };
+  /** 配電盤上的一個動作：先選到那個迴路 / 進線，再按按鈕（或選下拉選單） */
+  const pnStep = (id, key, text, short) => ({ text, short, go: pnGo(id), done: () => false,
+    path: () => {
+      const base = ['nav:plant', 'tab:plant:panel'];
+      if (id && G.PanelUI.sel !== id) return base.concat([{ k: (id === 'N' || id === 'E' ? 'pn-inc:' : 'pn-cir:') + id, t: `點 ${pnLabel(id)}` }]);
+      return base.concat([{ k: key, t: short }]);
+    } });
+  /** 停電作業（LOTO）的下一步：負載側只停這個迴路；電源側要停整個電源區的進線 */
+  function lotoNext(id, side, toBus) {
+    const st = PN().st(), c = st.cir[id];
+    if (side === 'load') {
+      if (PN().safety(id, 'load').ok) return null;
+      if (c.on || c.trip) return pnStep(id, 'pn-off:' + id, `${pnLabel(id)}：停電作業第一步，把斷路器扳到 OFF`, '① 斷電 OFF');
+      if (!c.lock) return pnStep(id, 'pn-lock:' + id, `${pnLabel(id)}：上鎖掛牌（個人安全鎖 + 「禁止送電」吊牌）`, '② 上鎖掛牌');
+      if (!c.ver) return pnStep(id, 'pn-ver:' + id, `${pnLabel(id)}：驗電，確認負載側真的沒電`, '③ 驗電');
+      return null;
+    }
+    const buses = side === 'both' && toBus && toBus !== c.bus ? [c.bus, toBus] : [c.bus];
+    for (const b of buses) { const s1 = incLoto(b); if (s1) return s1; }
+    return null;
+  }
+  function incLoto(b) {
+    const I = PN().st().inc[b];
+    if (I.on) return pnStep(b, 'pn-off:' + b, `要動到${PN().BUS[b]}的匯流排：${PN().INC[b].name}扳到 OFF（這一區全部停電）`, '① 進線 OFF');
+    if (!I.lock) return pnStep(b, 'pn-lock:' + b, `${PN().INC[b].name}：上鎖掛牌`, '② 上鎖掛牌');
+    if (!I.ver) return pnStep(b, 'pn-ver:' + b, `${PN().INC[b].name}：驗電，確認匯流排沒電`, '③ 驗電');
+    return null;
+  }
+  /** 三相不平衡：找一個最能改善不平衡的單相迴路，改接到另一相 */
+  function balanceMove() {
+    const st = PN().st(), cur = PN().phases(true).unbal;
+    let best = null;
+    for (const d of PN().DEF) {
+      if (d.ph !== 1) continue;
+      const c = st.cir[d.id], from = c.phase;
+      for (const to of PN().PH) {
+        if (to === from) continue;
+        c.phase = to;
+        const u = PN().phases(true).unbal;
+        c.phase = from;
+        if (u < cur - 1e-6 && (!best || u < best.u)) best = { id: d.id, to, u };
+      }
+    }
+    return best;
+  }
+  /** 下一個要修的缺失（看得到的：量過、掃過的才算） */
+  function panelFix(D) {
+    const st = PN().st();
+    const ORDER = ['ins', 'atLow', 'atHigh', 'cable', 'elcb', 'bus', 'unbal', 'seq', 'loose', 'meg'];
+    for (const k of ORDER) {
+      for (const x of D.filter((y) => y.k === k)) {
+        let id = x.id, side = 'load', key, text, short, to = null;
+        const c = id ? st.cir[id] : null, d = id ? PN().def(id) : null;
+        if (k === 'ins') {
+          if (!c.meg) continue;
+          key = 'pn-recable:' + id; text = `${pnLabel(id)}：絕緣電阻只有 ${c.ins} MΩ（電纜拉線時刮傷）：換一條新電纜（同線徑）`; short = '換新電纜';
+        } else if (k === 'atLow' || k === 'atHigh') {
+          const a = PN().suggest(d).at;
+          side = 'line'; key = 'pn-at:' + id; short = `選「${a} A」`;
+          text = `${pnLabel(id)}：斷路器 ${c.at} A ${k === 'atLow' ? `太小（額定電流 ${PN().flc(d).toFixed(0)} A，馬達一起動就跳）` : '太大（出事時保護不到馬達與電纜）'}：換成 ${a} A`;
+        } else if (k === 'cable') {
+          const m = PN().SIZES.find((z) => PN().amp(z) >= c.at);
+          key = 'pn-cable:' + id; short = `選「${m} mm²」`;
+          text = `${pnLabel(id)}：電纜 ${c.mm2} mm²（${PN().amp(c.mm2)} A）比斷路器 ${c.at} A 小，電纜會過熱：換成 ${m} mm²`;
+        } else if (k === 'elcb') {
+          side = 'line'; key = 'pn-elcb:' + id; short = '換成漏電斷路器';
+          text = `${pnLabel(id)}：濕區的迴路要用漏電斷路器（30 mA），有人碰到漏電的設備才不會有生命危險`;
+        } else if (k === 'bus') {
+          side = 'both'; to = 'E'; key = 'pn-bus:' + id; short = '改接到緊急電源區';
+          text = `${pnLabel(id)}：維生負載要接在緊急電源區（DUPS / 發電機），停電時才不會斷`;
+        } else if (k === 'unbal') {
+          const mv = balanceMove();
+          if (!mv) continue;
+          id = mv.id; side = 'line'; key = 'pn-phase:' + id; short = `選「${mv.to} 相」`;
+          text = `三相不平衡（單相負載都擠在 ${PN().st().cir[id].phase} 相）：把 ${pnLabel(id)} 改接到 ${mv.to} 相`;
+        } else if (k === 'seq') {
+          if (!c.seqKnown) continue;
+          key = 'pn-swap:' + id; short = '對調兩相';
+          text = `${pnLabel(id)}：反相序，馬達在反轉：停電後對調任意兩相`;
+        } else if (k === 'loose') {
+          if (!(st.scan && st.scan.spots[id])) continue;
+          key = 'pn-torque:' + id; short = '鎖緊端子';
+          text = `${pnLabel(id)}：熱像 ${st.scan.spots[id]}°C，端子鬆脫：停電後依規定扭力鎖緊`;
+        } else if (k === 'meg') {
+          key = 'pn-meg:' + id; short = '絕緣電阻測試';
+          text = `${pnLabel(id)}：新換的電纜送電前要測絕緣電阻`;
+        }
+        return lotoNext(id, side, to) || pnStep(id, key, text, short);
+      }
+    }
+    return null;
+  }
+  /** 配電盤 DP-UT1 從交接到驗收的下一步 */
+  function panelNext() {
+    const st = PN().st(), D = PN().defects(), defs = PN().DEF;
+    if (!st.energized) {
+      /* 送電前：兩區進線停電上鎖驗電 → 全部絕緣電阻測試 → 修看得到的缺失 → 送電 */
+      if (D.some((x) => ['meg', 'ins', 'atLow', 'atHigh', 'cable', 'elcb', 'bus', 'unbal'].includes(x.k))) {
+        for (const b of ['N', 'E']) { const s1 = incLoto(b); if (s1) return s1; }
+        if (defs.some((d) => !st.cir[d.id].meg)) return pnStep(null, 'pn-meg-all', '送電前：用絕緣電阻計把每一個迴路都測一遍（≥ 1 MΩ 才能送電）', '全部絕緣電阻測試');
+        const f = panelFix(D);
+        if (f) return f;
+      }
+    } else {
+      /* 送電之後：先讓每一個迴路都帶載運轉，再量相序、做熱像掃描；看得到的缺失一個一個停電修 */
+      if (defs.some((d) => (!st.cir[d.id].on || st.cir[d.id].trip) && !st.cir[d.id].lock) && (PN().busLive('N') || PN().busLive('E')) && !defs.some((d) => st.cir[d.id].lock)) return pnStep(null, 'pn-all-on', '各迴路依序送電（一次一個，避免所有馬達同時起動）', '依序送電');
+      if (defs.some((d) => d.motor && !st.cir[d.id].seqKnown && PN().loadLive(d.id))) return pnStep(null, 'pn-seq-all', '量相序：確認每一台馬達（泵浦、風機）的旋轉方向', '全部馬達測相序');
+      if (!(st.scan && st.scan.at >= st.energized) && (PN().busLive('N') || PN().busLive('E'))) return pnStep(null, 'pn-scan', '紅外線熱像掃描：帶載運轉時，找出過熱的端子與電纜', '熱像掃描');
+      const f = panelFix(D);
+      if (f) return f;
+    }
+    /* 收尾：拆除掛牌 → 進線送電 → 迴路依序送電 */
+    const lk = defs.find((d) => st.cir[d.id].lock);
+    if (lk) return pnStep(lk.id, 'pn-unlock:' + lk.id, `${pnLabel(lk.id)}：施工完成，拆除掛牌`, '④ 拆除掛牌');
+    for (const b of ['N', 'E']) if (st.inc[b].lock) return pnStep(b, 'pn-unlock:' + b, `${PN().INC[b].name}：施工完成，拆除掛牌`, '④ 拆除掛牌');
+    for (const b of ['N', 'E']) if (!st.inc[b].on) return pnStep(b, 'pn-on:' + b, `${PN().INC[b].name}送電`, '⑤ 進線送電');
+    if (defs.some((d) => !st.cir[d.id].on || st.cir[d.id].trip)) return pnStep(null, 'pn-all-on', '各迴路依序送電（一次一個，避免所有馬達同時起動）', '依序送電');
+    if (D.some((x) => x.k === 'loose')) return pnStep(null, 'pn-scan', '再做一次熱像掃描（帶載運轉時才看得出過熱）', '熱像掃描');
+    return null;
+  }
+  const panelHint = () => { const x = panelNext(); return x ? [x] : []; };
+
+  H['c11-power'] = () => {
+    const need = PL().needTx() + 1;
+    return [plantBuy('tx', () => PL().total('tx') >= need, `N+1：要 ${need} 台`), plantBuy('feeder2', () => PL().total('feeder2') > 0, '雙回路受電'),
+      skip('等主變壓器與台電第二回路完工（可以先做別的，或按 ⏭ 快轉）', () => PL().count('tx') >= need && PL().count('feeder2') > 0)];
+  };
+  H['c11-ups'] = () => {
+    const d = PL().demand(true);
+    const kva = ((d.areaKW.diff || 0) + (d.areaKW.imp || 0)) / CAT.plant.pf + PN().kw('E') / 0.85;
+    const n = Math.ceil(kva / CAT.plant.eq.dups.kva);
+    const g = PL().gen();
+    return [
+      plantBuy('dups', () => PL().total('dups') >= n, `擴散 + 植入 + 緊急電源區約 ${Math.round(kva)} kVA → ${n} 組`),
+      { text: '在 DUPS 的清單勾選「擴散 / 熱處理」：爐管跳機要 4 小時才能恢復，一跳就報廢 150 片', short: '勾選擴散區', go: 'plant:power', path: ['nav:plant', 'tab:plant:power', 'plant-dups:diff'], done: () => !!G.S.plant.dupsOn.diff },
+      { text: '勾選「離子植入」：跳機後要 3 小時才能恢復', short: '勾選植入區', go: 'plant:power', path: ['nav:plant', 'tab:plant:power', 'plant-dups:imp'], done: () => !!G.S.plant.dupsOn.imp },
+      plantBuy('gen', () => PL().total('gen') * CAT.plant.eq.gen.kw >= g.need, `維生負載 ${g.need} kW`),
+      skip('等 DUPS 與緊急發電機完工（可以先做別的，或按 ⏭ 快轉）', () => PL().dups().ok && PL().count('gen') > 0 && PL().gen().ok),
+    ];
+  };
+  H['c11-water'] = () => {
+    const nr = PL().needRo(), np = PL().needPolish();
+    return [
+      plantBuy('ro', () => PL().total('ro') >= nr, `造水：需要 ${nr} 組`), plantBuy('polish', () => PL().total('polish') >= np, `送水：需要 ${np} 組`),
+      plantBuy('upwmon', () => PL().total('upwmon') > 0), plantBuy('wwt', () => PL().total('wwt') > 0),
+      skip('等純水與廢水設備完工（可以先做別的，或按 ⏭ 快轉）', () => PL().count('ro') >= nr && PL().count('polish') >= np && PL().count('upwmon') > 0 && PL().count('wwt') > 0),
+      needPanel('純水泵、廢水泵要有電、而且不能反轉：到「廠務 → 配電盤」完成送電與驗收', () => { const w = G.R.plant && G.R.plant.water; return !!w && w.roF >= 0.99 && w.polF >= 0.99 && w.wwt >= 0.99; }),
+    ];
+  };
+  H['c11-gas'] = () => {
+    const out = [plantBuy('bulk', () => PL().total('bulk') >= PL().needBulk(), `需要 ${PL().needBulk()} 組`)];
+    for (const g of PL().SG) out.push(plantBuy('gc:' + g, () => PL().total('gc:' + g) >= PL().needSg(g), `${CAT.plant.sg[g].gases}：需要 ${PL().needSg(g)} 座`));
+    out.push(plantBuy('gds', () => PL().total('gds') > 0, '沒有氣體偵測，特殊氣體不准供氣'), plantBuy('eso', () => PL().total('eso') > 0),
+      plantBuy('scrub', () => PL().total('scrub') >= PL().needScrub(), `需要 ${PL().needScrub()} 組`),
+      skip('等氣體與洗滌塔設備完工（可以先做別的，或按 ⏭ 快轉）', () => PL().count('bulk') >= PL().needBulk() && PL().SG.every((g) => PL().count('gc:' + g) >= PL().needSg(g)) && PL().count('gds') > 0 && PL().count('eso') > 0 && PL().count('scrub') >= PL().needScrub()),
+      needPanel('排氣風機、洗滌塔泵、氣瓶櫃與 GDS 主機要有電：到「廠務 → 配電盤」完成送電與驗收', () => { const x = G.R.plant && G.R.plant.gas; return !!x && x.exh >= 0.99 && x.gdsRun && x.gcPow >= 0.99 && PN().factor('SC1') > 0; }));
+    return out;
+  };
+  H['c11-chem'] = () => [plantBuy('acid', () => PL().total('acid') > 0), plantBuy('solv', () => PL().total('solv') > 0), plantBuy('slurry', () => PL().total('slurry') > 0), plantBuy('leak', () => PL().total('leak') > 0),
+    skip('等化學品設備完工（可以先做別的，或按 ⏭ 快轉）', () => ['acid', 'solv', 'slurry', 'leak'].every((k) => PL().count(k) > 0)),
+    needPanel('化學品泵浦要有電：到「廠務 → 配電盤」完成送電與驗收', () => PN().factor('CDS') > 0)];
+  H['c11-fmcs'] = () => {
+    if (!hasOtCore()) return H['c10-otcore']();
+    const need = () => Q.floorPortNeed('FAB').total;
+    return serverRole('fmcs', 'SV-1U', 'FMCS 廠務監控', 1, isOtCore).concat([
+      look('FMCS 伺服器要接在 OT 核心上（OT 區）', 'topo', () => inOt('fmcs') >= 1 || Q.roleServers('fmcs').some((d) => d.rack && linkedTo(d, isOtCore))),
+      skip('等 FMCS 伺服器開機（可以按 ⏭ 快轉）', () => inOt('fmcs') >= 1),
+      { text: `FAB IDF 的交換器埠不夠（機台 + 廠務 PLC + AP 要 ${need()} 埠）：到「樓層 → FAB」按「建議數量」再「套用」`, short: '按「建議數量」再「套用」', go: 'floor:FAB', path: ['nav:floor', 'floor:FAB', 'idf-suggest@FAB', 'idf-apply@FAB'], done: () => Q.floorPorts('FAB') >= need() },
+      needPanel('FMCS PLC 盤要有電：到「廠務 → 配電盤」完成送電與驗收', () => PL().fmcs().plc),
+      Object.assign(look('FMCS 要連得到每一台 PLC：FAB → OT 核心 → FMCS（都在 OT 區，不用開防火牆）', 'plant', () => PL().fmcs().ok), { wait: PN().defects().length > 0 }),
+    ]);
+  };
+  H['c11-loto'] = panelHint;
+  H['c11-energize'] = panelHint;
+  H['c11-panel'] = panelHint;
+  H['c11-output'] = () => [skip('等統包商撤場（臨時供應結束之後，才算你自己的廠務系統在供應）', () => !PL().temp()), ...diagnose(),
+    look('到「廠務 → 總覽」看哪一區、缺哪一項供應', 'plant', () => false)];
+
   /* ---------- 沙盒：依序檢查基本建設，再來是快要進駐的樓層，最後是緊急報修 ---------- */
   H.__sandbox = (s) => {
     const out = [];
@@ -603,6 +793,11 @@
     for (const f of soon.slice(0, 2)) out.push(...(G.BLD.isFab(f.id) ? H['c10-fab']() : floorSteps(f.id, 0.85)));
     /* 晶圓廠開廠之後：OT 核心、MES / EAP / FDC、進廠掃毒站 */
     if (s.fab && s.fab.open) out.push(...H['c10-otcore'](), ...H['c10-servers'](), H['c10-scan']()[0]);
+    /* 晶圓廠的廠務（統包商撤場前要建好）：採購廠務設備、FMCS，再驗收配電盤（只列現在就能做的事，不列等待） */
+    if (G.Plant && G.Plant.active()) {
+      const now = (x) => !(x.wait || (Array.isArray(x.path) && x.path.includes('speed-skip')));
+      out.push(...['c11-power', 'c11-ups', 'c11-water', 'c11-gas', 'c11-chem', 'c11-fmcs'].flatMap((k) => H[k]().filter(now)), ...panelHint());
+    }
     out.push(...diagnose());
     return out;
   };

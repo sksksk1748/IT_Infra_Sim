@@ -99,6 +99,13 @@
     fabfdc:    { sev: 'med', text: () => '晶圓廠：FDC 收不到機台的感測資料', hint: '沒有 FDC，製程偏移要等量測站才發現，一整批晶圓就報廢了。部署 FDC 伺服器接在 OT 核心，資料量很大，上行頻寬要夠。', goto: 'fab' },
     faberp:    { sev: 'high', text: () => '晶圓廠：MES 拿不到 ERP 的工單', hint: 'MES 要跟總部的 ERP（資料庫）交換工單與出貨資料：防火牆要允許 OT → SERVERS：SQL。', goto: 'fw' },
     fabeng:    { sev: 'med', text: () => '研發工程師在辦公室看不到晶圓廠的 MES 報表', hint: '工程師從總部的員工內網看 MES：防火牆要允許 LAN → OT：WEB（只開網頁，其他都不要開）。', goto: 'fw' },
+    /* 廠務（第十一章，統包商撤場之後） */
+    plpwr:     { sev: 'crit', text: (f, n) => `晶圓廠：${n || '電力不足'}`, hint: '主變壓器容量要大於需量（長期負載九成以下）；跳電後的製程區要重新開機、升溫、校正。最怕停電的區域接到 DUPS。', goto: 'plant:power' },
+    plupw:     { sev: 'crit', text: () => '晶圓廠：超純水供應不足，黃光與 CMP / 濕式清洗停線', hint: 'RO（造水）與拋光機組（送水）的容量都要大於需求；純水泵的迴路要有電、不能反轉。', goto: 'plant:water' },
+    plgas:     { sev: 'crit', text: () => '晶圓廠：特殊氣體或大宗氣體供應中斷', hint: '特殊氣體要有氣體偵測系統（GDS）才准供氣，GDS 主機要接在緊急電源；每一類氣體要有足夠的氣瓶櫃。', goto: 'plant:gas' },
+    plexh:     { sev: 'crit', text: () => '晶圓廠：排氣或洗滌塔不足，機台連鎖停機', hint: '沒有排氣、洗滌塔處理不完，蝕刻、沉積、擴散、植入的機台都會連鎖停機（有毒廢氣不能排出去）。排氣風機與洗滌塔泵浦的迴路要正常。', goto: 'plant:gas' },
+    plchem:    { sev: 'high', text: () => '晶圓廠：化學品或研磨液供應中斷', hint: '酸鹼、溶劑 / 顯影液、研磨液三套供應系統都要有，化學品泵浦的迴路要有電。CMP 與濕式清洗還要有廢水處理。', goto: 'plant:chem' },
+    plcir:     { sev: 'high', text: (f, n) => `廠務配電盤 DP-UT1：${n || '有'} 個迴路跳脫`, hint: '跳脫的原因要先查清楚（斷路器太小？絕緣不良？），不要一直硬送電：到「廠務 → 配電盤」用鉤表、絕緣電阻計檢查。', goto: 'plant:panel' },
   };
   Ops.TK = TK;
 
@@ -136,7 +143,7 @@
         if (R && R.online > 0) {
           if (!R.mesUp) flag('fabmes');
           else {
-            if (R.online - R.down - R.auto > 0) flagN('fabeap', R.online - R.down - R.auto);
+            if (R.online - R.auto > 0) flagN('fabeap', R.online - R.auto);
             if (!R.erpOk) flag('faberp');
           }
           if (!R.engOk) flag('fabeng');
@@ -145,6 +152,20 @@
         }
         if (c.ready > 0 && fs.cabling.status === 'done' && fs.idf.count > 0) flagN('fabport', c.ready);
         if (c.scan > 0 && !G.Fab.kioskReady()) flagN('fabscan', c.scan);
+        /* 廠務（第十一章）：統包商撤場之後，供應不足就報修 */
+        const PR = G.R.plant;
+        if (PR && !PR.temp && R && R.online > 0) {
+          const pw = PR.power;
+          if (PR.tripped.length) flagN('plpwr', `${PR.tripped.map((a) => CAT.fab.areas[a].name).join('、')}跳電後重新開機中`);
+          else if (!pw.normal) flagN('plpwr', '停電');
+          else if (pw.shed < 1) flagN('plpwr', '主變壓器容量不足，製程區卸載');
+          if (PR.water.ratio < 0.95 && PR.water.demand > 0) flag('plupw');
+          if (G.Plant.SG.some((g) => PR.gas.sg[g].ratio < 0.95) || PR.gas.bulk < 0.95) flag('plgas');
+          if (PR.gas.exh < 0.95 || PR.gas.scrub < 0.95) flag('plexh');
+          if (PR.chem.acid < 0.95 || PR.chem.solv < 0.95 || PR.chem.slurry < 0.95 || PR.water.wwt < 0.95) flag('plchem');
+          const tr = G.Panel.DEF.filter((x) => G.Panel.c(x.id).trip).length;
+          if (tr) flagN('plcir', tr);
+        }
         continue;
       }
       if (!st.adOk) flag('noad');

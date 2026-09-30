@@ -180,7 +180,9 @@
     for (const f of G.BLD.floors) {
       const fs = s.floors[f.id];
       let on = true;
-      if (outage) {
+      /* 晶圓廠是另一棟建築、另一路供電：總部停電不影響；第十一章起看晶圓廠自己的電力（FAB IDF 有自己的 UPS） */
+      if (f.bldg) on = !G.Plant || G.Plant.idfLive();
+      else if (outage) {
         if (fs.idf.ups && since < 30) on = true;
         else if (genUp) on = true;
         else on = false;
